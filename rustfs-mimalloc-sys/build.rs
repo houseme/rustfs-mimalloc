@@ -76,7 +76,7 @@ fn main() {
     }
 
     // Platform-specific compiler flags
-    if target.contains("msvc") || target.contains("windows") {
+    if target.contains("msvc") {
         // MSVC: use correct runtime library based on debug/release
         // See: https://github.com/purpleprotocol/mimalloc_rust/pull/167
         if is_debug {
