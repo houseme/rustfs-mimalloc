@@ -1,4 +1,4 @@
-//! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3 (v3.5.2).
+//! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3 (v3.5.3).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 
@@ -46,7 +46,7 @@ pub type mi_arena_id_t = *mut c_void;
 
 // ── Option enum ─────────────────────────────────────────────────────────────
 //
-// Kept in sync with mimalloc V3.5.2 `mi_option_e` in `mimalloc.h`.
+// Kept in sync with mimalloc V3.5.3 `mi_option_e` in `mimalloc.h`.
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,6 +261,40 @@ pub unsafe fn mi_free_csize_nonnull(p: *mut c_void, size: size_t) {
     }
 }
 
+/// Free an allocation when its size and alignment are statically known.
+///
+/// This mirrors mimalloc's inline `mi_free_csize_aligned` helper. Over-aligned
+/// small allocations must use the general free path, which this helper selects
+/// when `alignment > size`.
+///
+/// # Safety
+/// `p` must be null or a valid mimalloc allocation. `size` and `alignment`
+/// must match the corresponding allocation contract.
+#[inline]
+pub unsafe fn mi_free_csize_aligned(p: *mut c_void, size: size_t, alignment: size_t) {
+    if alignment <= size && size <= MI_SMALL_SIZE_MAX {
+        unsafe { mi_free_small(p) };
+    } else {
+        unsafe { mi_free(p) };
+    }
+}
+
+/// Free a non-null allocation when its size and alignment are statically known.
+///
+/// This mirrors mimalloc's inline `mi_free_csize_aligned_nonnull` helper.
+///
+/// # Safety
+/// `p` must be a non-null valid mimalloc allocation. `size` and `alignment`
+/// must match the corresponding allocation contract.
+#[inline]
+pub unsafe fn mi_free_csize_aligned_nonnull(p: *mut c_void, size: size_t, alignment: size_t) {
+    if alignment <= size && size <= MI_SMALL_SIZE_MAX {
+        unsafe { mi_free_small_nonnull(p) };
+    } else {
+        unsafe { mi_free(p) };
+    }
+}
+
 // ── Aligned allocation ──────────────────────────────────────────────────────
 
 unsafe extern "C" {
@@ -321,6 +355,13 @@ unsafe extern "C" {
     pub fn mi_theap_zalloc_small(theap: *mut mi_theap_t, size: size_t) -> *mut c_void;
     pub fn mi_theap_wmalloc_small(theap: *mut mi_theap_t, wsize: size_t) -> *mut c_void;
     pub fn mi_theap_wzalloc_small(theap: *mut mi_theap_t, wsize: size_t) -> *mut c_void;
+
+    /// C++-semantics allocation APIs. An installed C++ new-handler may throw;
+    /// callers must not allow foreign exceptions to cross into Rust.
+    pub fn mi_theap_alloc_new(theap: *mut mi_theap_t, size: size_t) -> *mut c_void;
+    pub fn mi_theap_alloc_new_n(theap: *mut mi_theap_t, count: size_t, size: size_t)
+    -> *mut c_void;
+    pub fn mi_theap_alloc_new_nothrow(theap: *mut mi_theap_t, size: size_t) -> *mut c_void;
 }
 
 /// Allocate from a thread-local heap when the size is statically known.

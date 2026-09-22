@@ -129,6 +129,35 @@ impl MiMalloc {
         unsafe { rustfs_mimalloc_sys::mi_free_csize_nonnull(ptr.as_ptr() as *mut c_void, size) }
     }
 
+    /// Free a mimalloc block when its allocation size and alignment are known.
+    ///
+    /// For non-over-aligned small allocations this uses mimalloc's small-free
+    /// fast path. Over-aligned allocations use the general free path.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a valid mimalloc allocation. `size` and
+    /// `alignment` must match the corresponding allocation contract.
+    #[inline]
+    pub unsafe fn free_csize_aligned(ptr: *mut u8, size: usize, alignment: usize) {
+        unsafe { rustfs_mimalloc_sys::mi_free_csize_aligned(ptr as *mut c_void, size, alignment) }
+    }
+
+    /// Free a non-null mimalloc block when its allocation size and alignment are known.
+    ///
+    /// # Safety
+    /// `ptr` must be a valid mimalloc allocation. `size` and `alignment` must
+    /// match the corresponding allocation contract.
+    #[inline]
+    pub unsafe fn free_csize_aligned_nonnull(ptr: NonNull<u8>, size: usize, alignment: usize) {
+        unsafe {
+            rustfs_mimalloc_sys::mi_free_csize_aligned_nonnull(
+                ptr.as_ptr() as *mut c_void,
+                size,
+                alignment,
+            )
+        }
+    }
+
     /// Free a small mimalloc block.
     ///
     /// # Safety
@@ -258,7 +287,7 @@ mod tests {
 
     #[test]
     fn version_is_v3() {
-        assert!(MiMalloc::version() >= 30502, "expected >= V3.5.2");
+        assert!(MiMalloc::version() >= 30503, "expected >= V3.5.3");
     }
 
     #[test]
@@ -384,6 +413,40 @@ mod tests {
             let large = rustfs_mimalloc_sys::mi_malloc(large_size);
             let large = NonNull::new(large as *mut u8).expect("mi_malloc returned null");
             MiMalloc::free_csize_nonnull(large, large_size);
+        }
+    }
+
+    #[test]
+    fn free_csize_aligned_routes_overaligned_small_allocations() {
+        unsafe {
+            let ptr = rustfs_mimalloc_sys::mi_malloc_aligned(8, 16 * 1024);
+            let ptr = NonNull::new(ptr as *mut u8).expect("mi_malloc_aligned returned null");
+            assert_eq!(ptr.as_ptr() as usize % (16 * 1024), 0);
+            MiMalloc::free_csize_aligned_nonnull(ptr, 8, 16 * 1024);
+
+            let ptr = rustfs_mimalloc_sys::mi_malloc_aligned(64, 8);
+            assert!(!ptr.is_null(), "mi_malloc_aligned returned null");
+            MiMalloc::free_csize_aligned(ptr as *mut u8, 64, 8);
+        }
+    }
+
+    #[test]
+    fn theap_alloc_new_ffi_symbols_are_available() {
+        unsafe {
+            let heap = rustfs_mimalloc_sys::mi_heap_new();
+            assert!(!heap.is_null(), "mi_heap_new returned null");
+            let theap = rustfs_mimalloc_sys::mi_heap_theap(heap);
+            assert!(!theap.is_null(), "mi_heap_theap returned null");
+
+            for ptr in [
+                rustfs_mimalloc_sys::mi_theap_alloc_new(theap, 64),
+                rustfs_mimalloc_sys::mi_theap_alloc_new_n(theap, 2, 32),
+                rustfs_mimalloc_sys::mi_theap_alloc_new_nothrow(theap, 64),
+            ] {
+                assert!(!ptr.is_null(), "mi_theap_alloc_new* returned null");
+                rustfs_mimalloc_sys::mi_free(ptr);
+            }
+            rustfs_mimalloc_sys::mi_heap_delete(heap);
         }
     }
 }

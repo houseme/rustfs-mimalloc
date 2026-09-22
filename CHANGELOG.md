@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-09-22
+
+### Changed
+
+- Updated the mimalloc submodule to upstream v3.5.3 (commit `d4881d3`).
+- Updated the exposed build metadata version to `30503`.
+
+### Fixed
+
+- Inherited mimalloc's fix for exclusive arena allocations that cross child
+  arenas, including managed regions larger than 16 GiB.
+- Inherited fixes for over-aligned small allocation frees and local-dynamic TLS
+  process initialization.
+
+### Added
+
+- Exposed V3.5.3's aligned constant-size free helpers as unsafe
+  `mi_free_csize_aligned{,_nonnull}` FFI mirrors and `MiMalloc` methods.
+- Exposed raw `mi_theap_alloc_new`, `mi_theap_alloc_new_n`, and
+  `mi_theap_alloc_new_nothrow` FFI. These retain their upstream C++ OOM-handler
+  semantics and intentionally have no safe Rust wrapper.
+
 ## [0.5.4] - 2026-09-16
 
 ### Changed
@@ -130,7 +152,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow: tag-triggered + manual dispatch, crates.io publish, GitHub Release.
 - 22 unit tests + 2 doc-tests + allocation benchmarks.
 
-[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.1...v0.5.2

@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.5.2). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.5.3). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 ### Why this crate?
 
@@ -25,7 +25,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.5.4"
+rustfs-mimalloc = "0.5.5"
 ```
 
 ```rust
@@ -72,7 +72,7 @@ Implements `GlobalAlloc` with `alloc`, `alloc_zeroed`, `dealloc`, `realloc` — 
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30502 = V3.5.2
+// Version: 30503 = V3.5.3
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -125,8 +125,13 @@ unsafe {
 Use `MiMalloc::malloc_csize`, `zalloc_csize`, `wmalloc_small`, `wzalloc_small`,
 `free_csize`, `free_csize_nonnull`, `free_small`, and `free_small_nonnull` only
 when the original allocation size contract is known and the pointer is managed
-by mimalloc. These mirror mimalloc V3.5.2's small, word-size, and constant-size
+by mimalloc. These mirror mimalloc V3.5.3's small, word-size, and constant-size
 fast paths for language runtimes and other allocation-heavy systems.
+
+Use `MiMalloc::free_csize_aligned` or `free_csize_aligned_nonnull` when both
+the original size and alignment are known. They preserve the small-free fast
+path only when the allocation is not over-aligned, avoiding incorrect routing
+for small allocations with a larger alignment.
 
 ### Threadpool Hint
 
@@ -174,7 +179,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (v3.5.2) | V2/V3 (configurable) |
+| mimalloc version | V3 only (v3.5.3) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
