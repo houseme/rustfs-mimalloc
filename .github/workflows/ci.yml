@@ -84,6 +84,26 @@ jobs:
       - name: Build (musl, static)
         run: cargo build --target x86_64-unknown-linux-musl --features secure
 
+  # ── Windows static CRT ────────────────────────────────────────────────────
+
+  windows-static-crt:
+    name: Windows static CRT
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (static CRT)
+        run: cargo build --features secure
+
+      - name: Test (static CRT)
+        run: cargo test --features secure
+
   # ── MSRV check ─────────────────────────────────────────────────────────────
 
   msrv:

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Honor Cargo's `crt-static` target feature for MSVC builds instead of forcing
+  `/MD`, allowing a Windows binary and the vendored mimalloc library to use the
+  same static CRT (`/MT`) without a runtime DLL dependency.
+
+### Added
+
+- Added a Windows static-CRT CI job using `-C target-feature=+crt-static`.
+
 ## [0.5.5] - 2026-09-22
 
 ### Changed

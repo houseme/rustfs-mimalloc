@@ -218,6 +218,21 @@ The `-ftls-model=initial-exec` flag [breaks compatibility](https://github.com/pu
 | FreeBSD | x86_64 | ✅ Should work |
 | Linux (musl) | x86_64 | ✅ Tested in CI |
 
+### Windows Static CRT
+
+For an MSVC binary that must not depend on `vcruntime140.dll` or `ucrtbase.dll`,
+enable Rust's static CRT target feature for the final binary. The build script
+passes the matching `/MT` setting to mimalloc through `cc`; do not add a
+conflicting `/MD` flag manually.
+
+```toml
+# .cargo/config.toml
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+```
+
+This is validated in the Windows CI matrix.
+
 ## Minimum Supported Rust Version
 
 **Rust 1.96.0** (2026-05-28). This crate follows a rolling support window for the latest three stable Rust release trains. With Rust 1.98.0 as the current stable release, the supported window is 1.96.x through 1.98.x.

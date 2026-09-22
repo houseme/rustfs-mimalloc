@@ -63,6 +63,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_LOCAL_DYNAMIC_TLS");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WIN_DIRECT_TLS");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NO_THP");
+    // `cc` selects /MT for MSVC when Cargo enables `crt-static`.
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE");
 
     let mut build = cc::Build::new();
     build.file("c_src/mimalloc/src/static.c");
@@ -122,13 +124,9 @@ fn main() {
 
     // Platform-specific compiler flags
     if target.is_msvc() {
-        // MSVC: use correct runtime library based on debug/release
-        // See: https://github.com/purpleprotocol/mimalloc_rust/pull/167
-        if is_debug {
-            build.flag("/MDd");
-        } else {
-            build.flag("/MD");
-        }
+        // Do not force /MD here. `cc` reads Cargo's `crt-static` target feature
+        // and selects /MT when the final Rust binary uses the static CRT; this
+        // keeps mimalloc and Rust in one CRT domain. Otherwise it uses /MD.
         // Suppress common MSVC warnings
         build.flag("/wd4100"); // unreferenced formal parameter
         build.flag("/wd4127"); // conditional expression is constant

@@ -34,6 +34,13 @@ unsafe {
 | `local_dynamic_tls` | Use local-dynamic TLS model |
 | `no_thp` | Disable Transparent Huge Pages |
 
+## Windows Static CRT
+
+On `*-pc-windows-msvc`, configure the final Rust binary with
+`-C target-feature=+crt-static`. The build script lets `cc` select `/MT` for
+mimalloc from Cargo's `crt-static` target feature, so the C allocator and Rust
+share one CRT mode. Without that target feature, the default remains `/MD`.
+
 ## What's Included
 
 This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. No system mimalloc installation required.
