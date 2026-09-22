@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.5.5"
+rustfs-mimalloc-sys = "0.5.6"
 ```
 
 ```rust

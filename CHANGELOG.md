@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-09-22
+
 ### Fixed
 
 - Honor Cargo's `crt-static` target feature for MSVC builds instead of forcing
@@ -162,7 +164,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow: tag-triggered + manual dispatch, crates.io publish, GitHub Release.
 - 22 unit tests + 2 doc-tests + allocation benchmarks.
 
-[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.2...v0.5.3

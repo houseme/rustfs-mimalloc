@@ -3,7 +3,7 @@ members = ["rustfs-mimalloc-sys", "rustfs-mimalloc"]
 resolver = "3"
 
 [workspace.package]
-version = "0.5.5"
+version = "0.5.6"
 edition = "2024"
 rust-version = "1.96.0"
 license = "Apache-2.0"
@@ -15,6 +15,6 @@ keywords = ["allocator", "mimalloc", "memory"]
 categories = ["memory-management", "no-std"]
 
 [workspace.dependencies]
-rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.5.5" }
-rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.5.5" }
+rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.5.6" }
+rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.5.6" }
 cc = "1.4.7"
