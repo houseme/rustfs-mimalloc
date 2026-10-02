@@ -1,4 +1,6 @@
-//! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3 (v3.5.3).
+//! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
+//!
+//! Pinned to the v3.5.4 interim tag recorded by the Git submodule.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 
@@ -46,7 +48,7 @@ pub type mi_arena_id_t = *mut c_void;
 
 // ── Option enum ─────────────────────────────────────────────────────────────
 //
-// Kept in sync with mimalloc V3.5.3 `mi_option_e` in `mimalloc.h`.
+// Kept in sync with the pinned `mi_option_e` in `mimalloc.h`.
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +92,10 @@ pub enum mi_option_t {
     mi_option_arena_max_object_size = 45,
     mi_option_arena_is_numa_local = 46,
     mi_option_collect_merges_stats = 47,
+    mi_option_profile_alloc_interval = 48,
+    mi_option_profile_inuse_interval = 49,
+    mi_option_profile_time_interval = 50,
+    mi_option_profile_sample_rate = 51,
 }
 
 // ── Heap area (for visiting blocks) ─────────────────────────────────────────
@@ -117,21 +123,22 @@ pub type mi_profiler_on_alloc_fun = unsafe extern "C" fn(
     requested_size: size_t,
     bytes_sample_rate: size_t,
     bytes_since_last_sample: u64,
-    heap: *const mi_heap_t,
+    heap: *mut mi_heap_t,
 ) -> size_t;
 pub type mi_profiler_on_realloc_inplace_fun = unsafe extern "C" fn(
     profiler: *mut mi_profiler_t,
     profiler_data: *mut mi_profiler_sample_data_t,
     ptr: *mut c_void,
     old_size: size_t,
-    heap: *const mi_heap_t,
+    heap: *mut mi_heap_t,
 ) -> size_t;
 pub type mi_profiler_on_free_fun = unsafe extern "C" fn(
     profiler: *mut mi_profiler_t,
     profiler_data: *mut mi_profiler_sample_data_t,
     ptr: *mut c_void,
-    heap: *const mi_heap_t,
+    heap: *mut mi_heap_t,
 );
+pub type mi_profiler_on_snapshot_fun = unsafe extern "C" fn(profiler: *mut mi_profiler_t);
 pub type mi_block_visit_fun = unsafe extern "C" fn(
     heap: *const mi_heap_t,
     area: *const mi_heap_area_t,
@@ -158,6 +165,7 @@ pub struct mi_profiler_t {
     pub on_alloc: Option<mi_profiler_on_alloc_fun>,
     pub on_free: Option<mi_profiler_on_free_fun>,
     pub on_realloc_inplace: Option<mi_profiler_on_realloc_inplace_fun>,
+    pub on_snapshot: Option<mi_profiler_on_snapshot_fun>,
 }
 
 // ── Standard malloc interface ───────────────────────────────────────────────
@@ -185,6 +193,13 @@ unsafe extern "C" {
     pub fn mi_free_size(p: *mut c_void, size: size_t);
     pub fn mi_free_small(p: *mut c_void);
     pub fn mi_free_small_nonnull(p: *mut c_void);
+    /// The non-null allocation must be on a small page still owned by the calling thread.
+    /// Allocation on this thread alone does not prove current page ownership.
+    pub fn mi_free_small_local(p: *mut c_void);
+    /// As `mi_free_small_local`, additionally requiring a non-null pointer.
+    pub fn mi_free_small_local_nonnull(p: *mut c_void);
+    pub fn mi_free_size_aligned(p: *mut c_void, size: size_t, alignment: size_t);
+    pub fn mi_free_aligned(p: *mut c_void, alignment: size_t);
 }
 
 /// Convert a byte size to a mimalloc machine-word count.
@@ -333,6 +348,9 @@ unsafe extern "C" {
     pub fn mi_heap_main() -> *mut mi_heap_t;
     pub fn mi_heap_of(p: *const c_void) -> *mut mi_heap_t;
     pub fn mi_heap_contains(heap: *const mi_heap_t, p: *const c_void) -> bool;
+    pub fn mi_any_heap_contains(p: *const c_void) -> bool;
+    /// Call only while no thread accesses the heap (including its allocations).
+    pub fn mi_heap_set_numa_affinity(heap: *mut mi_heap_t, numa_node: c_int);
     pub fn mi_heap_theap(heap: *mut mi_heap_t) -> *mut mi_theap_t;
 
     pub fn mi_heap_malloc(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
@@ -344,11 +362,45 @@ unsafe extern "C" {
         size: size_t,
         alignment: size_t,
     ) -> *mut c_void;
+    pub fn mi_heap_zalloc_aligned(
+        heap: *mut mi_heap_t,
+        size: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    pub fn mi_heap_realloc_aligned(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
 }
 
 // ── Thread-local heaps ──────────────────────────────────────────────────────
 
 unsafe extern "C" {
+    /// The returned handle belongs to the calling thread; do not send it to another thread.
+    pub fn mi_theap_get_default() -> *mut mi_theap_t;
+    pub fn mi_theap_set_default(theap: *mut mi_theap_t) -> *mut mi_theap_t;
+    pub fn mi_theap_collect(theap: *mut mi_theap_t, force: bool);
+    pub fn mi_theap_calloc(theap: *mut mi_theap_t, count: size_t, size: size_t) -> *mut c_void;
+    pub fn mi_theap_malloc_aligned(
+        theap: *mut mi_theap_t,
+        size: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    pub fn mi_theap_zalloc_aligned(
+        theap: *mut mi_theap_t,
+        size: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    pub fn mi_theap_realloc(theap: *mut mi_theap_t, p: *mut c_void, newsize: size_t)
+    -> *mut c_void;
+    /// Only valid for blocks originally allocated with zero initialization.
+    pub fn mi_theap_rezalloc(
+        theap: *mut mi_theap_t,
+        p: *mut c_void,
+        newsize: size_t,
+    ) -> *mut c_void;
     pub fn mi_theap_malloc(theap: *mut mi_theap_t, size: size_t) -> *mut c_void;
     pub fn mi_theap_zalloc(theap: *mut mi_theap_t, size: size_t) -> *mut c_void;
     pub fn mi_theap_malloc_small(theap: *mut mi_theap_t, size: size_t) -> *mut c_void;
@@ -433,6 +485,11 @@ unsafe extern "C" {
     pub fn mi_option_get(option: mi_option_t) -> c_long;
     pub fn mi_option_get_size(option: mi_option_t) -> size_t;
     pub fn mi_option_set(option: mi_option_t, value: c_long);
+    pub fn mi_option_get_clamp(option: mi_option_t, min: c_long, max: c_long) -> c_long;
+    pub fn mi_option_set_default(option: mi_option_t, value: c_long);
+    pub fn mi_option_set_enabled(option: mi_option_t, enable: bool);
+    pub fn mi_option_set_enabled_default(option: mi_option_t, enable: bool);
+    pub fn mi_options_print_out(out: Option<mi_output_fun>, arg: *mut c_void);
 }
 
 // ── Experimental profiling ─────────────────────────────────────────────────
@@ -444,6 +501,19 @@ unsafe extern "C" {
     pub fn mi_profile(profiler: *mut mi_profiler_t) -> bool;
     pub fn mi_profiler_start(profiler: *mut mi_profiler_t) -> bool;
     pub fn mi_profiler_stop(profiler: *mut mi_profiler_t) -> bool;
+    /// Invokes the snapshot callback; callback state must remain alive and must not unwind.
+    pub fn mi_profiler_snapshot(profiler: *mut mi_profiler_t);
+    /// Creates an experimental pprof profiler. The file name is a NUL-terminated
+    /// string. Stop and detach the profiler, then free all sampled allocations
+    /// and quiesce its callbacks before deleting it.
+    pub fn mi_pprof_profiler_new(
+        initial_threshold: size_t,
+        base_file_name: *const c_char,
+        alloc_interval_size: size_t,
+        inuse_interval_size: size_t,
+        time_interval_secs: size_t,
+    ) -> *mut mi_profiler_t;
+    pub fn mi_pprof_profiler_delete(profiler: *mut mi_profiler_t);
 }
 
 // ── POSIX-compatible ────────────────────────────────────────────────────────

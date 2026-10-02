@@ -27,7 +27,9 @@ pub(crate) fn collect_mimalloc_output(
         &mut output as *mut OutputBuffer as *mut c_void,
     );
 
-    let mut result = String::from_utf8_lossy(&output.bytes).into_owned();
+    // Reuse the callback buffer for the usual UTF-8 output instead of copying it.
+    let mut result = String::from_utf8(output.bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
     if output.truncated {
         result.push_str("\n[truncated: mimalloc profile output exceeded internal buffer]\n");
     }

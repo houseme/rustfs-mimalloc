@@ -15,7 +15,7 @@ readme = "README.md"
 
 [features]
 default = []
-# Security: heap allocation encryption
+# Security: guard pages and encoded/randomized free lists
 secure = ["rustfs-mimalloc-sys/secure"]
 # Debug mode
 debug = ["rustfs-mimalloc-sys/debug"]

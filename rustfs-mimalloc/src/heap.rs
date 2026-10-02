@@ -23,6 +23,9 @@ pub struct Heap {
     owned: bool,
 }
 
+// SAFETY: V3 first-class heaps support allocation and collection from any thread.
+// Destruction consumes the owned handle; borrowed handles require the caller of
+// `heap_of` to uphold the heap lifetime and synchronization contract.
 unsafe impl Send for Heap {}
 unsafe impl Sync for Heap {}
 
@@ -47,7 +50,9 @@ impl Heap {
     /// Get the heap that owns `ptr`.
     ///
     /// # Safety
-    /// `ptr` must be a valid mimalloc-allocated pointer.
+    /// `ptr` must be a valid mimalloc-allocated pointer. The owning heap must
+    /// remain alive for the returned handle's entire lifetime, and must not be
+    /// deleted or destroyed concurrently with any operation on this handle.
     pub unsafe fn heap_of(ptr: *const u8) -> Option<Self> {
         NonNull::new(unsafe { rustfs_mimalloc_sys::mi_heap_of(ptr as *const c_void) })
             .map(Self::borrowed)
@@ -85,6 +90,39 @@ impl Heap {
         unsafe {
             rustfs_mimalloc_sys::mi_heap_malloc_aligned(self.ptr.as_ptr(), size, alignment)
                 as *mut u8
+        }
+    }
+
+    /// Allocate zeroed memory with a power-of-two alignment.
+    ///
+    /// # Safety
+    /// Check the result for null; free a successful allocation with `mi_free`.
+    pub unsafe fn zalloc_aligned(&self, size: usize, alignment: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_zalloc_aligned(self.ptr.as_ptr(), size, alignment).cast()
+        }
+    }
+
+    /// Reallocate memory while retaining its power-of-two alignment.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live mimalloc allocation with the given alignment.
+    /// On failure the original allocation remains valid. Free the successful
+    /// result with `mi_free`; do not use the old pointer after success.
+    pub unsafe fn realloc_aligned(
+        &self,
+        ptr: *mut u8,
+        new_size: usize,
+        alignment: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_realloc_aligned(
+                self.ptr.as_ptr(),
+                ptr.cast(),
+                new_size,
+                alignment,
+            )
+            .cast()
         }
     }
 
@@ -281,6 +319,25 @@ mod tests {
             }
         }
         heap.delete();
+    }
+
+    #[test]
+    fn heap_aligned_zero_and_realloc_preserve_data() {
+        let heap = Heap::new().unwrap();
+        unsafe {
+            for alignment in [8, 64, 4096, 16 * 1024] {
+                let ptr = heap.zalloc_aligned(64, alignment);
+                assert!(!ptr.is_null());
+                assert_eq!(ptr as usize % alignment, 0);
+                assert!((0..64).all(|i| *ptr.add(i) == 0));
+                core::ptr::write_bytes(ptr, 0xA5, 64);
+                let ptr = heap.realloc_aligned(ptr, 4096, alignment);
+                assert!(!ptr.is_null());
+                assert_eq!(ptr as usize % alignment, 0);
+                assert!((0..64).all(|i| *ptr.add(i) == 0xA5));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            }
+        }
     }
 
     #[test]

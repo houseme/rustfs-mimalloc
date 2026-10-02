@@ -19,6 +19,7 @@ include = [
     "README.md",
     "build.rs",
     "src/**",
+    "tests/**",
     "c_src/mimalloc/LICENSE",
     "c_src/mimalloc/include/**",
     "c_src/mimalloc/src/**",
@@ -26,7 +27,7 @@ include = [
 
 [features]
 default = []
-# Security: heap allocation encryption (MI_SECURE=4)
+# Security: guard pages and encoded/randomized free lists (MI_SECURE=4)
 secure = []
 # Debug mode with extra checks
 debug = []
@@ -42,3 +43,7 @@ no_thp = []
 
 [build-dependencies]
 cc = { workspace = true }
+
+[[test]]
+name = "upstream_api"
+harness = false

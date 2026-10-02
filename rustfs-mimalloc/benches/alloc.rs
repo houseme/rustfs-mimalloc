@@ -1,5 +1,7 @@
 //! Benchmarks: mimalloc vs system allocator.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 #[global_allocator]
@@ -8,14 +10,26 @@ static GLOBAL: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
 fn bench_alloc_dealloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("alloc_dealloc");
     for size in [8, 64, 256, 1024, 4096, 65536] {
-        group.bench_with_input(BenchmarkId::new("mimalloc", size), &size, |b, &size| {
-            b.iter(|| {
-                let layout = std::alloc::Layout::from_size_align(size, 8).unwrap();
-                unsafe {
-                    let ptr = std::alloc::alloc(layout);
+        // Use System explicitly; the global allocator above is mimalloc.
+        // With override enabled the C allocator is intercepted as well.
+        if !cfg!(feature = "override") {
+            group.bench_with_input(BenchmarkId::new("system", size), &size, |b, &size| {
+                let layout = Layout::from_size_align(size, 8).unwrap();
+                b.iter(|| unsafe {
+                    let ptr = System.alloc(layout);
+                    assert!(!ptr.is_null());
                     std::hint::black_box(ptr);
-                    std::alloc::dealloc(ptr, layout);
-                }
+                    System.dealloc(ptr, layout);
+                });
+            });
+        }
+        group.bench_with_input(BenchmarkId::new("mimalloc", size), &size, |b, &size| {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            b.iter(|| unsafe {
+                let ptr = std::alloc::alloc(layout);
+                assert!(!ptr.is_null());
+                std::hint::black_box(ptr);
+                std::alloc::dealloc(ptr, layout);
             });
         });
     }
@@ -32,6 +46,26 @@ fn bench_aligned_alloc(c: &mut Criterion) {
                     let ptr = std::alloc::alloc(layout);
                     std::hint::black_box(ptr);
                     std::alloc::dealloc(ptr, layout);
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_small_free(c: &mut Criterion) {
+    let mut group = c.benchmark_group("small_free_64");
+    for local in [false, true] {
+        group.bench_function(if local { "local" } else { "generic" }, |b| {
+            b.iter(|| unsafe {
+                let ptr = rustfs_mimalloc::MiMalloc::malloc_csize(64);
+                assert!(!ptr.is_null());
+                std::hint::black_box(ptr);
+                // Immediate free on the allocating thread, no collection or heap deletion.
+                if local {
+                    rustfs_mimalloc::MiMalloc::free_small_local(ptr);
+                } else {
+                    rustfs_mimalloc_sys::mi_free(ptr.cast());
                 }
             });
         });
@@ -60,5 +94,11 @@ fn bench_vec(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_alloc_dealloc, bench_aligned_alloc, bench_vec);
+criterion_group!(
+    benches,
+    bench_alloc_dealloc,
+    bench_aligned_alloc,
+    bench_small_free,
+    bench_vec
+);
 criterion_main!(benches);

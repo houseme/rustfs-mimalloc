@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.5.3). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.5.4 interim). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 ### Why this crate?
 
@@ -25,7 +25,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.5.6"
+rustfs-mimalloc = "0.6.0"
 ```
 
 ```rust
@@ -44,10 +44,10 @@ fn main() {
 
 | Feature | Default | Description |
 |---------|:-------:|-------------|
-| `secure` | | Heap allocation encryption (MI_SECURE=4) |
+| `secure` | | Guard pages and encoded/randomized free lists (MI_SECURE=4) |
 | `debug` | | mimalloc debug checks |
 | `debug_in_debug` | | Auto-enable `debug` in Cargo debug builds |
-| `override` | | Override system `malloc`/`free` |
+| `override` | | Override system `malloc`/`free` on non-Windows targets |
 | `local_dynamic_tls` | | Use local-dynamic TLS model (fixes polars compatibility) |
 | `no_thp` | | Disable Transparent Huge Pages on Linux/Android |
 
@@ -64,7 +64,8 @@ use rustfs_mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 ```
 
-Implements `GlobalAlloc` with `alloc`, `alloc_zeroed`, `dealloc`, `realloc` — all using `mi_malloc_aligned` for guaranteed alignment.
+Implements `GlobalAlloc` with aligned allocation/reallocation and general
+`mi_free` deallocation.
 
 ### Statistics & Diagnostics
 
@@ -72,7 +73,7 @@ Implements `GlobalAlloc` with `alloc`, `alloc_zeroed`, `dealloc`, `realloc` — 
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30503 = V3.5.3
+// Version: 30504 = V3.5.4
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -99,14 +100,17 @@ use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
 // Return memory to OS immediately (default delay: 10ms)
-MiMalloc::option_set(mi_option_t::mi_option_purge_delay, 0);
+// Configure before starting other threads.
+unsafe { MiMalloc::option_set(mi_option_t::mi_option_purge_delay, 0); }
 
 // Read an option
 let delay = MiMalloc::option_get(mi_option_t::mi_option_purge_delay);
 
 // Toggle
-MiMalloc::option_enable(mi_option_t::mi_option_show_errors);
-MiMalloc::option_disable(mi_option_t::mi_option_show_errors);
+unsafe {
+    MiMalloc::option_enable(mi_option_t::mi_option_show_errors);
+    MiMalloc::option_disable(mi_option_t::mi_option_show_errors);
+}
 ```
 
 ### Small Allocation And Free Fast Paths
@@ -125,13 +129,51 @@ unsafe {
 Use `MiMalloc::malloc_csize`, `zalloc_csize`, `wmalloc_small`, `wzalloc_small`,
 `free_csize`, `free_csize_nonnull`, `free_small`, and `free_small_nonnull` only
 when the original allocation size contract is known and the pointer is managed
-by mimalloc. These mirror mimalloc V3.5.3's small, word-size, and constant-size
+by mimalloc. These mirror mimalloc V3.5.4's small, word-size, and constant-size
 fast paths for language runtimes and other allocation-heavy systems.
 
 Use `MiMalloc::free_csize_aligned` or `free_csize_aligned_nonnull` when both
 the original size and alignment are known. They preserve the small-free fast
 path only when the allocation is not over-aligned, avoiding incorrect routing
 for small allocations with a larger alignment.
+
+### V3.5.4 APIs and migration
+
+The submodule pins upstream [v3.5.4 interim](https://github.com/microsoft/mimalloc/tree/v3.5.4)
+(`f8401befa675adb13b98decababd7fdc59572477`). The latest full upstream GitHub
+Release at the time of this update remains v3.5.3.
+
+- `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
+  path. These unsafe functions require a small allocation whose page is **still
+  owned by the calling thread**. They are unsuitable for general cross-thread
+  frees and are not used by `GlobalAlloc`.
+- `mi_profiler_snapshot` and `mi_pprof_profiler_{new,delete}` are available as
+  experimental raw FFI, together with all four `mi_option_profile_*` controls.
+  The profiler ABI adds `on_snapshot`; allocation/free callbacks now receive
+  `*mut mi_heap_t`. Update custom `mi_profiler_t` initializers accordingly.
+- `Heap::zalloc_aligned` and `Heap::realloc_aligned` preserve requested alignment.
+  `MiMalloc::good_size`, `options_print`, `option_get_clamp`, and default option
+  setters support capacity planning and diagnostics.
+- Option setters/toggles are now **unsafe**: upstream storage is not atomic.
+  Configure before starting other threads or exclude all concurrent mimalloc
+  access; a mutex around setters alone is insufficient.
+
+To collect a built-in heap profile, start the application with
+`MIMALLOC_PROFILE=/path/to/profile` (protobuf), or a name ending in `.heap`
+(text). Sampling is inactive unless enabled.
+
+**Interim limitation:** the pinned upstream code copies `profile_disabled=true`
+into new thread heaps without clearing it. Dedicated-heap and worker-thread
+profiling may therefore remain inactive. The integration test verifies actual
+samples on the main heap in a single-threaded process; it does not establish
+complete multi-thread profiling coverage. Custom profilers must remain alive
+until sampling is stopped, the profiler is detached, all sampled allocations
+are freed, and callbacks have finished. There is deliberately no safe RAII
+profiler wrapper yet.
+
+Backtraces are configured for macOS, GNU Linux and Windows. musl builds keep
+profiling APIs but do not automatically link an external unwinder; their stack
+traces may be empty. FreeBSD/DragonFly require `libexecinfo` and `libutil`.
 
 ### Threadpool Hint
 
@@ -179,7 +221,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (v3.5.3) | V2/V3 (configurable) |
+| mimalloc version | V3 only (v3.5.4 interim) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
@@ -202,11 +244,11 @@ This crate exclusively targets mimalloc V3. Key improvements over V2:
 
 ### Always Use Aligned Allocation
 
-All `GlobalAlloc` methods call `mi_malloc_aligned` / `mi_realloc_aligned` internally. Previous implementations tried to skip aligned calls for small alignments, causing [alignment bugs](https://github.com/purpleprotocol/mimalloc_rust/issues/87) and [crashes](https://github.com/purpleprotocol/mimalloc_rust/issues/128). The overhead of always using aligned allocation is negligible.
+`GlobalAlloc` allocation and reallocation methods use mimalloc's aligned APIs. Previous implementations tried to skip aligned calls for small alignments, causing [alignment bugs](https://github.com/purpleprotocol/mimalloc_rust/issues/87) and [crashes](https://github.com/purpleprotocol/mimalloc_rust/issues/128). Its cost should be measured for the target workload before considering any fast-path change.
 
-### No TLS Model Override by Default
+### Platform TLS Models
 
-The `-ftls-model=initial-exec` flag [breaks compatibility](https://github.com/purpleprotocol/mimalloc_rust/issues/138) with some projects (e.g., polars). Use the `local_dynamic_tls` feature to opt-in.
+Linux and FreeBSD use `initial-exec` for performance by default. Enable `local_dynamic_tls` for dynamic-loading compatibility. macOS retains upstream's pthread TLS implementation; the feature does not switch it to compiler thread locals.
 
 ## Platform Support
 
@@ -235,7 +277,7 @@ This is validated in the Windows CI matrix.
 
 ## Minimum Supported Rust Version
 
-**Rust 1.96.0** (2026-05-28). This crate follows a rolling support window for the latest three stable Rust release trains. With Rust 1.98.0 as the current stable release, the supported window is 1.96.x through 1.98.x.
+**Rust 1.96.0** (2026-05-28). This crate follows a rolling support window for the latest three stable Rust release trains. The declared minimum remains 1.96.0 and is checked separately in CI.
 
 The MSRV is tested in CI and will not change without a minor version bump.
 

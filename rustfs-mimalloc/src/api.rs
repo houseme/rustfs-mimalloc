@@ -50,6 +50,13 @@ impl MiMalloc {
         unsafe { rustfs_mimalloc_sys::mi_usable_size(ptr as *const c_void) }
     }
 
+    /// Allocation size class for a requested byte count, useful for capacity planning.
+    /// This is a hint; it does not allocate memory or increase an existing allocation.
+    #[inline]
+    pub fn good_size(size: usize) -> usize {
+        unsafe { rustfs_mimalloc_sys::mi_good_size(size) }
+    }
+
     /// Convert a byte size to a mimalloc machine-word count.
     ///
     /// This mirrors mimalloc's `mi_wsize_from_size` helper for the word-size
@@ -86,7 +93,8 @@ impl MiMalloc {
     /// Allocate a small block by machine-word count.
     ///
     /// # Safety
-    /// `wsize` is measured in `usize` machine words, not bytes. The returned raw
+    /// `wsize` must not exceed [`crate::MI_SMALL_WSIZE_MAX`] and is measured
+    /// in `usize` machine words, not bytes. The returned raw
     /// pointer must be checked for null and eventually freed with a compatible
     /// mimalloc free API.
     #[inline]
@@ -97,7 +105,8 @@ impl MiMalloc {
     /// Allocate a zeroed small block by machine-word count.
     ///
     /// # Safety
-    /// `wsize` is measured in `usize` machine words, not bytes. The returned raw
+    /// `wsize` must not exceed [`crate::MI_SMALL_WSIZE_MAX`] and is measured
+    /// in `usize` machine words, not bytes. The returned raw
     /// pointer must be checked for null and eventually freed with a compatible
     /// mimalloc free API.
     #[inline]
@@ -111,7 +120,8 @@ impl MiMalloc {
     ///
     /// # Safety
     /// `ptr` must be null or a valid mimalloc allocation, and `size` must be
-    /// the allocation size used for the corresponding allocation.
+    /// the allocation size used for the corresponding allocation. For aligned
+    /// allocations use [`Self::free_csize_aligned`] instead.
     #[inline]
     pub unsafe fn free_csize(ptr: *mut u8, size: usize) {
         unsafe { rustfs_mimalloc_sys::mi_free_csize(ptr as *mut c_void, size) }
@@ -123,7 +133,8 @@ impl MiMalloc {
     ///
     /// # Safety
     /// `ptr` must be a valid mimalloc allocation, and `size` must be the
-    /// allocation size used for the corresponding allocation.
+    /// allocation size used for the corresponding allocation. For aligned
+    /// allocations use [`Self::free_csize_aligned_nonnull`] instead.
     #[inline]
     pub unsafe fn free_csize_nonnull(ptr: NonNull<u8>, size: usize) {
         unsafe { rustfs_mimalloc_sys::mi_free_csize_nonnull(ptr.as_ptr() as *mut c_void, size) }
@@ -162,7 +173,8 @@ impl MiMalloc {
     ///
     /// # Safety
     /// `ptr` must be null or a valid mimalloc allocation whose allocation size
-    /// is less than or equal to [`crate::MI_SMALL_SIZE_MAX`].
+    /// is less than or equal to [`crate::MI_SMALL_SIZE_MAX`], obtained through
+    /// a small-allocation API. Over-aligned allocations require an aligned free.
     #[inline]
     pub unsafe fn free_small(ptr: *mut u8) {
         unsafe { rustfs_mimalloc_sys::mi_free_small(ptr as *mut c_void) }
@@ -172,10 +184,35 @@ impl MiMalloc {
     ///
     /// # Safety
     /// `ptr` must be a valid mimalloc allocation whose allocation size is less
-    /// than or equal to [`crate::MI_SMALL_SIZE_MAX`].
+    /// than or equal to [`crate::MI_SMALL_SIZE_MAX`], obtained through a
+    /// small-allocation API. Over-aligned allocations require an aligned free.
     #[inline]
     pub unsafe fn free_small_nonnull(ptr: NonNull<u8>) {
         unsafe { rustfs_mimalloc_sys::mi_free_small_nonnull(ptr.as_ptr() as *mut c_void) }
+    }
+
+    /// Free a small allocation from a page owned by the calling thread.
+    ///
+    /// # Safety
+    /// `ptr` must come from a mimalloc small-allocation API and its page must
+    /// still be owned by the calling thread. Allocation on this thread alone
+    /// does not establish this: collection or heap deletion can abandon pages.
+    /// Do not use this for arbitrary `GlobalAlloc` or cross-thread frees.
+    #[inline]
+    pub unsafe fn free_small_local_nonnull(ptr: NonNull<u8>) {
+        unsafe { rustfs_mimalloc_sys::mi_free_small_local_nonnull(ptr.as_ptr().cast()) }
+    }
+
+    /// Free a local small allocation, accepting null as a no-op.
+    ///
+    /// # Safety
+    /// A non-null `ptr` must meet [`Self::free_small_local_nonnull`]'s contract.
+    #[inline]
+    pub unsafe fn free_small_local(ptr: *mut u8) {
+        // Upstream's debug build asserts non-null even for its nullable variant.
+        if let Some(ptr) = NonNull::new(ptr) {
+            unsafe { Self::free_small_local_nonnull(ptr) }
+        }
     }
 
     /// Process memory information.
@@ -255,10 +292,15 @@ impl MiMalloc {
     /// use rustfs_mimalloc_sys::mi_option_t;
     ///
     /// // Return memory to OS immediately
-    /// MiMalloc::option_set(mi_option_t::mi_option_purge_delay, 0);
+    /// // At startup, before other threads can access mimalloc.
+    /// unsafe { MiMalloc::option_set(mi_option_t::mi_option_purge_delay, 0); }
     /// ```
+    ///
+    /// # Safety
+    /// Upstream option storage is not atomic. Configure options before starting
+    /// other threads, or otherwise exclude every concurrent mimalloc access.
     #[inline]
-    pub fn option_set(
+    pub unsafe fn option_set(
         option: rustfs_mimalloc_sys::mi_option_t,
         value: rustfs_mimalloc_sys::c_long,
     ) {
@@ -266,15 +308,77 @@ impl MiMalloc {
     }
 
     /// Enable an option.
+    ///
+    /// # Safety
+    /// Upstream option storage is not atomic. Configure options before starting
+    /// other threads, or otherwise exclude every concurrent mimalloc access.
     #[inline]
-    pub fn option_enable(option: rustfs_mimalloc_sys::mi_option_t) {
+    pub unsafe fn option_enable(option: rustfs_mimalloc_sys::mi_option_t) {
         unsafe { rustfs_mimalloc_sys::mi_option_enable(option) }
     }
 
     /// Disable an option.
+    ///
+    /// # Safety
+    /// Upstream option storage is not atomic. Configure options before starting
+    /// other threads, or otherwise exclude every concurrent mimalloc access.
     #[inline]
-    pub fn option_disable(option: rustfs_mimalloc_sys::mi_option_t) {
+    pub unsafe fn option_disable(option: rustfs_mimalloc_sys::mi_option_t) {
         unsafe { rustfs_mimalloc_sys::mi_option_disable(option) }
+    }
+
+    /// Set a fallback value without overriding an environment or explicit setting.
+    ///
+    /// # Safety
+    /// Upstream option storage is not atomic. Configure options before starting
+    /// other threads, or otherwise exclude every concurrent mimalloc access.
+    #[inline]
+    pub unsafe fn option_set_default(
+        option: rustfs_mimalloc_sys::mi_option_t,
+        value: rustfs_mimalloc_sys::c_long,
+    ) {
+        unsafe { rustfs_mimalloc_sys::mi_option_set_default(option, value) }
+    }
+
+    /// Set whether an option is enabled.
+    ///
+    /// # Safety
+    /// Upstream option storage is not atomic. Configure options before starting
+    /// other threads, or otherwise exclude every concurrent mimalloc access.
+    #[inline]
+    pub unsafe fn option_set_enabled(option: rustfs_mimalloc_sys::mi_option_t, enabled: bool) {
+        unsafe { rustfs_mimalloc_sys::mi_option_set_enabled(option, enabled) }
+    }
+
+    /// Set a fallback toggle without overriding an environment or explicit setting.
+    ///
+    /// # Safety
+    /// Upstream option storage is not atomic. Configure options before starting
+    /// other threads, or otherwise exclude every concurrent mimalloc access.
+    #[inline]
+    pub unsafe fn option_set_enabled_default(
+        option: rustfs_mimalloc_sys::mi_option_t,
+        enabled: bool,
+    ) {
+        unsafe { rustfs_mimalloc_sys::mi_option_set_enabled_default(option, enabled) }
+    }
+
+    /// Get an option clamped to the inclusive range. Requires `min <= max`.
+    #[inline]
+    pub fn option_get_clamp(
+        option: rustfs_mimalloc_sys::mi_option_t,
+        min: rustfs_mimalloc_sys::c_long,
+        max: rustfs_mimalloc_sys::c_long,
+    ) -> rustfs_mimalloc_sys::c_long {
+        assert!(min <= max, "option clamp range is reversed");
+        unsafe { rustfs_mimalloc_sys::mi_option_get_clamp(option, min, max) }
+    }
+
+    /// Runtime options in mimalloc's human-readable format.
+    pub fn options_print() -> String {
+        crate::ffi::collect_mimalloc_output(|out, arg| unsafe {
+            rustfs_mimalloc_sys::mi_options_print_out(out, arg);
+        })
     }
 }
 
@@ -287,7 +391,45 @@ mod tests {
 
     #[test]
     fn version_is_v3() {
-        assert!(MiMalloc::version() >= 30503, "expected >= V3.5.3");
+        assert_eq!(MiMalloc::version(), 30504, "expected V3.5.4");
+    }
+
+    #[test]
+    fn local_small_free_and_null_roundtrip() {
+        unsafe {
+            MiMalloc::free_small_local(core::ptr::null_mut());
+            // Free immediately without collection or any heap ownership change.
+            for size in [1, 8, 64, crate::MI_SMALL_SIZE_MAX] {
+                let ptr =
+                    NonNull::new(rustfs_mimalloc_sys::mi_malloc_small(size).cast::<u8>()).unwrap();
+                ptr.as_ptr().write(0xAB);
+                MiMalloc::free_small_local_nonnull(ptr);
+                let ptr = rustfs_mimalloc_sys::mi_malloc_small(size).cast::<u8>();
+                assert!(!ptr.is_null());
+                MiMalloc::free_small_local(ptr);
+            }
+        }
+    }
+
+    #[test]
+    fn options_include_new_profiling_controls() {
+        let text = MiMalloc::options_print();
+        for name in [
+            "profile_alloc_interval",
+            "profile_inuse_interval",
+            "profile_time_interval",
+            "profile_sample_rate",
+        ] {
+            assert!(text.contains(name), "missing {name}");
+        }
+        let rate = MiMalloc::option_get(mi_option_t::mi_option_profile_sample_rate);
+        assert_eq!(
+            MiMalloc::option_get_clamp(mi_option_t::mi_option_profile_sample_rate, 3, 8),
+            rate.clamp(3, 8)
+        );
+        for size in [1, 8, 127, 1024, 4096] {
+            assert!(MiMalloc::good_size(size) >= size);
+        }
     }
 
     #[test]

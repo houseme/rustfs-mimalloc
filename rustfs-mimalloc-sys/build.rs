@@ -3,7 +3,7 @@
 //! Compiles mimalloc V3 as a static library using the `cc` crate.
 //! Handles platform-specific flags, feature gates, and linker requirements.
 
-use std::env;
+use std::{env, fs};
 
 struct TargetCfg {
     triple: String,
@@ -41,7 +41,7 @@ impl TargetCfg {
     }
 
     fn supports_initial_exec_tls(&self) -> bool {
-        self.is_apple() || matches!(self.os.as_str(), "linux" | "freebsd")
+        matches!(self.os.as_str(), "linux" | "freebsd")
     }
 
     fn needs_armv6_atomic(&self) -> bool {
@@ -56,12 +56,14 @@ fn main() {
 
     // Tell Cargo to re-run if features change
     println!("cargo:rerun-if-changed=build.rs");
+    // static.c includes these files; cc cannot discover that dependency tree.
+    println!("cargo:rerun-if-changed=c_src/mimalloc/include");
+    println!("cargo:rerun-if-changed=c_src/mimalloc/src");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_SECURE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG_IN_DEBUG");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_OVERRIDE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_LOCAL_DYNAMIC_TLS");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WIN_DIRECT_TLS");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NO_THP");
     // `cc` selects /MT for MSVC when Cargo enables `crt-static`.
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE");
@@ -90,29 +92,28 @@ fn main() {
         build.define("MI_DEBUG", "0");
     }
 
-    // Secure mode: encrypt heap allocations
+    // Secure mode: guard pages, randomized and encoded free lists.
     if env::var_os("CARGO_FEATURE_SECURE").is_some() {
         build.define("MI_SECURE", "4");
     }
 
-    // TLS model: default is initial-exec for performance.
-    // Use `local_dynamic_tls` feature to switch to local-dynamic model,
-    // which fixes compatibility with projects like polars that have TLS issues.
-    // See: https://github.com/purpleprotocol/mimalloc_rust/issues/138
+    // Preserve upstream's platform TLS implementation (notably pthreads on
+    // macOS). The feature changes the compiler TLS model on ELF targets.
     if env::var_os("CARGO_FEATURE_LOCAL_DYNAMIC_TLS").is_some() {
         build.flag_if_supported("-ftls-model=local-dynamic");
     } else if target.supports_initial_exec_tls() {
         build.flag_if_supported("-ftls-model=initial-exec");
     }
 
-    if target.is_windows() && env::var_os("CARGO_FEATURE_WIN_DIRECT_TLS").is_some() {
-        build.define("MI_WIN_DIRECT_TLS", "1");
-    }
-
     // Disable THP on Linux/Android if requested
     // See: https://github.com/purpleprotocol/mimalloc_rust/pull/112
     if env::var_os("CARGO_FEATURE_NO_THP").is_some() {
         build.define("MI_NO_THP", "1");
+        build.define("MI_DEFAULT_ALLOW_THP", "0");
+    }
+
+    if env::var_os("CARGO_FEATURE_OVERRIDE").is_some() && !target.is_windows() {
+        build.define("MI_MALLOC_OVERRIDE", None);
     }
 
     // macOS: enable dyld interposing for proper override support
@@ -120,6 +121,23 @@ fn main() {
     if target.is_apple() && env::var_os("CARGO_FEATURE_OVERRIDE").is_some() {
         build.define("MI_OSX_ZONE", "1");
         build.define("MI_OSX_INTERPOSE", "1");
+    }
+
+    // The built-in pprof implementation uses these CMake-detected facilities.
+    // Set them from the target, never the host (cross compilation must work).
+    if target.is_apple()
+        || matches!(
+            target.os.as_str(),
+            "linux" | "android" | "freebsd" | "dragonfly" | "openbsd" | "netbsd"
+        )
+    {
+        build.define("MI_HAS_UNISTDH", "1");
+    }
+    if target.is_apple()
+        || (target.os == "linux" && target.env == "gnu")
+        || matches!(target.os.as_str(), "freebsd" | "dragonfly")
+    {
+        build.define("MI_HAS_EXECINFOH", "1");
     }
 
     // Platform-specific compiler flags
@@ -146,7 +164,8 @@ fn main() {
     // ARM-specific: do NOT force ARMv8.1-A (fixes Raspberry Pi 4 compatibility)
     // See: https://github.com/purpleprotocol/mimalloc_rust/issues/165
     // We let the compiler use the target's default architecture level.
-    // If the user wants ARMv8.1-A optimizations, they can set RUSTFLAGS.
+    // C architecture tuning belongs in target-specific CFLAGS; RUSTFLAGS
+    // does not configure the C compiler.
 
     build.compile("mimalloc");
 
@@ -158,11 +177,28 @@ fn main() {
     println!("cargo:include={manifest_dir}/c_src/mimalloc/include");
 
     // Print version info
-    println!("cargo:version=30503"); // MI_MALLOC_VERSION from mimalloc.h
+    let header = fs::read_to_string("c_src/mimalloc/include/mimalloc.h")
+        .expect("mimalloc.h is missing; initialize the mimalloc submodule");
+    let version = header
+        .lines()
+        .find_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next() == Some("#define") && words.next() == Some("MI_MALLOC_VERSION"))
+                .then(|| words.next().and_then(|value| value.parse::<u32>().ok()))
+                .flatten()
+        })
+        .expect("MI_MALLOC_VERSION must be defined in mimalloc.h");
+    assert_eq!(version / 10000, 3, "only mimalloc V3 is supported");
+    println!("cargo:version={version}");
+    println!("cargo:rustc-env=MIMALLOC_VERSION={version}");
 }
 
 /// Link required system libraries based on the target platform.
 fn link_system_libs(target: &TargetCfg) {
+    if matches!(target.os.as_str(), "freebsd" | "dragonfly") {
+        println!("cargo:rustc-link-lib=execinfo");
+        println!("cargo:rustc-link-lib=util");
+    }
     if target.is_windows() {
         // Windows: required for crypto (BCryptGenRandom), process info (psapi),
         // and token manipulation (advapi32 for large pages)

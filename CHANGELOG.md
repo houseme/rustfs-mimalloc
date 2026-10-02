@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-02
+
+### Changed
+
+- Pin mimalloc to the upstream **v3.5.4 interim** tag (`f8401bef`), 58 commits
+  after v3.5.3. This includes allocation/free code generation improvements,
+  adaptive full-page retention, and cross-thread page reclamation enabled by
+  default. Workload-specific throughput and RSS still require measurement.
+- **Breaking:** match the experimental profiler ABI: add `on_snapshot` and use
+  mutable heap pointers in allocation/free callbacks.
+- **Breaking:** make runtime option setters/toggles unsafe because upstream
+  option storage is non-atomic. Configure before starting threads or exclude
+  all concurrent mimalloc accesses.
+
+### Added
+
+- Raw `mi_profiler_snapshot`, `mi_pprof_profiler_new`, and
+  `mi_pprof_profiler_delete`; all four profiling interval/sample-rate options.
+- Unsafe `MiMalloc::free_small_local{,_nonnull}` and matching raw FFI. The
+  allocation's small page must still be owned by the calling thread.
+- Aligned heap zero-allocation and reallocation, additional thread-local FFI,
+  capacity hints, option diagnostics, and default/clamped option access.
+- Integration tests for profiler callback ABI, sampled pprof output, effective
+  malloc override and THP defaults; benchmark comparisons against `System` and
+  the generic/local small-free paths.
+
+### Known upstream limitation
+
+- V3.5.4 interim copies `profile_disabled=true` into new thread heaps without
+  clearing it. Dedicated-heap and worker-thread profiling can remain inactive.
+  Profiling stays experimental raw FFI; the integration test proves main-heap
+  sampling in an isolated single-threaded process only.
+
+### Fixed
+
+- Enable `MI_MALLOC_OVERRIDE` on non-Windows override builds.
+- Set `MI_DEFAULT_ALLOW_THP=0` with `no_thp`; disabling only explicit huge-page
+  advice did not disable the runtime THP policy or its larger purge granularity.
+- Track vendored C sources/headers for Cargo rebuilds and derive build metadata
+  from `MI_MALLOC_VERSION`, preventing stale C objects after submodule updates.
+- Configure pprof backtrace and file-output facilities for supported targets.
+- Correct TLS/security documentation, remove the dead Windows TLS feature hook,
+  strengthen small-free and borrowed-heap safety contracts, and reuse the text
+  diagnostic buffer instead of copying valid UTF-8 output.
+
 ## [0.5.6] - 2026-09-22
 
 ### Fixed
@@ -164,7 +209,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow: tag-triggered + manual dispatch, crates.io publish, GitHub Release.
 - 22 unit tests + 2 doc-tests + allocation benchmarks.
 
-[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.3...v0.5.4

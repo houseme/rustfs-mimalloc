@@ -37,6 +37,11 @@ jobs:
             features: "override"
           - os: macos-latest
             features: "override"
+          # Exercise the actual runtime defaults and TLS build configuration.
+          - os: ubuntu-latest
+            features: "no_thp,local_dynamic_tls"
+          - os: macos-latest
+            features: "local_dynamic_tls"
           # stable feature set (non-Windows)
           - os: ubuntu-latest
             features: "secure,debug,override"
