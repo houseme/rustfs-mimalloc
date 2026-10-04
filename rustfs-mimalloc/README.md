@@ -71,7 +71,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **v3.5.4 interim**. Runtime option setters
+The submodule is pinned to upstream **post-v3.5.4 interim (`8bd60cf0`)**. Runtime option setters
 and toggles are now unsafe because upstream storage is not atomic; configure
 before starting threads or exclude all concurrent mimalloc access. The raw
 profiler ABI adds `on_snapshot` and changes callback heap pointers to mutable.
@@ -107,9 +107,10 @@ unsafe {
 heap.delete();
 ```
 
-## MSRV
+## Rust Toolchain Compatibility
 
-Rust 1.96.0. Rolling support window for the latest three stable Rust releases.
+Cargo manifests intentionally omit `rust-version`. CI checks stable Rust and
+Rust 1.96.0 compatibility; no minimum Rust version is declared by these crates.
 
 ## License
 

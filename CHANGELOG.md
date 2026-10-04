@@ -7,12 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-10-02
+## [0.6.0] - 2026-10-04
 
 ### Changed
 
-- Pin mimalloc to the upstream **v3.5.4 interim** tag (`f8401bef`), 58 commits
-  after v3.5.3. This includes allocation/free code generation improvements,
+- Pin mimalloc to upstream commit `8bd60cf0`, 13 commits after the **v3.5.4
+  interim** tag. The C source version remains 30504 and its public headers are
+  unchanged from v3.5.4. This includes allocation/free code generation improvements,
   adaptive full-page retention, and cross-thread page reclamation enabled by
   default. Workload-specific throughput and RSS still require measurement.
 - **Breaking:** match the experimental profiler ABI: add `on_snapshot` and use
@@ -20,9 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** make runtime option setters/toggles unsafe because upstream
   option storage is non-atomic. Configure before starting threads or exclude
   all concurrent mimalloc accesses.
+- Remove `rust-version` from the workspace and member manifests as requested;
+  retain Rust 1.96.0 as an explicit CI compatibility check, not a Cargo MSRV.
 
 ### Added
 
+- Raw callback registration: `mi_register_error`, `mi_register_output`, and
+  `mi_register_deferred_free`, with lifetime/concurrency contracts.
+- Cross-thread free batch benchmarks and a Windows clang-cl C11 test job.
 - Raw `mi_profiler_snapshot`, `mi_pprof_profiler_new`, and
   `mi_pprof_profiler_delete`; all four profiling interval/sample-rate options.
 - Unsafe `MiMalloc::free_small_local{,_nonnull}` and matching raw FFI. The
@@ -42,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Inherit upstream #1420: invalidate cached thread heaps on heap destruction
+  and collect pending cross-thread frees before resetting a destroyed page.
+- Inherit upstream #1416: make the already-declared `mi_malloc_size` and
+  `mi_malloc_usable_size` available even without malloc override; test their
+  actual linkage and values.
+- Inherit upstream #1419: use C11 atomics for clang C builds targeting MSVC,
+  fixing ARM64EC ordering and avoiding unnecessary ARM64 barriers.
 - Enable `MI_MALLOC_OVERRIDE` on non-Windows override builds.
 - Set `MI_DEFAULT_ALLOW_THP=0` with `no_thp`; disabling only explicit huge-page
   advice did not disable the runtime THP policy or its larger purge granularity.

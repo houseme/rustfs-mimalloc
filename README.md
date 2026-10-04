@@ -4,13 +4,13 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc/badge.svg)](https://docs.rs/rustfs-mimalloc)
 [![CI](https://github.com/houseme/rustfs-mimalloc/actions/workflows/ci.yml/badge.svg)](https://github.com/houseme/rustfs-mimalloc/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.96.0-orange.svg)](#minimum-supported-rust-version)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](#rust-toolchain-compatibility)
 
 High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global allocator for Rust.
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.5.4 interim). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `8bd60cf0`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 ### Why this crate?
 
@@ -139,9 +139,11 @@ for small allocations with a larger alignment.
 
 ### V3.5.4 APIs and migration
 
-The submodule pins upstream [v3.5.4 interim](https://github.com/microsoft/mimalloc/tree/v3.5.4)
-(`f8401befa675adb13b98decababd7fdc59572477`). The latest full upstream GitHub
-Release at the time of this update remains v3.5.3.
+The submodule pins [upstream commit 8bd60cf0](https://github.com/microsoft/mimalloc/commit/8bd60cf0b8d0ff9086be5519b18d9843bf2ceeff),
+13 commits after the v3.5.4 interim tag. The source version remains 30504; the
+latest full upstream GitHub Release at this review remains v3.5.3. This pin
+includes the heap-destroy, clang/MSVC C11 atomics, and usable-size symbol fixes.
+The public C headers are unchanged from v3.5.4.
 
 - `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
   path. These unsafe functions require a small allocation whose page is **still
@@ -174,6 +176,15 @@ profiler wrapper yet.
 Backtraces are configured for macOS, GNU Linux and Windows. musl builds keep
 profiling APIs but do not automatically link an external unwinder; their stack
 traces may be empty. FreeBSD/DragonFly require `libexecinfo` and `libutil`.
+
+### Diagnostic Callbacks
+
+The sys crate exposes upstream's existing `mi_register_error`,
+`mi_register_output`, and `mi_register_deferred_free` functions. These are raw,
+unsafe APIs: register without concurrent allocator activity, keep callback state
+alive until unregistration and completion of in-flight calls, and do not unwind
+through C. Prefer `MiMalloc::stats_print` / `options_print` when a process-wide
+callback is unnecessary.
 
 ### Threadpool Hint
 
@@ -221,14 +232,14 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (v3.5.4 interim) | V2/V3 (configurable) |
+| mimalloc version | V3 only (post-v3.5.4 interim, commit `8bd60cf0`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
 | Options API | Full get/set/enable/disable | Partial |
 | Heap API | Full (create/delete/destroy/alloc) | Basic |
 | Arena API | Full (reserve/manage) | Basic |
-| MSRV | 1.96.0 | 1.46.0 |
+| Cargo MSRV declaration | None; stable and 1.96.0 checked in CI | 1.46.0 |
 
 ## Design Decisions
 
@@ -275,11 +286,12 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 This is validated in the Windows CI matrix.
 
-## Minimum Supported Rust Version
+## Rust Toolchain Compatibility
 
-**Rust 1.96.0** (2026-05-28). This crate follows a rolling support window for the latest three stable Rust release trains. The declared minimum remains 1.96.0 and is checked separately in CI.
-
-The MSRV is tested in CI and will not change without a minor version bump.
+The workspace and member manifests intentionally omit `rust-version`. CI
+checks the stable toolchain and compatibility with Rust 1.96.0. A passing
+compatibility job does not establish the lowest supported Rust version;
+dependencies may have their own requirements.
 
 ## License
 

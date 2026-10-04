@@ -52,8 +52,11 @@ The two crates inherit their package version from the workspace:
 # Cargo.toml
 [workspace.package]
 version = "<VERSION>"
-rust-version = "1.96.0"
 ```
+
+The workspace and member manifests intentionally omit `rust-version`. Do not
+reintroduce it during a release. CI keeps a Rust 1.96.0 compatibility job; this
+is not a declared Cargo MSRV.
 
 The wrapper's registry dependency requirement for the sys crate is also in the workspace root:
 

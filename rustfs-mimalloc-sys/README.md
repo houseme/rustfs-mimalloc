@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3 (v3.5.4 interim).
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `8bd60cf0` after v3.5.4 interim.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -60,21 +60,25 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   `mi_profiler_snapshot` and `mi_pprof_profiler_{new,delete}`. V3.5.4 adds
   `on_snapshot` to `mi_profiler_t` and changes callback heap pointers to mutable
 - `mi_free_small_local{,_nonnull}` for small pages still owned by the calling thread
+- Raw error, output and deferred-free callback registration APIs
 - All four `mi_option_profile_*` controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The upstream tag is marked **interim**. Its inherited `profile_disabled` flag
+The source pin follows the **interim** tag and includes fixes from upstream
+PRs #1416, #1418, #1419 and #1420. No public C API was added by those commits.
+The inherited `profile_disabled` flag
 can prevent sampling in new thread heaps; dedicated-heap and worker-thread
-profiling are not reliable in this tag. Profiling callbacks must not unwind;
+profiling are not reliable at this pin. Profiling callbacks must not unwind;
 stop and detach a profiler, free sampled allocations, and quiesce callbacks
 before deleting it. `mi_profiler_start`/`stop` return the previous running state.
 On musl, backtrace capture needs an externally configured unwinder. GNU Linux
 and macOS use `execinfo`, Windows uses `CaptureStackBackTrace`; FreeBSD/DragonFly
 also link `execinfo` and `util`.
 
-## MSRV
+## Rust Toolchain Compatibility
 
-Rust 1.96.0. Rolling support window for the latest three stable Rust releases.
+Cargo manifests intentionally omit `rust-version`. CI checks stable Rust and
+Rust 1.96.0 compatibility; no minimum Rust version is declared by these crates.
 
 ## License
 

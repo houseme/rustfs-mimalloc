@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to the v3.5.4 interim tag recorded by the Git submodule.
+//! Pinned to upstream commit 8bd60cf0 (post-v3.5.4 interim).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 
@@ -490,6 +490,25 @@ unsafe extern "C" {
     pub fn mi_option_set_enabled(option: mi_option_t, enable: bool);
     pub fn mi_option_set_enabled_default(option: mi_option_t, enable: bool);
     pub fn mi_options_print_out(out: Option<mi_output_fun>, arg: *mut c_void);
+}
+
+// ── Process-wide callbacks ─────────────────────────────────────────────────
+
+unsafe extern "C" {
+    /// Install an error callback; `None` restores the default handler.
+    ///
+    /// Register only while no other thread can report allocator errors. The
+    /// callback and `arg` must outlive registration and all in-flight calls.
+    /// Callbacks may run concurrently and must not unwind into C.
+    pub fn mi_register_error(callback: Option<mi_error_fun>, arg: *mut c_void);
+    /// Install an output callback; registration can immediately flush buffered
+    /// output. `None` restores stderr. Register with no concurrent output or
+    /// registration, keep callback state alive, and never unwind into C.
+    pub fn mi_register_output(callback: Option<mi_output_fun>, arg: *mut c_void);
+    /// Register a deferred-free callback, or `None` to unregister it. Exclude
+    /// concurrent allocator activity during registration. The callback must
+    /// support concurrent calls, retain valid state, and must not unwind.
+    pub fn mi_register_deferred_free(callback: Option<mi_deferred_free_fun>, arg: *mut c_void);
 }
 
 // ── Experimental profiling ─────────────────────────────────────────────────

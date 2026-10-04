@@ -1,6 +1,103 @@
-# Upstream and wrapper review — 2026-10-02
+# Upstream and wrapper review — 2026-10-04
 
-## Baseline and upstream provenance
+## Current result
+
+The crate version remains **0.6.0**, as requested. The three existing
+`rust-version` removals are included; both workspace packages report no Cargo
+Rust-version requirement. The compatibility CI job still tests Rust 1.96.0.
+`git pull --ff-only` was up to date. The previous 0.6.0 commit's full CI run
+[passed](https://github.com/houseme/rustfs-mimalloc/actions/runs/37008507453).
+
+The submodule advances from v3.5.4 interim (`f8401bef`) to the fixed
+[dev3 commit 8bd60cf0b8d0ff9086be5519b18d9843bf2ceeff](https://github.com/microsoft/mimalloc/commit/8bd60cf0b8d0ff9086be5519b18d9843bf2ceeff),
+13 commits later. This is a fixed development commit, not a newly released
+mimalloc version. `MI_MALLOC_VERSION` remains 30504. The latest full GitHub
+Release and main3 still reference v3.5.3 at review time.
+
+## Newly merged upstream changes
+
+| PR | Merge and effect on this crate |
+| --- | --- |
+| [#1420](https://github.com/microsoft/mimalloc/pull/1420) | Merged into dev3 on October 3 UTC. Clears cached thread-heap ownership during heap teardown, preventing a destroyed heap address reused by a new heap from matching a stale cache. Also collects cross-thread free lists before zeroing a destroyed page's used count. Both changes apply to the exposed heap API. |
+| [#1419](https://github.com/microsoft/mimalloc/pull/1419) | Merged into dev3 on October 3 UTC. Clang targeting MSVC in C mode now uses C11 atomics. This corrects ARM64EC ordering and removes unnecessarily strong ARM64 operations. Our cc build compiles C, so the fix applies when clang-cl is selected. A Windows clang-cl job was added; ARM64/ARM64EC runtime performance is not measured locally. |
+| [#1416](https://github.com/microsoft/mimalloc/pull/1416) | Merged into dev, then carried into dev3. The existing `mi_malloc_size` and `mi_malloc_usable_size` implementations are no longer conditional on malloc override. Their Rust declarations already existed, but linking a caller failed under the default feature set before this update. |
+| [#1418](https://github.com/microsoft/mimalloc/pull/1418) | Merged into dev, then carried into dev3. Makes internal bitmap.h self-contained. No Rust public API change. |
+
+## API audit
+
+The public headers `mimalloc.h`, `mimalloc-profile.h`, and `mimalloc-stats.h`
+are byte-identical to the previous v3.5.4 pin. This round adds **no new upstream
+public functions, option values, or ABI fields**. Existing bindings for the two
+usable-size functions become usable in default builds after the upstream fix.
+
+The wrapper's sys API additionally exposes three previously omitted, already
+existing C functions: `mi_register_error`, `mi_register_output`, and
+`mi_register_deferred_free`. They are unsafe process-wide registrations with
+explicit concurrency, lifetime and no-unwind contracts. There is no safe global
+callback wrapper, since a Rust-side lock cannot synchronize unrelated C calls.
+
+## Findings and changes
+
+- **P1, fixed by upstream sync:** stale heap caches and pending cross-thread frees
+  during heap destruction. The Rust integration executable now exercises these
+  paths and reports whether the destroyed heap address was actually reused.
+- **P1, fixed by upstream sync:** declared usable-size FFI functions missing from
+  the default library. The new regression reproduced undefined symbols on the
+  old source and passes with the new pin. Merely compiling the sys crate did not
+  test unused extern declarations, so CI now calls both functions explicitly.
+- **P1, still open upstream:** v3.5.4's `profile_disabled` initialization defect
+  described in the previous review remains unchanged. Dedicated-heap and worker
+  sampling remain unreliable. Profiling tests establish main-heap behavior only.
+- **P2, coverage improved:** add clang-cl C11 CI coverage and a producer/consumer
+  benchmark with explicit System and MiMalloc allocators. Each iteration frees
+  a batch on another thread and reuses its pointer buffer. The result includes
+  channel handoff and memory-touch costs; it is not isolated free-call latency.
+- **Documentation corrected:** Cargo no longer declares an MSRV; release templates
+  and READMEs no longer instruct maintainers to restore the removed field.
+
+## Performance conclusions and next steps
+
+The sync mainly fixes correctness and platform-specific code generation; it does
+not justify changing GlobalAlloc to a local-only free or changing global THP,
+NUMA or purge defaults. Keep the existing alignment and cross-thread contracts.
+
+Prioritize Linux producer/consumer and burst/idle tests with throughput, p95/p99,
+RSS and page-fault measurements. Compare the two fixed upstream commits under
+the same compiler and resource conditions before claiming a release speedup.
+For ARM64/ARM64EC, validate actual clang-cl code generation and runtime behavior
+on the target. Fix upstream profiler activation before relying on its worker
+samples for those performance conclusions.
+
+## Current validation and benchmark evidence
+
+On macOS aarch64 / Rust 1.99.0, formatting, all-target checking, default,
+`secure,debug`, all-feature and release tests, Clippy with warnings denied and
+rustdoc all passed. The 33 wrapper tests and 2 doc-tests are supplemented by
+standalone callback, usable-size and heap-destroy checks. Every tested
+configuration observed and validated 32 destroyed-heap address replacements;
+platforms that do not reuse an address explicitly report that test as
+inconclusive. The old source failed to link the new usable-size regression,
+providing negative-baseline evidence. Both crates also passed offline package
+build verification, with the wrapper using a temporary local registry patch for
+the sys crate.
+
+Short Criterion cross-thread batches (256 allocations per iteration, reused
+pointer buffer, one warm-up second, one measurement second, 30 samples):
+
+| Object size | System batch time | MiMalloc batch time |
+| --- | --- | --- |
+| 64 bytes | 6.7423–6.8578 microseconds | 5.3677–5.5008 microseconds |
+| 4096 bytes | 8.2873–8.4458 microseconds | 12.057–13.422 microseconds |
+
+These intervals include allocation, first-byte writes, channel synchronization,
+consumer reads and cross-thread frees. The 4 KiB mimalloc run had four outliers
+among 30 samples. It motivates repeatable workload analysis rather than a
+universal speedup claim. This comparison is against System on this host, not
+an old-versus-new mimalloc measurement. No default allocator policy was changed.
+
+## Previous review — 2026-10-02
+
+### Baseline and upstream provenance
 
 The workspace was clean and `git pull --ff-only` reported it up to date.
 The previous submodule was v3.5.3 (`d4881d338125e1cb7c47ba4cfb398d6f7c0c8d45`).
@@ -21,7 +118,7 @@ Merged PRs and direct commits were checked separately:
 | [#1404](https://github.com/microsoft/mimalloc/pull/1404) | Closed without GitHub merge status; its exclusive child-arena fix was incorporated directly as d4881d33. Do not call this a merged PR. |
 | v3.5.3 → v3.5.4 | Most new work is direct development commits: pprof, local small frees, allocation/free code generation, adaptive full-page retention, and cross-thread reclamation enabled by default. |
 
-## Public API delta
+### Public API delta
 
 Comparing `mimalloc.h` and `mimalloc-profile.h` across the tags found exactly
 five added C functions; all five now have Rust FFI declarations:
@@ -46,7 +143,7 @@ layout without changing MI_STAT_VERSION. JSON/text stats avoid that ABI hazard.
 This is an audit of the new upstream API delta, not a claim that every legacy,
 platform compatibility, deprecated, or C++ helper is wrapped.
 
-## Review findings and disposition
+### Review findings and disposition
 
 | Priority | Finding | Disposition |
 | --- | --- | --- |
@@ -59,7 +156,7 @@ platform compatibility, deprecated, or C++ helper is wrapped.
 | P2 | Small-free contracts omitted over-alignment/page ownership constraints; borrowed heap handles omitted the heap's required lifetime. | Strengthen safety contracts, keep GlobalAlloc's general free path, and test aligned zero/reallocation plus immediate local frees. |
 | P3 | Diagnostic output copied an already owned UTF-8 buffer; benchmarks claimed System comparison while only using the global mimalloc allocator. | Reuse the buffer and add explicit System plus generic/local small-free benchmark paths. |
 
-## Performance work to prioritize next
+### Performance work to prioritize next
 
 1. Measure v3.5.3 versus this fixed v3.5.4 pin on the same compiler and machine,
    including producer/consumer cross-thread frees, short-lived workers, and
@@ -80,7 +177,7 @@ Local microbenchmarks are diagnostic only; no application-level performance
 improvement percentage is claimed. Linux, Windows, musl, MSRV and architecture
 coverage are reported separately from macOS host validation.
 
-## Validation results
+### Validation results
 
 On the macOS aarch64 host with Rust 1.99.0:
 

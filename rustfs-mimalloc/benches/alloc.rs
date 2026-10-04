@@ -2,7 +2,7 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[global_allocator]
 static GLOBAL: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
@@ -73,6 +73,64 @@ fn bench_small_free(c: &mut Criterion) {
     group.finish();
 }
 
+// End-to-end producer/consumer batches: includes channel synchronization, but
+// excludes worker startup and reuses the pointer buffer between iterations.
+fn bench_cross_thread<A: GlobalAlloc + Copy + Send + 'static>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    allocator: A,
+    size: usize,
+) {
+    const BATCH: usize = 256;
+    group.throughput(Throughput::Elements(BATCH as u64));
+    group.bench_function(BenchmarkId::new(name, size), |b| {
+        let layout = Layout::from_size_align(size, 8).unwrap();
+        let (send_batch, receive_batch) = std::sync::mpsc::sync_channel::<Vec<usize>>(0);
+        let (send_empty, receive_empty) = std::sync::mpsc::sync_channel(0);
+        let worker = std::thread::spawn(move || {
+            for mut pointers in receive_batch {
+                for address in pointers.drain(..) {
+                    // The producer transfers ownership through the channel and
+                    // initialized the first byte before sending the allocation.
+                    unsafe {
+                        let ptr = address as *mut u8;
+                        std::hint::black_box(ptr.read());
+                        allocator.dealloc(ptr, layout);
+                    }
+                }
+                send_empty.send(pointers).unwrap();
+            }
+        });
+        let mut batch = Some(Vec::with_capacity(BATCH));
+        b.iter(|| {
+            let mut pointers = batch.take().unwrap();
+            for _ in 0..BATCH {
+                unsafe {
+                    let ptr = allocator.alloc(layout);
+                    assert!(!ptr.is_null());
+                    ptr.write(0x5A);
+                    pointers.push(ptr as usize);
+                }
+            }
+            send_batch.send(pointers).unwrap();
+            batch = Some(receive_empty.recv().unwrap());
+        });
+        drop(send_batch);
+        worker.join().unwrap();
+    });
+}
+
+fn bench_cross_thread_free(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cross_thread_free_batch");
+    for size in [64, 4096] {
+        if !cfg!(feature = "override") {
+            bench_cross_thread(&mut group, "system", System, size);
+        }
+        bench_cross_thread(&mut group, "mimalloc", rustfs_mimalloc::MiMalloc, size);
+    }
+    group.finish();
+}
+
 fn bench_vec(c: &mut Criterion) {
     let mut group = c.benchmark_group("vec");
     group.bench_function("push_1000", |b| {
@@ -99,6 +157,7 @@ criterion_group!(
     bench_alloc_dealloc,
     bench_aligned_alloc,
     bench_small_free,
+    bench_cross_thread_free,
     bench_vec
 );
 criterion_main!(benches);

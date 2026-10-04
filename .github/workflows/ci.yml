@@ -109,10 +109,31 @@ jobs:
       - name: Test (static CRT)
         run: cargo test --features secure
 
-  # ── MSRV check ─────────────────────────────────────────────────────────────
+  # ── clang-cl C atomics / ABI compatibility ─────────────────────────────────
 
-  msrv:
-    name: MSRV (1.96.0)
+  windows-clang-cl:
+    name: Windows clang-cl (C11 atomics)
+    runs-on: windows-latest
+    env:
+      CC: clang-cl
+      CFLAGS: /std:c11
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check compiler availability
+        run: clang-cl --version
+
+      - name: Test (clang-cl)
+        run: cargo test --workspace --features secure,debug
+
+  # ── Older toolchain compatibility (no declared Cargo MSRV) ─────────────────
+
+  compatibility:
+    name: Rust 1.96.0 compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
