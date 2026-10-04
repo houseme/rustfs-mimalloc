@@ -50,6 +50,7 @@ fn main() {
 | `override` | | Override system `malloc`/`free` on non-Windows targets |
 | `local_dynamic_tls` | | Use local-dynamic TLS model (fixes polars compatibility) |
 | `no_thp` | | Disable Transparent Huge Pages on Linux/Android |
+| `no_profile` | | Compile out allocation profiling and automatic pprof startup |
 
 All stats, options, heap, and arena APIs are available without any feature flag.
 
@@ -285,6 +286,37 @@ rustflags = ["-C", "target-feature=+crt-static"]
 ```
 
 This is validated in the Windows CI matrix.
+
+## Builds Without Allocation Profiling
+
+Applications that do not need sampled heap profiles can opt out at build time:
+
+```toml
+[dependencies]
+rustfs-mimalloc = { version = "0.6.0", features = ["no_profile"] }
+```
+
+This removes profiling sampling from allocation/free paths and disables
+`MIMALLOC_PROFILE` automatic startup. Allocation alignment, zeroing, statistics,
+error/output/deferred-free callbacks, and `secure`/`debug` checks remain
+available. Debug builds may still sample guarded allocations for debugging.
+
+Use `MiMalloc::profiling_enabled()` to query the linked allocator's capability.
+Cargo features unify across dependencies: enabling `no_profile` anywhere disables
+allocation profiling for that linked allocator. Leave it off when profiling is
+required. It is off by default. Benchmark your workload before enabling it:
+local tests improved 64 KiB allocations but slightly slowed 64-byte allocations;
+no reliable 4 KiB single-thread gain was established.
+
+Raw profiler control symbols remain available for ABI compatibility. Explicit
+snapshot callbacks still run, but profiles contain no allocation samples. The
+feature changes sampling capability; it does not change page-retention, purging,
+NUMA or thread-local heap ownership policies.
+
+Reproduce default versus `no_profile` measurements with
+`python3 scripts/bench_profile_abba.py --offline --output target/profile-abba-run1`.
+The driver freezes both builds before measuring A1/B1/B2/A2 and records per-workload
+drift checks; omit `--offline` if dependencies are not cached.
 
 ## Cached Thread-local Heap Views
 

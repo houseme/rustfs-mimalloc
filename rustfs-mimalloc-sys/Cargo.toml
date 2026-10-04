@@ -39,6 +39,8 @@ override = []
 local_dynamic_tls = []
 # Disable Transparent Huge Pages on Linux/Android
 no_thp = []
+# Disable allocation profiling and automatic MIMALLOC_PROFILE startup.
+no_profile = []
 
 [build-dependencies]
 cc = { workspace = true }

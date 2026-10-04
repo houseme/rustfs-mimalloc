@@ -33,6 +33,20 @@ unsafe {
 | `override` | Override system `malloc`/`free` on non-Windows targets |
 | `local_dynamic_tls` | Use local-dynamic TLS model |
 | `no_thp` | Disable Transparent Huge Pages |
+| `no_profile` | Compile out allocation profiling and automatic pprof startup |
+
+## Allocation Profiling Capability
+
+`no_profile` sets `MI_PROFILE=0`. Check `MI_PROFILE_ENABLED` for the sys crate's
+compiled capability (including Cargo feature unification). Allocation and free
+callbacks produce no profiling samples, and `MIMALLOC_PROFILE` automatic startup
+is disabled. Statistics, guarded debug allocations and secure checks are retained.
+Raw profiler control/snapshot symbols remain linked: explicit snapshot callbacks
+can still execute, but there are no sampled allocations to report.
+
+At the pinned upstream revision, disabling the built-in profiler implementation
+has a C signature mismatch. The build keeps its compatible implementation while
+turning off sampling and automatic startup. Vendored source remains unmodified.
 
 ## Windows Static CRT
 

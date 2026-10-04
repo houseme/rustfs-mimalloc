@@ -75,7 +75,11 @@ fn profiler_callbacks_match_upstream_abi() {
         assert!(mi_profiler_stop(&mut profiler.hooks));
         assert!(mi_heap_profile(heap, std::ptr::null_mut()));
     }
-    assert!(profiler.allocations.load(Ordering::Relaxed) > 0);
+    if MI_PROFILE_ENABLED {
+        assert!(profiler.allocations.load(Ordering::Relaxed) > 0);
+    } else {
+        assert_eq!(profiler.allocations.load(Ordering::Relaxed), 0);
+    }
     assert_eq!(
         profiler.frees.load(Ordering::Relaxed),
         profiler.allocations.load(Ordering::Relaxed)
@@ -83,7 +87,7 @@ fn profiler_callbacks_match_upstream_abi() {
     assert_eq!(profiler.snapshots.load(Ordering::Relaxed), 1);
 }
 
-fn pprof_writes_a_sampled_heap_snapshot() {
+fn pprof_snapshot_matches_build_sampling_mode() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -125,9 +129,10 @@ fn pprof_writes_a_sampled_heap_snapshot() {
     let profile = std::fs::read_to_string(&files[0]).unwrap();
     assert!(profile.starts_with("heap profile:"), "{profile}");
     assert!(profile.contains("MAPPED_LIBRARIES:"));
-    assert!(
+    assert_eq!(
         profile.lines().skip(1).any(|line| line.contains(" @")),
-        "snapshot has no samples"
+        MI_PROFILE_ENABLED,
+        "snapshot sample presence differs from build mode"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -137,6 +142,30 @@ fn header_and_runtime_versions_agree() {
         unsafe { mi_version() }.to_string(),
         env!("MIMALLOC_VERSION")
     );
+}
+
+#[cfg(feature = "no_profile")]
+fn no_profile_ignores_automatic_profile_startup() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "rustfs-mimalloc-profile-disabled-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&dir).unwrap();
+    // Set the environment only on the child, before mimalloc initialization.
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--profile-environment-probe")
+        .env("MIMALLOC_PROFILE", dir.join("disabled.heap"))
+        .env("MIMALLOC_PROFILE_SAMPLE_RATE", "1")
+        .env("MIMALLOC_PROFILE_ALLOC_INTERVAL", "1")
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    std::fs::remove_dir(&dir).unwrap();
 }
 
 #[cfg(feature = "no_thp")]
@@ -302,6 +331,20 @@ fn destroyed_heap_address_reuse_invalidates_cached_theap() {
 // Process-global profiler registration requires a single-threaded executable,
 // with no Rust test-harness threads allocating concurrently (especially override).
 fn main() {
+    #[cfg(feature = "no_profile")]
+    {
+        if std::env::args().any(|arg| arg == "--profile-environment-probe") {
+            for _ in 0..128 {
+                unsafe {
+                    let ptr = mi_malloc(64 * 1024);
+                    assert!(!ptr.is_null());
+                    mi_free(ptr);
+                }
+            }
+            return;
+        }
+        no_profile_ignores_automatic_profile_startup();
+    }
     header_and_runtime_versions_agree();
     usable_size_symbols_work_without_override();
     diagnostic_callbacks_receive_their_state();
@@ -312,6 +355,6 @@ fn main() {
     #[cfg(all(feature = "override", not(target_os = "windows")))]
     override_routes_system_allocations_to_mimalloc();
     profiler_callbacks_match_upstream_abi();
-    pprof_writes_a_sampled_heap_snapshot();
+    pprof_snapshot_matches_build_sampling_mode();
     println!("upstream API integration checks passed");
 }

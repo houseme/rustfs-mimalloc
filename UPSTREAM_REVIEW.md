@@ -14,6 +14,67 @@ The submodule advances from v3.5.4 interim (`f8401bef`) to the fixed
 mimalloc version. `MI_MALLOC_VERSION` remains 30504. The latest full GitHub
 Release and main3 still reference v3.5.3 at review time.
 
+## Profiling-free build follow-up
+
+Added the opt-in `no_profile` feature, keeping default behavior unchanged. It
+sets `MI_PROFILE=0` while retaining allocation alignment, zeroing, statistics,
+error/output/deferred-free callbacks, and secure/debug checks. Guarded debug
+allocations may still use sampling. `MiMalloc::profiling_enabled()` reads the
+sys crate's `MI_PROFILE_ENABLED`, so it reports the linked mode even when another
+dependency enables the sys feature through Cargo feature unification.
+
+Raw profiler control/snapshot symbols remain available. Allocation/free hooks
+produce no samples in this mode; explicitly invoked snapshot callbacks still
+execute. Automatic `MIMALLOC_PROFILE` startup is disabled and tested in a child
+process. Applications requiring profiling must leave `no_profile` off.
+
+The initial `-DMI_PROFILE=0` probe failed to compile: the pinned upstream stub
+for `mi_pprof_profiler_snapshot` takes `mi_profiler_t*`, while its forward
+declaration takes `mi_pprof_profiler_t*`. The feature sets
+`MI_PROFILE_USE_BUILTIN=1` to retain the compatible implementation; `MI_PROFILE=0`
+still disables allocation sampling and automatic startup. No vendored source
+was modified. Tests exercise both sampling modes instead of simply skipping
+profiler coverage under the new feature.
+
+`python3 scripts/bench_profile_abba.py --offline --output target/profile-abba-run1`
+builds and freezes two release executables before A1/B1/B2/A2 measurement. It
+uses 50 samples, 3 seconds warm-up, 5 seconds measurement, one statistical
+analysis thread and 5% baseline/candidate drift limits. Raw logs remain in
+`target/perf-profile-off/feature-abba`; the failed compile and exploratory screen
+preceded this formal feature-based run and are not used as speedup evidence.
+
+A = default; B = no_profile. Point estimates on the macOS aarch64 host:
+
+| Workload | A1 | B1 | B2 | A2 | Baseline / candidate drift | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 64-byte alloc/free | 3.5717 ns | 3.6817 ns | 3.6911 ns | 3.5047 ns | 1.88% / 0.26% | 4.2% slower |
+| 4 KiB alloc/free | 8.1380 ns | 7.7050 ns | 9.1241 ns | 8.3321 ns | 2.39% / 18.42% | Invalid comparison; no speedup claim |
+| 64 KiB alloc/free | 10.852 ns | 9.4248 ns | 9.7034 ns | 11.175 ns | 2.98% / 2.96% | 13.2% lower time |
+| 4 KiB cross-thread batch (256 blocks) | 15.368 us | 15.003 us | 15.077 us | 15.536 us | 1.09% / 0.49% | Point estimate 2.7% lower, overlapping intervals; no clear win established |
+
+The single-thread cases do not touch the allocation payload; the cross-thread
+case touches only its first byte. This is allocator-overhead evidence rather
+than application or full-buffer processing throughput.
+
+This is a build-mode tradeoff, not a universal speedup. The driver exits with a
+failed gate for the inconsistent 4 KiB case and records its improvement as null;
+that failure is retained. No default build or memory-retention policy changed.
+Workloads dominated by tiny allocations should keep the default unless their
+own measurements favor the new mode. Larger-allocation users may evaluate it
+when profiling is unnecessary. Linux/Windows application throughput and RSS
+have not been measured in this experiment.
+
+Validation includes zero allocation callbacks with no_profile, retained explicit
+snapshot callbacks, empty allocation snapshots, ignored environment startup,
+statistics and secure/debug mode reporting, and direct sys-feature unification.
+The existing cross-thread, heap destruction, alignment, zeroing and ThreadHeap
+lifetime checks also run in the new mode. CI and release gates now cover the
+feature, including secure/debug combinations and clang-cl/musl builds. Local
+default, no_profile, secure/debug/no_profile, all-feature and release/no_profile
+runs passed (36 unit tests, 6 doctests and the sys integration executable).
+Clippy, all-feature rustdoc and both no_profile package builds also passed;
+wrapper packaging used a temporary local registry patch for the sys crate.
+
 ## Performance implementation follow-up
 
 Added `Heap::thread_local()` and the borrowed `ThreadHeap` view. It caches the

@@ -65,6 +65,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_OVERRIDE");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_LOCAL_DYNAMIC_TLS");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NO_THP");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NO_PROFILE");
     // `cc` selects /MT for MSVC when Cargo enables `crt-static`.
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE");
 
@@ -95,6 +96,16 @@ fn main() {
     // Secure mode: guard pages, randomized and encoded free lists.
     if env::var_os("CARGO_FEATURE_SECURE").is_some() {
         build.define("MI_SECURE", "4");
+    }
+
+    if env::var_os("CARGO_FEATURE_NO_PROFILE").is_some() {
+        build.define("MI_PROFILE", "0");
+        // At the pinned 8bd60cf0 revision, the !MI_PROFILE_USE_BUILTIN stub
+        // declares mi_pprof_profiler_snapshot with the wrong parameter type.
+        // Retain its normal implementation to avoid modifying vendored source.
+        // MI_PROFILE=0 still disables allocation sampling and env-driven startup;
+        // raw control/snapshot symbols remain available for ABI compatibility.
+        build.define("MI_PROFILE_USE_BUILTIN", "1");
     }
 
     // Preserve upstream's platform TLS implementation (notably pthreads on

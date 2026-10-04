@@ -120,6 +120,12 @@ jobs:
       - name: Test (stable feature set)
         run: cargo test --features secure,debug
 
+      - name: Test (no allocation profiling)
+        run: cargo test --workspace --features no_profile
+
+      - name: Test (secure debug without allocation profiling)
+        run: cargo test --workspace --features secure,debug,no_profile
+
   # ── Lint gate ──────────────────────────────────────────────────────────────
 
   lint:

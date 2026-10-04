@@ -3,6 +3,12 @@
 //! Pinned to upstream commit 8bd60cf0 (post-v3.5.4 interim).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
+//!
+//! The opt-in `no_profile` feature disables allocation/free sampling and
+//! automatic `MIMALLOC_PROFILE` startup. Raw profiler control functions remain
+//! linked, and explicitly requested snapshot callbacks still execute, but
+//! allocations do not produce profiling samples. Statistics and security/debug
+//! checks remain available. Check [`MI_PROFILE_ENABLED`] for the linked crate's mode.
 
 #![no_std]
 #![allow(non_camel_case_types)]
@@ -14,6 +20,10 @@ pub use core::ffi::{c_char, c_int, c_long, c_void};
 pub type size_t = usize;
 
 // ── Constants ──────────────────────────────────────────────────────────────
+
+/// Whether this build supports allocation profiling (independent of whether
+/// a profiler has been enabled at runtime).
+pub const MI_PROFILE_ENABLED: bool = !cfg!(feature = "no_profile");
 
 /// Maximum word count for mimalloc's small allocation fast path.
 pub const MI_SMALL_WSIZE_MAX: size_t = 128;

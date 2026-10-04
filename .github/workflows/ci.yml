@@ -24,6 +24,8 @@ jobs:
         features:
           - ""
           - "secure"
+          - "no_profile"
+          - "secure,debug,no_profile"
         include:
           # debug feature — test on all platforms
           - os: ubuntu-latest
@@ -47,6 +49,10 @@ jobs:
             features: "secure,debug,override"
           - os: macos-latest
             features: "secure,debug,override"
+          - os: ubuntu-latest
+            features: "secure,debug,override,no_profile"
+          - os: macos-latest
+            features: "secure,debug,override,no_profile"
           # stable feature set (Windows — no override)
           - os: windows-latest
             features: "secure,debug"
@@ -89,6 +95,9 @@ jobs:
       - name: Build (musl, static)
         run: cargo build --target x86_64-unknown-linux-musl --features secure
 
+      - name: Build (musl, static, no profiling)
+        run: cargo build --target x86_64-unknown-linux-musl --features secure,no_profile
+
   # ── Windows static CRT ────────────────────────────────────────────────────
 
   windows-static-crt:
@@ -129,6 +138,9 @@ jobs:
 
       - name: Test (clang-cl)
         run: cargo test --workspace --features secure,debug
+
+      - name: Test (clang-cl, no profiling)
+        run: cargo test --workspace --features secure,debug,no_profile
 
   # ── Older toolchain compatibility (no declared Cargo MSRV) ─────────────────
 

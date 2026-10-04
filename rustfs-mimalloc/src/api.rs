@@ -29,6 +29,16 @@ pub struct ProcessInfo {
 }
 
 impl MiMalloc {
+    /// Whether the linked allocator supports allocation profiling.
+    ///
+    /// Returns false with the sys crate's `no_profile` feature, including when
+    /// another dependency enables it through Cargo feature unification.
+    /// Statistics, error/output callbacks, and security checks are independent.
+    #[inline]
+    pub const fn profiling_enabled() -> bool {
+        rustfs_mimalloc_sys::MI_PROFILE_ENABLED
+    }
+
     /// mimalloc version as `major * 10000 + minor * 100 + patch`.
     #[inline]
     pub fn version() -> i32 {
@@ -414,6 +424,16 @@ mod tests {
     #[test]
     fn options_include_new_profiling_controls() {
         let text = MiMalloc::options_print();
+        assert_eq!(
+            text.contains("profiling   :"),
+            MiMalloc::profiling_enabled()
+        );
+        if cfg!(feature = "secure") {
+            assert!(text.contains("secure level: 4"));
+        }
+        if cfg!(feature = "debug") {
+            assert!(text.contains("debug level : 2"));
+        }
         for name in [
             "profile_alloc_interval",
             "profile_inuse_interval",

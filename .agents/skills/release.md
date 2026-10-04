@@ -121,6 +121,8 @@ cargo fmt --all --check
 cargo check --workspace --all-targets
 cargo test --workspace
 cargo test --workspace --features secure,debug
+cargo test --workspace --features no_profile
+cargo test --workspace --features secure,debug,no_profile
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
 cargo package -p rustfs-mimalloc-sys --allow-dirty

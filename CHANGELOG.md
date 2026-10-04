@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in `no_profile` builds to remove allocation profiling sampling and automatic
+  `MIMALLOC_PROFILE` startup. Statistics, alignment, security/debug checks and raw
+  profiler control ABI remain available; explicit snapshots have no allocation samples.
+- `MiMalloc::profiling_enabled()` and `MI_PROFILE_ENABLED` capability queries that
+  respect the linked sys crate's unified Cargo features.
+- Default/no-profile ABBA driver and tests for disabled sampling, environment
+  startup, feature unification, and retained secure/debug/statistics behavior.
 - `Heap::thread_local()` and borrowed `ThreadHeap` allocation methods to avoid
   repeated TLS lookups when a worker alternates between heaps. The view cannot
   outlive its parent or be sent/shared across threads; allocations may still be

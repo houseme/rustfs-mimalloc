@@ -25,6 +25,8 @@ override = ["rustfs-mimalloc-sys/override"]
 local_dynamic_tls = ["rustfs-mimalloc-sys/local_dynamic_tls"]
 # Disable THP
 no_thp = ["rustfs-mimalloc-sys/no_thp"]
+# Compile out allocation profiling while retaining statistics and safety checks.
+no_profile = ["rustfs-mimalloc-sys/no_profile"]
 
 [dependencies]
 rustfs-mimalloc-sys = { workspace = true }
