@@ -131,6 +131,62 @@ fn bench_cross_thread_free(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_heap_lookup(c: &mut Criterion) {
+    let mut group = c.benchmark_group("heap_lookup");
+    for size in [64, 4096] {
+        let heap = rustfs_mimalloc::heap::Heap::new().unwrap();
+        group.bench_function(BenchmarkId::new("heap_aligned", size), |b| {
+            b.iter(|| unsafe {
+                let ptr = heap.malloc_aligned(size, 8);
+                assert!(!ptr.is_null());
+                std::hint::black_box(ptr);
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            });
+        });
+        let local = heap.thread_local().unwrap();
+        group.bench_function(BenchmarkId::new("cached_aligned", size), |b| {
+            b.iter(|| unsafe {
+                let ptr = local.malloc_aligned(size, 8);
+                assert!(!ptr.is_null());
+                std::hint::black_box(ptr);
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_heap_switching(c: &mut Criterion) {
+    let mut group = c.benchmark_group("heap_switching");
+    for size in [64, 4096] {
+        let first = rustfs_mimalloc::heap::Heap::new().unwrap();
+        let second = rustfs_mimalloc::heap::Heap::new().unwrap();
+        group.bench_function(BenchmarkId::new("lookup", size), |b| {
+            b.iter(|| unsafe {
+                for heap in [&first, &second] {
+                    let ptr = heap.malloc_aligned(size, 8);
+                    assert!(!ptr.is_null());
+                    std::hint::black_box(ptr);
+                    rustfs_mimalloc_sys::mi_free(ptr.cast());
+                }
+            });
+        });
+        let first_cached = first.thread_local().unwrap();
+        let second_cached = second.thread_local().unwrap();
+        group.bench_function(BenchmarkId::new("cached", size), |b| {
+            b.iter(|| unsafe {
+                for local in [&first_cached, &second_cached] {
+                    let ptr = local.malloc_aligned(size, 8);
+                    assert!(!ptr.is_null());
+                    std::hint::black_box(ptr);
+                    rustfs_mimalloc_sys::mi_free(ptr.cast());
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_vec(c: &mut Criterion) {
     let mut group = c.benchmark_group("vec");
     group.bench_function("push_1000", |b| {
@@ -158,6 +214,8 @@ criterion_group!(
     bench_aligned_alloc,
     bench_small_free,
     bench_cross_thread_free,
+    bench_heap_lookup,
+    bench_heap_switching,
     bench_vec
 );
 criterion_main!(benches);

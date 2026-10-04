@@ -14,6 +14,66 @@ The submodule advances from v3.5.4 interim (`f8401bef`) to the fixed
 mimalloc version. `MI_MALLOC_VERSION` remains 30504. The latest full GitHub
 Release and main3 still reference v3.5.3 at review time.
 
+## Performance implementation follow-up
+
+Added `Heap::thread_local()` and the borrowed `ThreadHeap` view. It caches the
+upstream per-thread heap context, eliminating repeated TLS/cache lookups when
+one worker alternates between heaps. The view occupies one pointer plus a
+zero-sized lifetime marker, is neither Send nor Sync, and cannot outlive its
+parent heap. Its allocation methods remain unsafe and preserve upstream
+alignment/zeroing/OOM contracts. Allocations can be freed on another thread;
+the view itself must not be used during thread-local destruction or after
+mimalloc thread finalization.
+
+The accepted experiment uses the public Rust APIs, two alternating heaps, and
+two aligned allocation/free pairs per measured iteration. Build: release,
+default features, the fixed upstream pin above. Each round runs in a fresh
+process with 50 samples, 3 seconds warm-up and 5 seconds measurement per size.
+Criterion statistical resampling uses one Rayon thread, outside the measured
+loop. This avoids its default parallel analysis heating all cores between
+neighboring measurements. The host is shared, so the driver requires both
+baseline and candidate repeatability within 5%.
+
+| Size | A1: Heap (ns) | B1: ThreadHeap (ns) | B2: ThreadHeap (ns) | A2: Heap (ns) | A drift | B drift | Time reduction |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 64 bytes | 13.512 | 4.7772 | 4.8020 | 13.716 | 1.51% | 0.52% | 64.8% |
+| 4096 bytes | 25.249 | 16.302 | 16.112 | 26.100 | 3.37% | 1.17% | 36.9% |
+
+Time reduction compares the mean of B1/B2 with the mean of A1/A2. These are
+microbenchmark estimates for two alloc/free pairs, not production throughput
+or the previous producer/consumer workload. Single-heap tests did not show a
+stable advantage; callers should cache views where multiple heaps are active.
+The default `GlobalAlloc` remains unchanged.
+
+Reproduce with `python3 scripts/bench_heap_abba.py --offline --output
+target/heap-abba-run1` after dependencies are cached. The script writes logs
+and JSON, preserves earlier output directories and rejects a speedup conclusion
+when either drift gate fails. Raw measurements for this run remain under the
+ignored `target/perf-2026-10-04` directory.
+
+The earlier attempts are retained as negative evidence:
+
+- Increasing `MIMALLOC_PAGE_FULL_RETAIN` to 16 reduced observed 4 KiB batch times,
+  but baseline drift was 7.5%, outside the 5% gate. No policy change or validated
+  speedup follows from that run. Higher retention also needs peak/idle RSS tests.
+- The first public-API ABBA run with parallel statistical analysis failed: 64-byte
+  baseline drift was 5.74%, and 4 KiB candidate drift was 9.14%. Its speedup
+  fields are null. The accepted run above changed the measurement protocol
+  explicitly; it did not discard these failures.
+- External CPU sampling of the existing 4 KiB cross-thread batch identified
+  `mi_page_queue_find_free_ex`, `mi_arenas_try_alloc` and fresh arena/page
+  allocation paths. This is consistent with page lifecycle churn, beyond the
+  cost of merely passing pointers through channels. It motivates isolated
+  Linux RSS/latency experiments rather than a global retention-default change.
+
+Correctness validation covers alternating heap ownership, small and over-aligned
+allocation, zeroing, cross-thread freeing, and live allocations after parent
+heap deletion. Compile-fail doctests verify parent lifetime, !Send and !Sync;
+a runnable doctest checks the intended usage. Default, secure/debug, all-feature
+and release validation passed (36 unit tests, 6 doctests, plus the sys integration
+executable). Clippy, rustdoc and wrapper package verification also passed. The
+version remains 0.6.0.
+
 ## Newly merged upstream changes
 
 | PR | Merge and effect on this crate |
@@ -68,7 +128,7 @@ For ARM64/ARM64EC, validate actual clang-cl code generation and runtime behavior
 on the target. Fix upstream profiler activation before relying on its worker
 samples for those performance conclusions.
 
-## Current validation and benchmark evidence
+## Upstream-sync validation and benchmark evidence
 
 On macOS aarch64 / Rust 1.99.0, formatting, all-target checking, default,
 `secure,debug`, all-feature and release tests, Clippy with warnings denied and

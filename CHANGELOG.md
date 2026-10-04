@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Heap::thread_local()` and borrowed `ThreadHeap` allocation methods to avoid
+  repeated TLS lookups when a worker alternates between heaps. The view cannot
+  outlive its parent or be sent/shared across threads; allocations may still be
+  freed on other threads. Global allocator and retention defaults are unchanged.
+- Single-heap and alternating-heap benchmarks plus an A/B/B/A driver that
+  checks baseline drift and candidate repeatability before reporting a speedup.
+- Alignment, zeroing, cross-thread free, parent-deletion and compile-fail tests
+  for cached heap views.
 - Raw callback registration: `mi_register_error`, `mi_register_output`, and
   `mi_register_deferred_free`, with lifetime/concurrency contracts.
 - Cross-thread free batch benchmarks and a Windows clang-cl C11 test job.

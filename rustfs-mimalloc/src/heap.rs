@@ -1,6 +1,7 @@
 //! Heap and arena operations for advanced memory management.
 
 use core::ffi::c_void;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 // ── Error type ──────────────────────────────────────────────────────────────
@@ -29,10 +30,129 @@ pub struct Heap {
 unsafe impl Send for Heap {}
 unsafe impl Sync for Heap {}
 
+/// A cached, thread-local view of a [`Heap`].
+///
+/// Create one view per heap on each worker and reuse it to avoid repeated TLS
+/// lookups when alternating between heaps. Allocations may still be freed on
+/// any thread using `mi_free`. Dropping this view does not free allocations.
+/// Do not use cached views from thread-local destructors: mimalloc's own thread
+/// teardown can invalidate its context before the parent heap is deleted.
+///
+/// The view cannot outlive its borrowed heap:
+/// ```compile_fail
+/// use rustfs_mimalloc::heap::Heap;
+/// let heap = Heap::new().unwrap();
+/// let local = heap.thread_local().unwrap();
+/// heap.delete();
+/// unsafe { local.malloc(64); }
+/// ```
+///
+/// A view cannot be moved to another thread:
+/// ```compile_fail
+/// use rustfs_mimalloc::heap::Heap;
+/// let heap = Heap::new().unwrap();
+/// let local = heap.thread_local().unwrap();
+/// std::thread::scope(|scope| {
+///     scope.spawn(move || unsafe { local.malloc(64); });
+/// });
+/// ```
+///
+/// It cannot be shared with another thread either:
+/// ```compile_fail
+/// use rustfs_mimalloc::heap::Heap;
+/// let heap = Heap::new().unwrap();
+/// let local = heap.thread_local().unwrap();
+/// let shared = &local;
+/// std::thread::scope(|scope| {
+///     scope.spawn(move || unsafe { shared.malloc(64); });
+/// });
+/// ```
+#[must_use]
+pub struct ThreadHeap<'heap> {
+    // NonNull deliberately prevents Send and Sync. The borrow prevents safe
+    // deletion of the parent while upstream's per-thread pointer is cached.
+    ptr: NonNull<rustfs_mimalloc_sys::mi_theap_t>,
+    _heap: PhantomData<&'heap Heap>,
+}
+
+impl ThreadHeap<'_> {
+    /// Allocate from this heap without another TLS lookup.
+    ///
+    /// # Safety
+    /// Check the result for null before access and free successful allocations
+    /// with a compatible mimalloc free function. No Rust type alignment is implied.
+    /// The creating thread's mimalloc context must remain initialized: do not use
+    /// the view from thread-local destructors or after an explicit `mi_thread_done`.
+    #[inline]
+    pub unsafe fn malloc(&self, size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_theap_malloc(self.ptr.as_ptr(), size).cast() }
+    }
+
+    /// Allocate zeroed memory without another TLS lookup.
+    ///
+    /// # Safety
+    /// The same pointer lifetime and alignment requirements as [`Self::malloc`] apply.
+    #[inline]
+    pub unsafe fn zalloc(&self, size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_theap_zalloc(self.ptr.as_ptr(), size).cast() }
+    }
+
+    /// Allocate with a power-of-two alignment without another TLS lookup.
+    ///
+    /// # Safety
+    /// `alignment` must be a nonzero power of two. Check the result for null
+    /// before access and free it with `mi_free` or an appropriate aligned free.
+    /// The cached-context lifetime requirement in [`Self::malloc`] also applies.
+    #[inline]
+    pub unsafe fn malloc_aligned(&self, size: usize, alignment: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_theap_malloc_aligned(self.ptr.as_ptr(), size, alignment).cast()
+        }
+    }
+
+    /// Allocate zeroed memory with a power-of-two alignment.
+    ///
+    /// # Safety
+    /// The same requirements as [`Self::malloc_aligned`] apply.
+    #[inline]
+    pub unsafe fn zalloc_aligned(&self, size: usize, alignment: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_theap_zalloc_aligned(self.ptr.as_ptr(), size, alignment).cast()
+        }
+    }
+}
+
 impl Heap {
     /// Create a new heap. Returns `None` on OOM.
     pub fn new() -> Option<Self> {
         NonNull::new(unsafe { rustfs_mimalloc_sys::mi_heap_new() }).map(Self::owned)
+    }
+
+    /// Cache this heap's allocation context for the calling thread.
+    ///
+    /// The returned view borrows this handle and is neither `Send` nor `Sync`.
+    /// Create it once outside an allocation loop. Returns `None` if upstream
+    /// returns a null context; individual allocations may still fail separately.
+    ///
+    /// ```
+    /// use rustfs_mimalloc::heap::Heap;
+    /// let heap = Heap::new().unwrap();
+    /// let local = heap.thread_local().unwrap();
+    /// unsafe {
+    ///     let ptr = local.zalloc_aligned(4096, 64);
+    ///     assert!(!ptr.is_null());
+    ///     rustfs_mimalloc_sys::mi_free(ptr.cast());
+    /// }
+    /// ```
+    pub fn thread_local(&self) -> Option<ThreadHeap<'_>> {
+        // SAFETY: this handle keeps the heap alive. The returned pointer is used
+        // only on this thread and cannot outlive the borrowed heap handle.
+        NonNull::new(unsafe { rustfs_mimalloc_sys::mi_heap_theap(self.ptr.as_ptr()) }).map(|ptr| {
+            ThreadHeap {
+                ptr,
+                _heap: PhantomData,
+            }
+        })
     }
 
     /// Create a heap that allocates exclusively from the given arena.
@@ -292,6 +412,86 @@ mod tests {
     fn heap_create_delete() {
         let heap = Heap::new().expect("heap::new failed");
         heap.delete();
+    }
+
+    #[test]
+    fn cached_views_keep_alternating_heaps_and_alignment_distinct() {
+        let first = Heap::new().unwrap();
+        let second = Heap::new().unwrap();
+        let first_local = first.thread_local().unwrap();
+        let second_local = second.thread_local().unwrap();
+        for size in [1, 64, 4096] {
+            for alignment in [1, 8, 64, 4096, 16 * 1024] {
+                for (heap, local) in [(&first, &first_local), (&second, &second_local)] {
+                    unsafe {
+                        let ptr = local.malloc_aligned(size, alignment);
+                        assert!(!ptr.is_null());
+                        assert_eq!(ptr as usize % alignment, 0);
+                        assert!(heap.contains(ptr));
+                        core::ptr::write_bytes(ptr, 0xA5, size);
+                        rustfs_mimalloc_sys::mi_free(ptr.cast());
+                        let ptr = local.zalloc_aligned(size, alignment);
+                        assert!(!ptr.is_null());
+                        assert_eq!(ptr as usize % alignment, 0);
+                        assert!(heap.contains(ptr));
+                        assert!((0..size).all(|index| *ptr.add(index) == 0));
+                        rustfs_mimalloc_sys::mi_free(ptr.cast());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_heap_allocations_can_be_freed_on_another_thread() {
+        let heap = Heap::new().unwrap();
+        let local = heap.thread_local().unwrap();
+        for _ in 0..8 {
+            let mut addresses = Vec::with_capacity(256);
+            for _ in 0..256 {
+                let ptr = unsafe { local.malloc(4096) };
+                assert!(!ptr.is_null());
+                unsafe { core::ptr::write_bytes(ptr, 0x5A, 4096) };
+                addresses.push(ptr as usize);
+            }
+            std::thread::spawn(move || {
+                for address in addresses {
+                    // Exclusive allocation ownership is transferred to the worker;
+                    // the allocating thread and parent heap stay alive until join.
+                    unsafe {
+                        let ptr = address as *mut u8;
+                        assert_eq!(*ptr, 0x5A);
+                        assert_eq!(*ptr.add(4095), 0x5A);
+                        rustfs_mimalloc_sys::mi_free(ptr.cast());
+                    }
+                }
+            })
+            .join()
+            .unwrap();
+        }
+        unsafe {
+            let ptr = local.zalloc(128);
+            assert!(!ptr.is_null());
+            assert!((0..128).all(|index| *ptr.add(index) == 0));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
+    }
+
+    #[test]
+    fn cached_allocations_survive_view_and_parent_deletion() {
+        let heap = Heap::new().unwrap();
+        let ptr = {
+            let local = heap.thread_local().unwrap();
+            let ptr = unsafe { local.malloc(128) };
+            assert!(!ptr.is_null());
+            unsafe { core::ptr::write_bytes(ptr, 0xAB, 128) };
+            ptr
+        };
+        heap.delete(); // moves live allocations to the main heap
+        unsafe {
+            assert!((0..128).all(|index| *ptr.add(index) == 0xAB));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
     }
 
     #[test]

@@ -286,6 +286,44 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 This is validated in the Windows CI matrix.
 
+## Cached Thread-local Heap Views
+
+When one worker frequently alternates between several heaps, cache a view for
+that worker to avoid repeating mimalloc's TLS lookup on each allocation:
+
+```rust
+use rustfs_mimalloc::heap::Heap;
+
+let heap = Heap::new().expect("heap allocation failed");
+let local = heap.thread_local().expect("thread context unavailable");
+unsafe {
+    let ptr = local.zalloc_aligned(4096, 64);
+    assert!(!ptr.is_null());
+    // Use the block, then free it normally (also permitted on another thread).
+    rustfs_mimalloc_sys::mi_free(ptr.cast());
+}
+```
+
+`ThreadHeap` borrows its parent heap and is neither `Send` nor `Sync`. Its
+`malloc`, `zalloc`, `malloc_aligned` and `zalloc_aligned` methods return raw
+pointers with the same allocation contracts as the parent heap. Keep the view
+on its creating thread, create it outside hot loops, and do not use it from
+thread-local destructors or after explicit mimalloc thread finalization. Dropping the view does
+not free blocks; deleting its parent preserves live allocations in the main
+heap. This API does not change `GlobalAlloc` or global page-retention settings.
+
+The `heap_lookup` benchmark is a single-heap control; `heap_switching`
+alternates two heaps. Run reproducible comparisons with:
+
+```sh
+python3 scripts/bench_heap_abba.py --output target/heap-abba-run1
+```
+
+The script records A1/B1/B2/A2 in fresh processes and rejects speedup conclusions
+if either baseline drift or candidate drift exceeds 5%. Add `--offline` when
+all Cargo dependencies are already cached. Results are local microbenchmarks,
+not a guarantee of production throughput.
+
 ## Rust Toolchain Compatibility
 
 The workspace and member manifests intentionally omit `rust-version`. CI
