@@ -144,6 +144,17 @@ fn header_and_runtime_versions_agree() {
     );
 }
 
+fn new_option_ids_match_upstream_header() {
+    assert_eq!(mi_option_t::mi_option_arena_purge_min_size as i32, 44);
+    assert_eq!(mi_option_t::mi_option_stats_merge_on_collect as i32, 47);
+    assert_eq!(mi_option_t::mi_option_stats_merge_threshold as i32, 52);
+    assert_eq!(mi_option_t::mi_option_arena_purge_immediate_size as i32, 53);
+    assert_eq!(
+        mi_option_t::mi_option_minimal_purge_size as i32,
+        mi_option_t::mi_option_arena_purge_min_size as i32
+    );
+}
+
 #[cfg(feature = "no_profile")]
 fn no_profile_ignores_automatic_profile_startup() {
     let nonce = std::time::SystemTime::now()
@@ -346,6 +357,8 @@ fn main() {
         no_profile_ignores_automatic_profile_startup();
     }
     header_and_runtime_versions_agree();
+    new_option_ids_match_upstream_header();
+    unsafe { mi_arenas_purge() };
     usable_size_symbols_work_without_override();
     diagnostic_callbacks_receive_their_state();
     destroy_collects_pending_cross_thread_frees();

@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `8bd60cf0`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `a28efddd`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 ### Why this crate?
 
@@ -138,13 +138,12 @@ the original size and alignment are known. They preserve the small-free fast
 path only when the allocation is not over-aligned, avoiding incorrect routing
 for small allocations with a larger alignment.
 
-### V3.5.4 APIs and migration
+### Upstream APIs and migration
 
-The submodule pins [upstream commit 8bd60cf0](https://github.com/microsoft/mimalloc/commit/8bd60cf0b8d0ff9086be5519b18d9843bf2ceeff),
-13 commits after the v3.5.4 interim tag. The source version remains 30504; the
-latest full upstream GitHub Release at this review remains v3.5.3. This pin
-includes the heap-destroy, clang/MSVC C11 atomics, and usable-size symbol fixes.
-The public C headers are unchanged from v3.5.4.
+The submodule pins [upstream commit a28efddd](https://github.com/microsoft/mimalloc/commit/a28efddd3658084937d285858772481f676c4045),
+after the v3.5.4 interim tag. The source version remains 30504. This pin
+includes upstream fixes through 2026-10-08, plus new statistics-merge and
+arena-purge controls.
 
 - `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
   path. These unsafe functions require a small allocation whose page is **still
@@ -157,6 +156,11 @@ The public C headers are unchanged from v3.5.4.
 - `Heap::zalloc_aligned` and `Heap::realloc_aligned` preserve requested alignment.
   `MiMalloc::good_size`, `options_print`, `option_get_clamp`, and default option
   setters support capacity planning and diagnostics.
+- `MiMalloc::arenas_purge()` immediately processes pending arena purges for the
+  main subprocess. It can issue OS memory calls and should be used where the
+  release of delayed arena memory is worth the added latency. Configure
+  `mi_option_arena_purge_immediate_size` to eagerly purge large freed ranges, or
+  `mi_option_stats_merge_threshold` to tune thread-heap statistics merging.
 - Option setters/toggles are now **unsafe**: upstream storage is not atomic.
   Configure before starting other threads or exclude all concurrent mimalloc
   access; a mutex around setters alone is insufficient.
@@ -233,7 +237,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (post-v3.5.4 interim, commit `8bd60cf0`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (post-v3.5.4 interim, commit `a28efddd`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

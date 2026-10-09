@@ -7,15 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-10-04
-
 ### Changed
 
-- Pin mimalloc to upstream commit `8bd60cf0`, 13 commits after the **v3.5.4
-  interim** tag. The C source version remains 30504 and its public headers are
-  unchanged from v3.5.4. This includes allocation/free code generation improvements,
-  adaptive full-page retention, and cross-thread page reclamation enabled by
-  default. Workload-specific throughput and RSS still require measurement.
+- Pin mimalloc to upstream `dev3` commit `a28efddd` (2026-10-08), after the
+  **v3.5.4 interim** tag. The C source version remains 30504. This includes
+  allocation/free improvements, adaptive full-page retention, cross-thread page
+  reclamation, and subsequent upstream fixes. Workload-specific throughput and
+  RSS still require measurement.
 - **Breaking:** match the experimental profiler ABI: add `on_snapshot` and use
   mutable heap pointers in allocation/free callbacks.
 - **Breaking:** make runtime option setters/toggles unsafe because upstream
@@ -46,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-thread free batch benchmarks and a Windows clang-cl C11 test job.
 - Raw `mi_profiler_snapshot`, `mi_pprof_profiler_new`, and
   `mi_pprof_profiler_delete`; all four profiling interval/sample-rate options.
+- Raw `mi_arenas_purge` and safe `MiMalloc::arenas_purge()` to process pending
+  arena purges in the main subprocess. Expose `mi_option_stats_merge_threshold`
+  and `mi_option_arena_purge_immediate_size`, plus renamed purge/stat-merge
+  options and compatibility aliases for the prior Rust option names.
 - Unsafe `MiMalloc::free_small_local{,_nonnull}` and matching raw FFI. The
   allocation's small page must still be owned by the calling thread.
 - Aligned heap zero-allocation and reallocation, additional thread-local FFI,
@@ -70,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   actual linkage and values.
 - Inherit upstream #1419: use C11 atomics for clang C builds targeting MSVC,
   fixing ARM64EC ordering and avoiding unnecessary ARM64 barriers.
+- Inherit upstream fixes for `mi_free_size` size-mismatch checks, Windows
+  forced-exit handling and UWP compilation, Android syscall avoidance, and
+  profiling-disabled builds. Keep the built-in pprof implementation enabled in
+  `no_profile` so explicit raw snapshots remain functional.
 - Enable `MI_MALLOC_OVERRIDE` on non-Windows override builds.
 - Set `MI_DEFAULT_ALLOW_THP=0` with `no_thp`; disabling only explicit huge-page
   advice did not disable the runtime THP policy or its larger purge granularity.
@@ -237,7 +243,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release workflow: tag-triggered + manual dispatch, crates.io publish, GitHub Release.
 - 22 unit tests + 2 doc-tests + allocation benchmarks.
 
-[Unreleased]: https://github.com/houseme/rustfs-mimalloc/compare/v0.6.0...HEAD
 [0.6.0]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/houseme/rustfs-mimalloc/compare/v0.5.4...v0.5.5

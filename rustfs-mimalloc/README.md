@@ -50,7 +50,7 @@ APIs, while deallocation uses the general `mi_free` path.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30504 = V3.5.4
+let version = MiMalloc::version();       // 30504 = V3.5.4 interim source line
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -63,7 +63,7 @@ unsafe { MiMalloc::option_set(mi_option_t::mi_option_purge_delay, 0); }
 
 `MiMalloc::malloc_csize`, `zalloc_csize`, `wmalloc_small`, `wzalloc_small`,
 `free_csize`, `free_csize_nonnull`, `free_small`, and `free_small_nonnull`
-expose mimalloc V3.5.4's small, word-size, and constant-size fast paths. These
+expose mimalloc V3's small, word-size, and constant-size fast paths. These
 APIs are unsafe: the pointer must come from mimalloc, and the caller must
 preserve the original allocation size contract.
 
@@ -72,7 +72,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **post-v3.5.4 interim (`8bd60cf0`)**. Runtime option setters
+The submodule is pinned to upstream **post-v3.5.4 interim (`a28efddd`)**. Runtime option setters
 and toggles are now unsafe because upstream storage is not atomic; configure
 before starting threads or exclude all concurrent mimalloc access. The raw
 profiler ABI adds `on_snapshot` and changes callback heap pointers to mutable.
@@ -81,6 +81,12 @@ profiler ABI adds `on_snapshot` and changes callback heap pointers to mutable.
 thread. `Heap::zalloc_aligned` and `Heap::realloc_aligned` add aligned heap
 operations. `good_size`, `options_print` and clamped/default option access add
 diagnostics and tuning support.
+
+`MiMalloc::arenas_purge()` processes pending arena purges in the main
+subprocess immediately. `mi_option_arena_purge_immediate_size` can release
+large freed arena ranges without making all purges immediate; by default, the
+threshold is 4 MiB. `mi_option_stats_merge_threshold` tunes when thread-heap
+stats merge into the parent heap; its upstream default is 512 KiB.
 
 The new raw pprof APIs are experimental. The interim upstream implementation
 can leave new thread heaps with profiling disabled, so dedicated-heap and

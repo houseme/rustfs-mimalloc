@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `8bd60cf0` after v3.5.4 interim.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `a28efddd` after v3.5.4 interim.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -44,9 +44,9 @@ is disabled. Statistics, guarded debug allocations and secure checks are retaine
 Raw profiler control/snapshot symbols remain linked: explicit snapshot callbacks
 can still execute, but there are no sampled allocations to report.
 
-At the pinned upstream revision, disabling the built-in profiler implementation
-has a C signature mismatch. The build keeps its compatible implementation while
-turning off sampling and automatic startup. Vendored source remains unmodified.
+The pinned upstream source supports `MI_PROFILE=0` directly, including the
+profiler stubs' ABI. The build retains the built-in pprof implementation so
+explicit raw snapshot calls remain functional while sampling stays disabled.
 
 ## Windows Static CRT
 
@@ -62,7 +62,7 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
 - Static mimalloc linking; platform system libraries are linked as needed
 - Platform-specific flags handled automatically (Windows libs, musl compat, TLS model)
 - `links = "mimalloc"` — exports `DEP_MIMALLOC_INCLUDE` for downstream C/C++ crates
-- V3.5.4 small allocation/free APIs, including `mi_wmalloc_small`,
+- V3 small allocation/free APIs, including `mi_wmalloc_small`,
   `mi_wzalloc_small`, the thread-local heap word-size variants,
   `mi_free_small_nonnull`, and inline Rust mirrors for `mi_malloc_csize`,
   `mi_zalloc_csize`, `mi_theap_malloc_csize`, `mi_theap_zalloc_csize`,
@@ -75,11 +75,15 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   `on_snapshot` to `mi_profiler_t` and changes callback heap pointers to mutable
 - `mi_free_small_local{,_nonnull}` for small pages still owned by the calling thread
 - Raw error, output and deferred-free callback registration APIs
-- All four `mi_option_profile_*` controls, default/clamped option APIs, aligned
+- `mi_arenas_purge`, `mi_option_stats_merge_threshold`, and
+  `mi_option_arena_purge_immediate_size`, plus all `mi_option_profile_*`
+  controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
 The source pin follows the **interim** tag and includes fixes from upstream
-PRs #1416, #1418, #1419 and #1420. No public C API was added by those commits.
+PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
+through 2026-10-08. New public APIs include `mi_arenas_purge` and two options
+for thread-heap stats merging and large-range purging.
 The inherited `profile_disabled` flag
 can prevent sampling in new thread heaps; dedicated-heap and worker-thread
 profiling are not reliable at this pin. Profiling callbacks must not unwind;

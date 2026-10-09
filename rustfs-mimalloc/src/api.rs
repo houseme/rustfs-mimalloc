@@ -51,6 +51,15 @@ impl MiMalloc {
         unsafe { rustfs_mimalloc_sys::mi_collect(force) }
     }
 
+    /// Immediately purge pending arena ranges in the main subprocess.
+    ///
+    /// This can issue operating-system memory calls and may add latency. It is
+    /// useful for idle services that need to release delayed arena purges.
+    #[inline]
+    pub fn arenas_purge() {
+        unsafe { rustfs_mimalloc_sys::mi_arenas_purge() }
+    }
+
     /// Usable size of an allocated block (may be larger than requested).
     ///
     /// # Safety
@@ -402,6 +411,11 @@ mod tests {
     #[test]
     fn version_is_v3() {
         assert_eq!(MiMalloc::version(), 30504, "expected V3.5.4");
+    }
+
+    #[test]
+    fn arena_purge_api_is_callable() {
+        MiMalloc::arenas_purge();
     }
 
     #[test]

@@ -100,11 +100,8 @@ fn main() {
 
     if env::var_os("CARGO_FEATURE_NO_PROFILE").is_some() {
         build.define("MI_PROFILE", "0");
-        // At the pinned 8bd60cf0 revision, the !MI_PROFILE_USE_BUILTIN stub
-        // declares mi_pprof_profiler_snapshot with the wrong parameter type.
-        // Retain its normal implementation to avoid modifying vendored source.
-        // MI_PROFILE=0 still disables allocation sampling and env-driven startup;
-        // raw control/snapshot symbols remain available for ABI compatibility.
+        // Keep the pprof implementation for explicit snapshot calls and raw
+        // ABI compatibility; MI_PROFILE=0 still disables allocation sampling.
         build.define("MI_PROFILE_USE_BUILTIN", "1");
     }
 

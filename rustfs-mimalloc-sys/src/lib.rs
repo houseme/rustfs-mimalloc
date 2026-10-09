@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream commit 8bd60cf0 (post-v3.5.4 interim).
+//! Pinned to upstream commit a28efddd (post-v3.5.4 interim).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -98,14 +98,26 @@ pub enum mi_option_t {
     mi_option_page_max_reclaim = 41,
     mi_option_page_cross_thread_max_reclaim = 42,
     mi_option_allow_thp = 43,
-    mi_option_minimal_purge_size = 44,
+    mi_option_arena_purge_min_size = 44,
     mi_option_arena_max_object_size = 45,
     mi_option_arena_is_numa_local = 46,
-    mi_option_collect_merges_stats = 47,
+    mi_option_stats_merge_on_collect = 47,
     mi_option_profile_alloc_interval = 48,
     mi_option_profile_inuse_interval = 49,
     mi_option_profile_time_interval = 50,
     mi_option_profile_sample_rate = 51,
+    mi_option_stats_merge_threshold = 52,
+    mi_option_arena_purge_immediate_size = 53,
+}
+
+impl mi_option_t {
+    /// Deprecated upstream alias for [`Self::mi_option_arena_purge_min_size`].
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_minimal_purge_size: Self = Self::mi_option_arena_purge_min_size;
+
+    /// Compatibility alias for the former Rust binding name.
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_collect_merges_stats: Self = Self::mi_option_stats_merge_on_collect;
 }
 
 // ── Heap area (for visiting blocks) ─────────────────────────────────────────
@@ -483,6 +495,7 @@ unsafe extern "C" {
     pub fn mi_arena_min_alignment() -> size_t;
     pub fn mi_arena_min_size() -> size_t;
     pub fn mi_arena_max_object_size() -> size_t;
+    pub fn mi_arenas_purge();
     pub fn mi_heap_new_in_arena(arena_id: mi_arena_id_t) -> *mut mi_heap_t;
 }
 

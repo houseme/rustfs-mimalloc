@@ -16,4 +16,4 @@ categories = ["memory-management", "no-std"]
 [workspace.dependencies]
 rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.6.0" }
 rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.6.0" }
-cc = "1.5.1"
+cc = "1.6.0"
