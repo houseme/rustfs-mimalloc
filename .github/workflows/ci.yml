@@ -101,10 +101,15 @@ jobs:
   # ── Windows static CRT ────────────────────────────────────────────────────
 
   windows-static-crt:
-    name: Windows static CRT
+    name: Windows static CRT (${{ matrix.features }})
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["", "secure", "secure,debug", "secure,debug,no_profile"]
     runs-on: windows-latest
     env:
       RUSTFLAGS: -C target-feature=+crt-static
+      CC_ENABLE_DEBUG_OUTPUT: 1
     steps:
       - uses: actions/checkout@v7
         with:
@@ -113,10 +118,73 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build (static CRT)
-        run: cargo build --features secure
+        run: cargo build --verbose --features "${{ matrix.features }}"
+
+      - name: Test startup before libtest (static CRT)
+        run: cargo test -p rustfs-mimalloc --test startup --features "${{ matrix.features }}"
 
       - name: Test (static CRT)
-        run: cargo test --features secure
+        run: cargo test --verbose --workspace --features "${{ matrix.features }}" -- --nocapture
+
+      - name: Test startup (release, static CRT)
+        run: cargo test -p rustfs-mimalloc --release --test startup --features "${{ matrix.features }}"
+
+      - name: Diagnose native startup crash
+        if: failure()
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
+          $debugger = Join-Path $env:RUNNER_TEMP 'startup-debug.exe'
+          $nativeControl = Join-Path $env:RUNNER_TEMP 'native-crt-control.exe'
+          $buildCmd = Join-Path $env:RUNNER_TEMP 'build-startup-debug.cmd'
+          @"
+          @echo off
+          call "$devcmd" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b %errorlevel%
+          cl /nologo /W4 /Zi "$PWD\scripts\windows-startup-debug.c" /Fe:"$debugger" /link dbghelp.lib
+          if errorlevel 1 exit /b %errorlevel%
+          cl /nologo /W4 /MT /Zi "$PWD\scripts\windows-crt-control.c" /Fe:"$nativeControl"
+          exit /b %errorlevel%
+          "@ | Set-Content -Encoding ASCII $buildCmd
+          & cmd /d /c $buildCmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output 'Native C /MT baseline (no Rust or mimalloc):'
+          & $debugger $nativeControl
+          Write-Output "Native C baseline exit: $LASTEXITCODE"
+          $rustControl = Join-Path $env:RUNNER_TEMP 'rust-crt-control.exe'
+          rustc --edition=2024 -g -C target-feature=+crt-static scripts\windows-crt-control.rs -o $rustControl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output 'Rust static CRT baseline (System allocator, no mimalloc):'
+          & $debugger $rustControl
+          Write-Output "Rust System baseline exit: $LASTEXITCODE"
+          $map = Join-Path $env:RUNNER_TEMP 'startup.map'
+          cargo rustc -p rustfs-mimalloc --test startup --features "${{ matrix.features }}" -- -C "link-arg=/MAP:$map"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $test = Get-ChildItem target\debug\deps\startup-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $test) { throw 'Startup test executable was not built' }
+          $trace = & $debugger $test.FullName | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'startup-stack.txt')
+          $debugExit = $LASTEXITCODE
+          Write-Output $trace
+          $mapLines = Get-Content $map
+          $preferredLine = $mapLines | Where-Object { $_ -match 'Preferred load address is\s+([0-9a-fA-F]+)' } | Select-Object -First 1
+          $preferredBase = [Convert]::ToUInt64(($preferredLine -split '\s+')[-1], 16)
+          $symbols = $mapLines | ForEach-Object {
+            if ($_ -match '^\s*[0-9a-fA-F]{4}:[0-9a-fA-F]+\s+(\S+)\s+([0-9a-fA-F]{16})') {
+              [PSCustomObject]@{Name = $Matches[1]; Address = [Convert]::ToUInt64($Matches[2], 16)}
+            }
+          }
+          foreach ($frame in $trace) {
+            if ($frame -match '(?:AV_RVA=|RVA=)([0-9a-fA-F]+)') {
+              $address = $preferredBase + [Convert]::ToUInt64($Matches[1], 16)
+              $nearest = $symbols | Where-Object Address -LE $address | Sort-Object Address | Select-Object -Last 3
+              Write-Output "MAP symbols for $frame"
+              $nearest | ForEach-Object { '{0}+0x{1:x}' -f $_.Name, ($address - $_.Address) }
+            }
+          }
+          exit $debugExit
 
   # ── clang-cl C atomics / ABI compatibility ─────────────────────────────────
 

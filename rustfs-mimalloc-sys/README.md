@@ -50,10 +50,21 @@ explicit raw snapshot calls remain functional while sampling stays disabled.
 
 ## Windows Static CRT
 
+All Windows C builds preserve the linker's `__ImageBase` symbol with an explicit
+`extern` declaration. The pinned upstream linkage macro is empty in C and would
+otherwise create a variable with that reserved name, breaking static UCRT's
+image-relative API lookups before `main`.
+
 On `*-pc-windows-msvc`, configure the final Rust binary with
-`-C target-feature=+crt-static`. The build script lets `cc` select `/MT` for
-mimalloc from Cargo's `crt-static` target feature, so the C allocator and Rust
+`-C target-feature=+crt-static`. The build script selects `/MT` for mimalloc
+from Cargo's target features and Rust codegen flags, so the C allocator and Rust
 share one CRT mode. Without that target feature, the default remains `/MD`.
+
+For the pinned upstream snapshot, static CRT builds defer full process startup
+and strong random reseeding to a late CRT initializer (`.CRT$XCT`), after UCRT
+initialization. TLS process-attach runs while UCRT is still initializing; early
+allocations retain a weak bootstrap seed until the late initializer reseeds it.
+TLS thread-exit cleanup remains enabled.
 
 ## What's Included
 

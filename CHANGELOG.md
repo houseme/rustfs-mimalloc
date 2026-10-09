@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Declare Windows `__ImageBase` with explicit `extern` in C builds. Upstream's
+  C++ linkage macro expands to nothing in C and accidentally defined BSS storage,
+  shadowing the linker-owned PE base. Static UCRT used that false base for RVA
+  lookups and crashed in `__acrt_tls2_supported` before `main`. Verify the symbol
+  matches the OS module handle and the PE header in the isolated startup test.
 - Inherit upstream #1420: invalidate cached thread heaps on heap destruction
   and collect pending cross-thread frees before resetting a destroyed page.
 - Inherit upstream #1416: make the already-declared `mi_malloc_size` and
@@ -76,6 +81,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forced-exit handling and UWP compilation, Android syscall avoidance, and
   profiling-disabled builds. Keep the built-in pprof implementation enabled in
   `no_profile` so explicit raw snapshots remain functional.
+- Defer full Windows static CRT initialization and strong RNG reseeding from
+  the pre-CRT TLS callback to `.CRT$XCT`, after UCRT initialization. Keep
+  weak seeds for early allocation bootstrap and TLS thread-exit cleanup.
+- Use one resolved CRT setting for MSVC compiler flags and startup compatibility;
+  distinguish `+crt-static` from `-crt-static` and honor encoded Rust flags.
+- Check static CRT startup ordering before `main` in an isolated regression
+  executable, including secure/debug/no-profile and release CI coverage.
 - Enable `MI_MALLOC_OVERRIDE` on non-Windows override builds.
 - Set `MI_DEFAULT_ALLOW_THP=0` with `no_thp`; disabling only explicit huge-page
   advice did not disable the runtime THP policy or its larger purge granularity.

@@ -3,7 +3,9 @@
 //! Compiles mimalloc V3 as a static library using the `cc` crate.
 //! Handles platform-specific flags, feature gates, and linker requirements.
 
-use std::{env, fs};
+use std::{env, fs, path::PathBuf};
+
+mod windows_static_crt;
 
 struct TargetCfg {
     triple: String,
@@ -32,6 +34,18 @@ impl TargetCfg {
         self.env == "msvc"
     }
 
+    fn uses_static_crt(&self) -> bool {
+        if !self.is_msvc() {
+            return false;
+        }
+
+        let target_features = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default();
+        let rustflags = env::var("CARGO_ENCODED_RUSTFLAGS")
+            .or_else(|_| env::var("RUSTFLAGS"))
+            .unwrap_or_default();
+        windows_static_crt::enabled(&target_features, &rustflags)
+    }
+
     fn is_musl(&self) -> bool {
         self.env == "musl"
     }
@@ -56,6 +70,7 @@ fn main() {
 
     // Tell Cargo to re-run if features change
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=windows_static_crt.rs");
     // static.c includes these files; cc cannot discover that dependency tree.
     println!("cargo:rerun-if-changed=c_src/mimalloc/include");
     println!("cargo:rerun-if-changed=c_src/mimalloc/src");
@@ -68,9 +83,21 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NO_PROFILE");
     // `cc` selects /MT for MSVC when Cargo enables `crt-static`.
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE");
+    println!("cargo:rerun-if-env-changed=RUSTFLAGS");
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
 
     let mut build = cc::Build::new();
-    build.file("c_src/mimalloc/src/static.c");
+    let static_crt = target.uses_static_crt();
+    if target.is_msvc() {
+        // Use the same CRT decision for C flags and startup compatibility.
+        build.static_crt(static_crt);
+    }
+    let static_source = if target.is_windows() {
+        windows_source(static_crt)
+    } else {
+        PathBuf::from("c_src/mimalloc/src/static.c")
+    };
+    build.file(static_source);
     build.include("c_src/mimalloc/include");
     build.include("c_src/mimalloc/src");
 
@@ -150,9 +177,7 @@ fn main() {
 
     // Platform-specific compiler flags
     if target.is_msvc() {
-        // Do not force /MD here. `cc` reads Cargo's `crt-static` target feature
-        // and selects /MT when the final Rust binary uses the static CRT; this
-        // keeps mimalloc and Rust in one CRT domain. Otherwise it uses /MD.
+        // CRT selection is configured above, together with startup compatibility.
         // Suppress common MSVC warnings
         build.flag("/wd4100"); // unreferenced formal parameter
         build.flag("/wd4127"); // conditional expression is constant
@@ -199,6 +224,76 @@ fn main() {
     assert_eq!(version / 10000, 3, "only mimalloc V3 is supported");
     println!("cargo:version={version}");
     println!("cargo:rustc-env=MIMALLOC_VERSION={version}");
+}
+
+/// Correct the linker-owned image-base declaration in Windows C builds.
+/// Static CRT builds also retain their startup/bootstrap compatibility edits.
+fn windows_source(static_crt: bool) -> PathBuf {
+    const UPSTREAM_THEAP_INCLUDE: &str = "#include \"theap.c\"";
+    const PATCHED_THEAP_INCLUDE: &str = "#include \"mimalloc-static-crt-theap.c\"";
+
+    let source_dir = PathBuf::from("c_src/mimalloc/src");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
+    if static_crt {
+        let theap = fs::read_to_string(source_dir.join("theap.c"))
+            .expect("failed to read upstream theap.c")
+            .replace("\r\n", "\n");
+        fs::write(
+            out_dir.join("mimalloc-static-crt-theap.c"),
+            windows_static_crt::patch_theap(&theap),
+        )
+        .expect("failed to write the Windows static CRT theap.c compatibility source");
+    }
+
+    let windows_prim = fs::read_to_string(source_dir.join("prim/windows/prim.c"))
+        .expect("failed to read upstream Windows prim.c")
+        .replace("\r\n", "\n");
+    fs::write(
+        out_dir.join("mimalloc-static-crt-windows-prim.c"),
+        if static_crt {
+            windows_static_crt::patch_prim(&windows_prim)
+        } else {
+            windows_static_crt::patch_image_base(&windows_prim)
+        },
+    )
+    .expect("failed to write the Windows static CRT startup compatibility source");
+    let prim = fs::read_to_string(source_dir.join("prim/prim.c"))
+        .expect("failed to read mimalloc's primitive selector");
+    fs::write(
+        out_dir.join("mimalloc-static-crt-prim.c"),
+        windows_static_crt::replace_once(
+            &prim,
+            "#include \"windows/prim.c\"",
+            "#include \"mimalloc-static-crt-windows-prim.c\"",
+        ),
+    )
+    .expect("failed to write the Windows static CRT primitive selector");
+
+    // Give the compatibility copy a unique include name so the C compiler
+    // cannot resolve the unpatched upstream theap.c from its source directory.
+    let static_source = fs::read_to_string(source_dir.join("static.c"))
+        .expect("failed to read mimalloc's static.c aggregator");
+    let prim_include = if static_crt {
+        "#include \"mimalloc-static-crt-prim.c\"\n#if defined(_MSC_VER) && defined(_MT) && !defined(_DLL) && !defined(MI_STATIC_CRT_STARTUP_COMPAT)\n#error Windows static CRT startup compatibility source was not included\n#endif"
+    } else {
+        "#include \"mimalloc-static-crt-prim.c\""
+    };
+    let static_source = if static_crt {
+        windows_static_crt::replace_once(
+            &static_source,
+            UPSTREAM_THEAP_INCLUDE,
+            PATCHED_THEAP_INCLUDE,
+        )
+    } else {
+        static_source
+    };
+    let static_path = out_dir.join("mimalloc-static.c");
+    fs::write(
+        &static_path,
+        windows_static_crt::replace_once(&static_source, "#include \"prim/prim.c\"", prim_include),
+    )
+    .expect("failed to write mimalloc's static CRT aggregator");
+    static_path
 }
 
 /// Link required system libraries based on the target platform.

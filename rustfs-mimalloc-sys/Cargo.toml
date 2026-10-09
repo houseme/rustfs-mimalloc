@@ -17,6 +17,7 @@ include = [
     "Cargo.toml",
     "README.md",
     "build.rs",
+    "windows_static_crt.rs",
     "src/**",
     "tests/**",
     "c_src/mimalloc/LICENSE",

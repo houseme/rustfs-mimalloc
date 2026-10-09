@@ -37,3 +37,7 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 [[bench]]
 name = "alloc"
 harness = false
+
+[[test]]
+name = "startup"
+harness = false
