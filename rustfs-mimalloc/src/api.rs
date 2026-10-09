@@ -414,11 +414,6 @@ mod tests {
     }
 
     #[test]
-    fn arena_purge_api_is_callable() {
-        MiMalloc::arenas_purge();
-    }
-
-    #[test]
     fn local_small_free_and_null_roundtrip() {
         unsafe {
             MiMalloc::free_small_local(core::ptr::null_mut());

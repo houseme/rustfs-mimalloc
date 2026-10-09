@@ -358,6 +358,8 @@ fn main() {
     }
     header_and_runtime_versions_agree();
     new_option_ids_match_upstream_header();
+    // Keep this process-wide purge check in this serial integration executable,
+    // not in the parallel unit-test harness that allocates on other threads.
     unsafe { mi_arenas_purge() };
     usable_size_symbols_work_without_override();
     diagnostic_callbacks_receive_their_state();
