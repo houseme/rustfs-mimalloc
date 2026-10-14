@@ -61,7 +61,7 @@ fn pinned_startup_sources_accept_patch_and_preserve_thread_cleanup() {
         .split_once("#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)")
         .unwrap();
     assert_eq!(before, after);
-    startup::patch_theap(&include_str!("../c_src/mimalloc/src/theap.c").replace("\r\n", "\n"));
+    startup::patch_theap(&include_str!("../c_src/mimalloc/src/heap/theap.c").replace("\r\n", "\n"));
 }
 
 #[test]

@@ -247,6 +247,9 @@ jobs:
       - name: Rustfmt
         run: cargo fmt --all -- --check
 
+      - name: Public mimalloc API parity
+        run: python3 scripts/check_upstream_api.py
+
       - name: Clippy (default)
         run: cargo clippy --workspace -- -D warnings
 

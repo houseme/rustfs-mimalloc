@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `a28efddd` after v3.5.4 interim.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `4e64fce6` after v3.5.4 interim.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -93,8 +93,13 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
 
 The source pin follows the **interim** tag and includes fixes from upstream
 PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
-through 2026-10-08. New public APIs include `mi_arenas_purge` and two options
+through 2026-10-14. New public APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
+The 34 commits after the previous pin add no public C declarations or option
+IDs. This update also exposes existing `mi_expand`, zero-initialized
+reallocation, checked heap array allocation, and heap small-allocation APIs.
+Run `python3 scripts/check_upstream_api.py` from the repository root to audit
+binding names and option IDs; integration tests cover linkage and behavior.
 The inherited `profile_disabled` flag
 can prevent sampling in new thread heaps; dedicated-heap and worker-thread
 profiling are not reliable at this pin. Profiling callbacks must not unwind;

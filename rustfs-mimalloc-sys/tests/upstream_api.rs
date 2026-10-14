@@ -144,6 +144,47 @@ fn header_and_runtime_versions_agree() {
     );
 }
 
+fn additional_allocation_symbols_link_and_preserve_data() {
+    unsafe {
+        let heap = mi_heap_new();
+        assert!(!heap.is_null());
+        for allocate in [mi_heap_malloc_small, mi_heap_zalloc_small] {
+            let ptr = allocate(heap, 64).cast::<u8>();
+            assert!(!ptr.is_null());
+            assert!(mi_heap_contains(heap, ptr.cast()));
+            mi_free(ptr.cast());
+        }
+        assert!(mi_heap_mallocn(heap, usize::MAX, 2).is_null());
+        let ptr = mi_heap_mallocn(heap, 2, 32).cast::<u8>();
+        assert!(!ptr.is_null());
+        ptr.write_bytes(0x5A, 64);
+        assert!(mi_heap_reallocn(heap, ptr.cast(), usize::MAX, 2).is_null());
+        assert_eq!(*ptr, 0x5A);
+        let ptr = mi_heap_reallocn(heap, ptr.cast(), 4, 32).cast::<u8>();
+        assert!(!ptr.is_null());
+        assert!((0..64).all(|i| *ptr.add(i) == 0x5A));
+        mi_free(ptr.cast());
+
+        for alignment in [8, 64, 4096] {
+            let ptr = mi_heap_calloc_aligned(heap, 2, 32, alignment).cast::<u8>();
+            assert!(!ptr.is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0));
+            ptr.write_bytes(0xA5, 64);
+            let ptr = mi_heap_recalloc_aligned(heap, ptr.cast(), 64, 64, alignment).cast::<u8>();
+            assert!(!ptr.is_null());
+            assert_eq!(ptr as usize % alignment, 0);
+            assert!((0..64).all(|i| *ptr.add(i) == 0xA5));
+            assert!((64..4096).all(|i| *ptr.add(i) == 0));
+            mi_free(ptr.cast());
+        }
+        let ptr = mi_recalloc(std::ptr::null_mut(), 2, 32).cast::<u8>();
+        assert!(!ptr.is_null());
+        assert!((0..64).all(|i| *ptr.add(i) == 0));
+        mi_free(ptr.cast());
+        mi_heap_delete(heap);
+    }
+}
+
 fn new_option_ids_match_upstream_header() {
     assert_eq!(mi_option_t::mi_option_arena_purge_min_size as i32, 44);
     assert_eq!(mi_option_t::mi_option_stats_merge_on_collect as i32, 47);
@@ -357,6 +398,7 @@ fn main() {
         no_profile_ignores_automatic_profile_startup();
     }
     header_and_runtime_versions_agree();
+    additional_allocation_symbols_link_and_preserve_data();
     new_option_ids_match_upstream_header();
     // Keep this process-wide purge check in this serial integration executable,
     // not in the parallel unit-test harness that allocates on other threads.

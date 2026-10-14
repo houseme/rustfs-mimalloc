@@ -5,14 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-14
 
 ### Changed
 
-- Pin mimalloc to upstream `dev3` commit `a28efddd` (2026-10-08), after the
+- Pin mimalloc to upstream `dev3` commit `4e64fce6` (2026-10-14), after the
   **v3.5.4 interim** tag. The C source version remains 30504. This includes
   allocation/free improvements, adaptive full-page retention, cross-thread page
-  reclamation, and subsequent upstream fixes. Workload-specific throughput and
+  reclamation, the arena/bitmap source reorganization, and bitmap rollback
+  fixes through 2026-10-14. The large-range immediate-purge default is now
+  32 MiB. Workload-specific throughput and
   RSS still require measurement.
 - **Breaking:** match the experimental profiler ABI: add `on_snapshot` and use
   mutable heap pointers in allocation/free callbacks.
@@ -23,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retain Rust 1.96.0 as an explicit CI compatibility check, not a Cargo MSRV.
 
 ### Added
+
+- Added `MiMalloc::{expand,rezalloc,rezalloc_aligned}`, heap zero-allocation
+  and reallocation helpers, and cached `ThreadHeap::{calloc,malloc_csize,
+  zalloc_csize,realloc,rezalloc}`. Added 13 previously unbound public C
+  allocation APIs; zero-growth, alignment and overflow behavior are tested.
+- Added a public-header API inventory and option-ID parity check to CI. The
+  34 upstream commits after the previous pin add no public C functions or
+  option IDs; these Rust additions expose existing upstream capabilities.
 
 - Opt-in `no_profile` builds to remove allocation profiling sampling and automatic
   `MIMALLOC_PROFILE` startup. Statistics, alignment, security/debug checks and raw
@@ -64,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sampling in an isolated single-threaded process only.
 
 ### Fixed
+
+- Updated the Windows static-CRT compatibility source and drift tests for
+  upstream moving `src/theap.c` to `src/heap/theap.c`.
+- Clarified raw constant-size free alignment and arena memory ownership
+  requirements, and heap reallocation failure/alignment contracts.
 
 - Declare Windows `__ImageBase` with explicit `extern` in C builds. Upstream's
   C++ linkage macro expands to nothing in C and accidentally defined BSS storage,

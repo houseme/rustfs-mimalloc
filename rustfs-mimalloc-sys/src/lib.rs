@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream commit a28efddd (post-v3.5.4 interim).
+//! Pinned to upstream commit 4e64fce6 (post-v3.5.4 interim).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -210,6 +210,14 @@ unsafe extern "C" {
     pub fn mi_zalloc(size: size_t) -> *mut c_void;
     pub fn mi_mallocn(count: size_t, size: size_t) -> *mut c_void;
     pub fn mi_reallocn(p: *mut c_void, count: size_t, size: size_t) -> *mut c_void;
+    /// Resize in place, returning null on failure without freeing or moving `p`.
+    pub fn mi_expand(p: *mut c_void, newsize: size_t) -> *mut c_void;
+    /// Only valid for null or blocks originally allocated with zero initialization.
+    pub fn mi_rezalloc(p: *mut c_void, newsize: size_t) -> *mut c_void;
+    /// As `mi_rezalloc`, with checked multiplication of `count` and `size`.
+    pub fn mi_recalloc(p: *mut c_void, count: size_t, size: size_t) -> *mut c_void;
+    /// Zero-initialized reallocation retaining the original power-of-two alignment.
+    pub fn mi_rezalloc_aligned(p: *mut c_void, newsize: size_t, alignment: size_t) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> size_t;
     pub fn mi_good_size(size: size_t) -> size_t;
     pub fn mi_free_size(p: *mut c_void, size: size_t);
@@ -271,7 +279,8 @@ pub unsafe fn mi_zalloc_csize(size: size_t) -> *mut c_void {
 /// # Safety
 ///
 /// `p` must be null or a valid mimalloc allocation, and `size` must be the
-/// allocation size used for the corresponding allocation.
+/// allocation size used for the corresponding allocation. Small allocations
+/// must not be over-aligned; use [`mi_free_csize_aligned`] for aligned allocations.
 #[inline]
 pub unsafe fn mi_free_csize(p: *mut c_void, size: size_t) {
     if size <= MI_SMALL_SIZE_MAX {
@@ -288,7 +297,8 @@ pub unsafe fn mi_free_csize(p: *mut c_void, size: size_t) {
 /// # Safety
 ///
 /// `p` must be a non-null valid mimalloc allocation, and `size` must be the
-/// allocation size used for the corresponding allocation.
+/// allocation size used for the corresponding allocation. Small allocations
+/// must not be over-aligned; use [`mi_free_csize_aligned_nonnull`] for aligned allocations.
 #[inline]
 pub unsafe fn mi_free_csize_nonnull(p: *mut c_void, size: size_t) {
     if size <= MI_SMALL_SIZE_MAX {
@@ -378,7 +388,27 @@ unsafe extern "C" {
     pub fn mi_heap_malloc(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
     pub fn mi_heap_zalloc(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
     pub fn mi_heap_calloc(heap: *mut mi_heap_t, count: size_t, size: size_t) -> *mut c_void;
+    pub fn mi_heap_mallocn(heap: *mut mi_heap_t, count: size_t, size: size_t) -> *mut c_void;
+    /// `size` must not exceed [`MI_SMALL_SIZE_MAX`]; no extra alignment is implied.
+    pub fn mi_heap_malloc_small(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
+    /// As `mi_heap_malloc_small`, zero-initializing the returned block.
+    pub fn mi_heap_zalloc_small(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut mi_heap_t, p: *mut c_void, newsize: size_t) -> *mut c_void;
+    pub fn mi_heap_reallocn(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        count: size_t,
+        size: size_t,
+    ) -> *mut c_void;
+    /// Only valid for null or blocks originally allocated with zero initialization.
+    pub fn mi_heap_rezalloc(heap: *mut mi_heap_t, p: *mut c_void, newsize: size_t) -> *mut c_void;
+    /// As `mi_heap_rezalloc`, with checked multiplication of `count` and `size`.
+    pub fn mi_heap_recalloc(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        count: size_t,
+        size: size_t,
+    ) -> *mut c_void;
     pub fn mi_heap_malloc_aligned(
         heap: *mut mi_heap_t,
         size: size_t,
@@ -393,6 +423,28 @@ unsafe extern "C" {
         heap: *mut mi_heap_t,
         p: *mut c_void,
         newsize: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    /// Checked zeroed array allocation; `alignment` must be a nonzero power of two.
+    pub fn mi_heap_calloc_aligned(
+        heap: *mut mi_heap_t,
+        count: size_t,
+        size: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    /// Only valid for null or zero-initialized blocks with the given alignment.
+    pub fn mi_heap_rezalloc_aligned(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    /// As `mi_heap_rezalloc_aligned`, with checked multiplication of `count` and `size`.
+    pub fn mi_heap_recalloc_aligned(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        count: size_t,
+        size: size_t,
         alignment: size_t,
     ) -> *mut c_void;
 }

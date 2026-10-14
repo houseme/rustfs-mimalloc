@@ -72,8 +72,16 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **post-v3.5.4 interim (`a28efddd`)**. Runtime option setters
-and toggles are now unsafe because upstream storage is not atomic; configure
+The submodule is pinned to upstream **post-v3.5.4 interim (`4e64fce6`)**.
+Allocation helpers match this snapshot. `MiMalloc::expand` can reuse a
+block's existing capacity without moving it; padding-enabled builds can reject
+the request. `MiMalloc::rezalloc{,_aligned}`, `Heap::rezalloc{,_aligned}` and
+`Heap::recalloc` preserve content and zero growth for originally zeroed blocks.
+`ThreadHeap::{calloc,malloc_csize,zalloc_csize,realloc,rezalloc}` reuse the cached
+worker context. Check raw pointer results for null and follow each method's
+initialization, alignment and lifetime requirements.
+
+Runtime option setters and toggles are now unsafe because upstream storage is not atomic; configure
 before starting threads or exclude all concurrent mimalloc access. The raw
 profiler ABI adds `on_snapshot` and changes callback heap pointers to mutable.
 
@@ -85,7 +93,7 @@ diagnostics and tuning support.
 `MiMalloc::arenas_purge()` processes pending arena purges in the main
 subprocess immediately. `mi_option_arena_purge_immediate_size` can release
 large freed arena ranges without making all purges immediate; by default, the
-threshold is 4 MiB. `mi_option_stats_merge_threshold` tunes when thread-heap
+threshold is 32 MiB. `mi_option_stats_merge_threshold` tunes when thread-heap
 stats merge into the parent heap; its upstream default is 512 KiB.
 
 The new raw pprof APIs are experimental. The interim upstream implementation

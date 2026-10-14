@@ -76,6 +76,42 @@ impl MiMalloc {
         unsafe { rustfs_mimalloc_sys::mi_good_size(size) }
     }
 
+    /// Resize within a block's existing usable capacity without moving it.
+    ///
+    /// Returns `ptr` on success or null on failure. Failure leaves the original
+    /// allocation valid. Builds with upstream padding enabled always fail.
+    /// This does not initialize newly exposed bytes.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live mimalloc allocation exclusively owned by
+    /// the caller. Its original alignment and deallocation contract still apply.
+    #[inline]
+    pub unsafe fn expand(ptr: *mut u8, new_size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_expand(ptr.cast(), new_size).cast() }
+    }
+
+    /// Reallocate a zero-initialized block, zeroing any added capacity.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live, exclusively owned mimalloc allocation that
+    /// was originally zero-initialized. For an over-aligned block use
+    /// [`Self::rezalloc_aligned`]. Check the result for null: failure preserves
+    /// the original block; success invalidates the old pointer. Free with `mi_free`.
+    #[inline]
+    pub unsafe fn rezalloc(ptr: *mut u8, new_size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_rezalloc(ptr.cast(), new_size).cast() }
+    }
+
+    /// Reallocate zero-initialized memory while retaining its alignment.
+    ///
+    /// # Safety
+    /// [`Self::rezalloc`]'s ownership and initialization requirements apply.
+    /// `alignment` must be a nonzero power of two matching the original block.
+    #[inline]
+    pub unsafe fn rezalloc_aligned(ptr: *mut u8, new_size: usize, alignment: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_rezalloc_aligned(ptr.cast(), new_size, alignment).cast() }
+    }
+
     /// Convert a byte size to a mimalloc machine-word count.
     ///
     /// This mirrors mimalloc's `mi_wsize_from_size` helper for the word-size
@@ -411,6 +447,50 @@ mod tests {
     #[test]
     fn version_is_v3() {
         assert_eq!(MiMalloc::version(), 30504, "expected V3.5.4");
+    }
+
+    #[test]
+    fn expand_failure_preserves_the_original_allocation() {
+        unsafe {
+            assert!(MiMalloc::expand(core::ptr::null_mut(), 64).is_null());
+            let ptr = rustfs_mimalloc_sys::mi_malloc(64).cast::<u8>();
+            assert!(!ptr.is_null());
+            core::ptr::write_bytes(ptr, 0xA5, 64);
+            let capacity = MiMalloc::usable_size(ptr);
+            let expanded = MiMalloc::expand(ptr, capacity);
+            // MI_PADDING may reject even a resize within existing capacity.
+            assert!(expanded.is_null() || expanded == ptr);
+            assert!(MiMalloc::expand(ptr, capacity + 1).is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0xA5));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
+    }
+
+    #[test]
+    fn zero_reallocation_preserves_prefix_and_zeroes_growth() {
+        unsafe {
+            let ptr = MiMalloc::rezalloc(core::ptr::null_mut(), 64);
+            assert!(!ptr.is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0));
+            core::ptr::write_bytes(ptr, 0x5A, 64);
+            let ptr = MiMalloc::rezalloc(ptr, 4096);
+            assert!(!ptr.is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0x5A));
+            assert!((64..4096).all(|i| *ptr.add(i) == 0));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+
+            for alignment in [8, 64, 4096, 16 * 1024] {
+                let ptr = MiMalloc::rezalloc_aligned(core::ptr::null_mut(), 64, alignment);
+                assert!(!ptr.is_null());
+                core::ptr::write_bytes(ptr, 0xA5, 64);
+                let ptr = MiMalloc::rezalloc_aligned(ptr, 4096, alignment);
+                assert!(!ptr.is_null());
+                assert_eq!(ptr as usize % alignment, 0);
+                assert!((0..64).all(|i| *ptr.add(i) == 0xA5));
+                assert!((64..4096).all(|i| *ptr.add(i) == 0));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            }
+        }
     }
 
     #[test]

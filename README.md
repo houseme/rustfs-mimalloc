@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `a28efddd`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `4e64fce6`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 ### Why this crate?
 
@@ -140,10 +140,29 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit a28efddd](https://github.com/microsoft/mimalloc/commit/a28efddd3658084937d285858772481f676c4045),
+The submodule pins [upstream commit 4e64fce6](https://github.com/microsoft/mimalloc/commit/4e64fce6248cb7247f66d900ee35c1b9e8ecc465),
 after the v3.5.4 interim tag. The source version remains 30504. This pin
-includes upstream fixes through 2026-10-08, plus new statistics-merge and
+includes upstream fixes through 2026-10-14, plus new statistics-merge and
 arena-purge controls.
+
+The 34 commits after the previous `a28efddd` pin reorganize internal sources
+and fix arena bitmap rollback; they do not add public C APIs or option IDs.
+The immediate-purge threshold for large ranges now defaults to 32 MiB.
+See [the upstream and performance review](UPSTREAM_REVIEW.md) for the PR audit,
+verification results, and remaining optimization opportunities.
+
+- `MiMalloc::expand` resizes within usable capacity without copying or moving;
+  failure keeps the allocation valid. Padding-enabled builds can reject it.
+- `MiMalloc::rezalloc{,_aligned}` and `Heap::rezalloc{,_aligned}` preserve
+  existing content and zero growth for blocks originally zero-initialized.
+  `Heap::calloc` and `recalloc` check multiplication overflow.
+- `ThreadHeap::{calloc,malloc_csize,zalloc_csize,realloc,rezalloc}` extend cached
+  worker contexts. They remain unsafe raw allocation operations with the same
+  parent-heap and thread-context lifetime requirements.
+
+Audit the binding names and option IDs against the pinned C headers with
+`python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`.
+The inventory records unbound C exports; name parity does not verify the ABI.
 
 - `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
   path. These unsafe functions require a small allocation whose page is **still
@@ -237,7 +256,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (post-v3.5.4 interim, commit `a28efddd`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (post-v3.5.4 interim, commit `4e64fce6`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

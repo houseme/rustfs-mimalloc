@@ -97,6 +97,61 @@ impl ThreadHeap<'_> {
         unsafe { rustfs_mimalloc_sys::mi_theap_zalloc(self.ptr.as_ptr(), size).cast() }
     }
 
+    /// Allocate zeroed memory with checked multiplication of `count` and `size`.
+    ///
+    /// Returns null on overflow or allocation failure.
+    ///
+    /// # Safety
+    /// The same pointer and cached-context requirements as [`Self::malloc`] apply.
+    #[inline]
+    pub unsafe fn calloc(&self, count: usize, size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_theap_calloc(self.ptr.as_ptr(), count, size).cast() }
+    }
+
+    /// Allocate a constant-size block, using the small word-size path when possible.
+    ///
+    /// # Safety
+    /// The same requirements as [`Self::malloc`] apply. No extra alignment is implied.
+    #[inline]
+    pub unsafe fn malloc_csize(&self, size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_theap_malloc_csize(self.ptr.as_ptr(), size).cast() }
+    }
+
+    /// Allocate a zeroed constant-size block without another TLS lookup.
+    ///
+    /// # Safety
+    /// The same requirements as [`Self::malloc_csize`] apply.
+    #[inline]
+    pub unsafe fn zalloc_csize(&self, size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_theap_zalloc_csize(self.ptr.as_ptr(), size).cast() }
+    }
+
+    /// Reallocate through the cached context.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live, exclusively owned mimalloc allocation with
+    /// ordinary alignment. On failure it remains valid; on success use only the
+    /// returned pointer and eventually free it with `mi_free`.
+    /// The cached-context requirements in [`Self::malloc`] also apply.
+    #[inline]
+    pub unsafe fn realloc(&self, ptr: *mut u8, new_size: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_theap_realloc(self.ptr.as_ptr(), ptr.cast(), new_size).cast()
+        }
+    }
+
+    /// Reallocate a zero-initialized block, zeroing added capacity.
+    ///
+    /// # Safety
+    /// [`Self::realloc`]'s requirements apply, and the original block must have
+    /// been allocated with zero initialization.
+    #[inline]
+    pub unsafe fn rezalloc(&self, ptr: *mut u8, new_size: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_theap_rezalloc(self.ptr.as_ptr(), ptr.cast(), new_size).cast()
+        }
+    }
+
     /// Allocate with a power-of-two alignment without another TLS lookup.
     ///
     /// # Safety
@@ -202,10 +257,44 @@ impl Heap {
         unsafe { rustfs_mimalloc_sys::mi_heap_zalloc(self.ptr.as_ptr(), size) as *mut u8 }
     }
 
+    /// Allocate zeroed memory with checked multiplication of `count` and `size`.
+    ///
+    /// Returns null on overflow or allocation failure.
+    ///
+    /// # Safety
+    /// Check the result for null before access and free it with `mi_free`.
+    pub unsafe fn calloc(&self, count: usize, size: usize) -> *mut u8 {
+        unsafe { rustfs_mimalloc_sys::mi_heap_calloc(self.ptr.as_ptr(), count, size).cast() }
+    }
+
+    /// Reallocate zero-initialized memory, zeroing any added capacity.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live, exclusively owned, originally zero-initialized
+    /// mimalloc allocation with ordinary alignment. Failure preserves the old
+    /// block; success invalidates its pointer. Free the result with `mi_free`.
+    pub unsafe fn rezalloc(&self, ptr: *mut u8, new_size: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_rezalloc(self.ptr.as_ptr(), ptr.cast(), new_size).cast()
+        }
+    }
+
+    /// Reallocate a zero-initialized block with checked multiplication.
+    ///
+    /// # Safety
+    /// The same requirements as [`Self::rezalloc`] apply. Overflow returns null
+    /// and leaves the original allocation valid.
+    pub unsafe fn recalloc(&self, ptr: *mut u8, count: usize, size: usize) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_recalloc(self.ptr.as_ptr(), ptr.cast(), count, size).cast()
+        }
+    }
+
     /// Allocate aligned memory from this heap.
     ///
     /// # Safety
-    /// The returned pointer must be freed with `mi_free`.
+    /// `alignment` must be a nonzero power of two. Check the returned pointer
+    /// for null before access and free successful allocations with `mi_free`.
     pub unsafe fn malloc_aligned(&self, size: usize, alignment: usize) -> *mut u8 {
         unsafe {
             rustfs_mimalloc_sys::mi_heap_malloc_aligned(self.ptr.as_ptr(), size, alignment)
@@ -216,17 +305,41 @@ impl Heap {
     /// Allocate zeroed memory with a power-of-two alignment.
     ///
     /// # Safety
-    /// Check the result for null; free a successful allocation with `mi_free`.
+    /// `alignment` must be a nonzero power of two. Check the result for null;
+    /// free a successful allocation with `mi_free`.
     pub unsafe fn zalloc_aligned(&self, size: usize, alignment: usize) -> *mut u8 {
         unsafe {
             rustfs_mimalloc_sys::mi_heap_zalloc_aligned(self.ptr.as_ptr(), size, alignment).cast()
         }
     }
 
+    /// Reallocate zero-initialized memory while retaining its alignment.
+    ///
+    /// # Safety
+    /// [`Self::rezalloc`]'s initialization and ownership requirements apply.
+    /// `alignment` must be a nonzero power of two matching the original block.
+    pub unsafe fn rezalloc_aligned(
+        &self,
+        ptr: *mut u8,
+        new_size: usize,
+        alignment: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_rezalloc_aligned(
+                self.ptr.as_ptr(),
+                ptr.cast(),
+                new_size,
+                alignment,
+            )
+            .cast()
+        }
+    }
+
     /// Reallocate memory while retaining its power-of-two alignment.
     ///
     /// # Safety
-    /// `ptr` must be null or a live mimalloc allocation with the given alignment.
+    /// `ptr` must be null or a live, exclusively owned mimalloc allocation.
+    /// `alignment` must be a nonzero power of two matching the original block.
     /// On failure the original allocation remains valid. Free the successful
     /// result with `mi_free`; do not use the old pointer after success.
     pub unsafe fn realloc_aligned(
@@ -249,7 +362,10 @@ impl Heap {
     /// Reallocate memory from this heap.
     ///
     /// # Safety
-    /// `ptr` must be a valid mimalloc pointer. The returned pointer must be freed with `mi_free`.
+    /// `ptr` must be null or a live, exclusively owned mimalloc allocation with
+    /// ordinary alignment. Failure preserves the original allocation; success
+    /// invalidates the old pointer. Free the result with `mi_free`. For an
+    /// over-aligned block use [`Self::realloc_aligned`].
     pub unsafe fn realloc(&self, ptr: *mut u8, new_size: usize) -> *mut u8 {
         unsafe {
             rustfs_mimalloc_sys::mi_heap_realloc(self.ptr.as_ptr(), ptr as *mut c_void, new_size)
@@ -330,6 +446,8 @@ impl Drop for Heap {
 #[derive(Debug, Clone, Copy)]
 pub struct ArenaId(rustfs_mimalloc_sys::mi_arena_id_t);
 
+// SAFETY: the identifier refers to a process-lifetime arena managed by upstream;
+// sharing the immutable identifier does not mutate or free its backing region.
 unsafe impl Send for ArenaId {}
 unsafe impl Sync for ArenaId {}
 
@@ -354,7 +472,11 @@ pub fn reserve_os_memory(
 /// Manage an existing memory region as an arena.
 ///
 /// # Safety
-/// `start` must point to at least `size` valid bytes that outlive the arena.
+/// `start` must meet [`arena_min_alignment`] and cover at least `size` bytes
+/// that remain reserved for the arena's lifetime. No other owner may access or
+/// release that memory. The commitment, pinning and zero-initialization flags
+/// must describe the region accurately; unpinned memory must support OS
+/// commit/decommit operations. This does not accept an ordinary Rust allocation.
 pub unsafe fn manage_os_memory(
     start: *mut u8,
     size: usize,
@@ -412,6 +534,80 @@ mod tests {
     fn heap_create_delete() {
         let heap = Heap::new().expect("heap::new failed");
         heap.delete();
+    }
+
+    #[test]
+    fn cached_constant_size_and_zero_reallocation() {
+        let heap = Heap::new().unwrap();
+        let local = heap.thread_local().unwrap();
+        unsafe {
+            assert!(local.calloc(usize::MAX, 2).is_null());
+            for size in [
+                1,
+                64,
+                crate::MI_SMALL_SIZE_MAX,
+                crate::MI_SMALL_SIZE_MAX + 1,
+                4096,
+            ] {
+                let ptr = local.malloc_csize(size);
+                assert!(!ptr.is_null());
+                assert!(heap.contains(ptr));
+                core::ptr::write_bytes(ptr, 0x5A, size);
+                let ptr = local.realloc(ptr, size * 2);
+                assert!(!ptr.is_null());
+                assert!((0..size).all(|i| *ptr.add(i) == 0x5A));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+
+                let ptr = local.zalloc_csize(size);
+                assert!(!ptr.is_null());
+                assert!(heap.contains(ptr));
+                assert!((0..size).all(|i| *ptr.add(i) == 0));
+                core::ptr::write_bytes(ptr, 0xA5, size);
+                let ptr = local.rezalloc(ptr, size * 2);
+                assert!(!ptr.is_null());
+                assert!((0..size).all(|i| *ptr.add(i) == 0xA5));
+                assert!((size..size * 2).all(|i| *ptr.add(i) == 0));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            }
+            let ptr = local.calloc(8, 32);
+            assert!(!ptr.is_null());
+            assert!((0..256).all(|i| *ptr.add(i) == 0));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
+    }
+
+    #[test]
+    fn heap_zero_reallocation_checks_overflow_and_alignment() {
+        let heap = Heap::new().unwrap();
+        unsafe {
+            assert!(heap.calloc(usize::MAX, 2).is_null());
+            let ptr = heap.calloc(2, 32);
+            assert!(!ptr.is_null());
+            core::ptr::write_bytes(ptr, 0x5A, 64);
+            assert!(heap.recalloc(ptr, usize::MAX, 2).is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0x5A));
+            let ptr = heap.recalloc(ptr, 4, 32);
+            assert!(!ptr.is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0x5A));
+            assert!((64..128).all(|i| *ptr.add(i) == 0));
+            let ptr = heap.rezalloc(ptr, 4096);
+            assert!(!ptr.is_null());
+            assert!((0..64).all(|i| *ptr.add(i) == 0x5A));
+            assert!((64..4096).all(|i| *ptr.add(i) == 0));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+
+            for alignment in [8, 64, 4096, 16 * 1024] {
+                let ptr = heap.zalloc_aligned(64, alignment);
+                assert!(!ptr.is_null());
+                core::ptr::write_bytes(ptr, 0xA5, 64);
+                let ptr = heap.rezalloc_aligned(ptr, 4096, alignment);
+                assert!(!ptr.is_null());
+                assert_eq!(ptr as usize % alignment, 0);
+                assert!((0..64).all(|i| *ptr.add(i) == 0xA5));
+                assert!((64..4096).all(|i| *ptr.add(i) == 0));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            }
+        }
     }
 
     #[test]

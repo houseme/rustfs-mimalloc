@@ -229,13 +229,13 @@ fn main() {
 /// Correct the linker-owned image-base declaration in Windows C builds.
 /// Static CRT builds also retain their startup/bootstrap compatibility edits.
 fn windows_source(static_crt: bool) -> PathBuf {
-    const UPSTREAM_THEAP_INCLUDE: &str = "#include \"theap.c\"";
+    const UPSTREAM_THEAP_INCLUDE: &str = "#include \"heap/theap.c\"";
     const PATCHED_THEAP_INCLUDE: &str = "#include \"mimalloc-static-crt-theap.c\"";
 
     let source_dir = PathBuf::from("c_src/mimalloc/src");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
     if static_crt {
-        let theap = fs::read_to_string(source_dir.join("theap.c"))
+        let theap = fs::read_to_string(source_dir.join("heap/theap.c"))
             .expect("failed to read upstream theap.c")
             .replace("\r\n", "\n");
         fs::write(
