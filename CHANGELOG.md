@@ -8,8 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## Unreleased
-
 ## [0.6.1] - 2026-10-16
 
 ### Changed
@@ -22,6 +20,17 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   `itertools 0.14` resolution.
 - Consolidate profiling release notes into this workspace changelog and link
   each crate README to the same source.
+
+### Added
+
+- Add a host C compiler ABI projection check for all 121 extern functions,
+  nine callbacks and three exposed `repr(C)` layouts, complementing the
+  function-name/option-ID inventory and runtime linkage tests. Negative
+  controls reject return-type, callback-constness, layout-order and size-alias
+  drift. CI runs the checks without adding allocator runtime overhead.
+- Refresh the three-crate functional and performance review. The latest
+  mimalloc `dev3` remains `6f45cc52`; no new upstream API requires another
+  source or binding update in this pass.
 
 ### Fixed
 

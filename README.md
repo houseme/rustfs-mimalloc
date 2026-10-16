@@ -176,6 +176,14 @@ Audit the binding names and option IDs against the pinned C headers with
 `python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`.
 The inventory records unbound C exports; name parity does not verify the ABI.
 
+`python3 scripts/check_upstream_abi.py` also compiles C projections of the
+Rust extern signatures, callbacks and three exposed `repr(C)` layouts against
+the pinned headers. `python3 scripts/test_upstream_abi.py` verifies that
+intentional ABI mutations fail the gate. The GCC/Clang check uses the host C
+ABI and the bindings' supported C-compatible type subset; it does not check
+inline Rust helpers, link every symbol, or establish cross-target/runtime
+safety. Runtime integration tests remain required.
+
 - Unsafe `MiMalloc::thread_id_of` returns a snapshot of a page's mimalloc owner,
   or zero for null/abandoned/detached pages. It is not a Rust `ThreadId` and
   does not establish the preconditions for local-only free operations.

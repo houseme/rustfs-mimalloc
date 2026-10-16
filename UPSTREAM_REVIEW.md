@@ -1,6 +1,164 @@
-# Upstream and wrapper review — 2026-10-16
+# Three-crate review and 0.6.1 readiness — 2026-10-16
 
-## Result and scope
+## Result and provenance
+
+`git pull --ff-only` reported the repository current at `1fb36d2`. The starting
+workspace was clean. All three crates remain **0.6.1**, with edition 2024,
+matching workspace dependency requirements and no declared Cargo MSRV.
+The empty Unreleased section is consolidated into the existing 0.6.1 section;
+published 0.6.0 release notes are preserved. This pass commits/pushes code only,
+without creating a tag or publishing packages.
+
+The live upstream `dev3` head remains
+[`6f45cc52`](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a),
+which is already pinned. Fetch and public-header comparison show no source,
+function, option or callback-layout delta. The latest upstream release remains
+[v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3), and the fixed
+source remains on the post-v3.5.4 interim development line, version **30504**.
+No submodule movement or new library API is warranted in this pass.
+
+The merged-PR search since October 15 returns no additions. Refreshing the
+October 14 onward search still returns [#1396](https://github.com/microsoft/mimalloc/pull/1396)
+(custom allocation hooks), [#1428](https://github.com/microsoft/mimalloc/pull/1428)
+(array-reallocation tests), and [#1429](https://github.com/microsoft/mimalloc/pull/1429)
+(Windows console lifetime fix). Their changes are already incorporated and
+covered by the dated upstream review below. All four recently introduced native
+functions remain exposed: `mi_thread_id_of`, `mi_heap_set_debug_fill_preserve`,
+`mi_theap_delete`, and `mi_theap_quiescent_abandon`.
+
+The prior revision's [CI passed](https://github.com/houseme/rustfs-mimalloc/actions/runs/38897811238).
+The new commit's CI result is checked separately after push. Rust 1.95.0 is an
+explicit repository compatibility job, not a Cargo MSRV declaration; local
+validation in this pass uses stable Rust 1.99.1.
+
+## ABI verification improvement
+
+The existing inventory passes for **130 Rust function names and 45 option IDs**,
+but names and option values alone cannot detect signature/layout drift.
+`python3 scripts/check_upstream_abi.py` now compiles C projections of the Rust
+bindings against the pinned public headers, using strict compiler diagnostics:
+
+- All **121 extern functions** have compatible parameter and return types in
+  the supported C-compatible subset. The nine inline Rust helper functions
+  remain covered by source review and runtime tests, not this C probe.
+- All **nine callback aliases** are projected and checked against their C
+  typedefs. The deferred-free heartbeat's C `unsigned long long` spelling is
+  handled explicitly, with width/alignment checks against the fixed-width type.
+- The heap-area, profiler sample-data and profiler callback-table projections
+  match C size, alignment and every field offset for the host compiler.
+- Unsupported aliases/calling conventions and unparsed declarations fail
+  rather than being silently skipped.
+
+`python3 scripts/test_upstream_abi.py` passes five controls: matching bindings
+compile; a wrong return type, changed callback constness, reordered callback
+fields and a changed size alias are rejected. The C compilation uses temporary
+files and syntax checking only. CI runs both scripts; production allocator
+code and hot paths gain no checks or branches.
+
+This is a deliberately scoped C projection checker, not a Rust parser or proof
+of every target ABI. It relies on the bindings' supported `repr(C)`/extern-C
+forms and standard platform C aliases. It does not link symbols, validate inline
+Rust helpers or allocator safety, exercise custom C compiler flags, or replace
+actual Rust/C runtime integration. Local execution checks the macOS arm64 host;
+CI also checks the Linux host compiler. Windows runtime and compatibility checks
+remain in the existing matrix.
+
+## Functional review
+
+| Area | Evidence and conclusion |
+| --- | --- |
+| Allocator/sys | General aligned `GlobalAlloc` dispatch and cross-thread free behavior are retained. Cached `ThreadHeap` views borrow their heap and remain !Send/!Sync. Raw delete invalidates aliases; abandonment has explicit owner/quiescence requirements. Existing lifecycle, direct-OS-page, zeroing and alignment tests pass. |
+| Independent Rust profiler | `SamplingMiMalloc` samples the Rust `GlobalAlloc` boundary, uses one exclusive `Profiler` owner, and returns owned pprof bytes. It is usable with the allocator's `no_profile` feature because it does not register the experimental native profiler. Direct C allocations remain outside this Rust wrapper's coverage. |
+| Sampling and reporting | The byte Poisson sampler has one countdown fast path and one RNG draw per sampling hit. Allocation/live estimates share inclusion weights, preserve fractions until aggregation and retain physical addresses for offline symbolization. Statistical population tests pass. |
+| Session/concurrency | Stop/restart generation checks, reporter-visible TLS admission, reentry suppression, fair drain budgets, cross-thread free removal and realloc rollback were traced with their tests. Both ignored pressure tests were explicitly executed; no stale worker live allocations were found. |
+| Live metadata | Insertions are bounded/preallocated; removals can wait for a shard lock to avoid fabricated live entries. The membership filter is only a negative lookup shortcut; it is not a replacement for metadata removal. Reports copy shards separately, so they do not represent one stop-the-world instant. |
+| Symbols/pprof | Frame resolution is shared within a report; mapping identity is revalidated on Linux. Optimized and source-enabled macOS tests preserve physical frames, source metadata when requested, live-object removal and standard profile sample types. Linux native capture is an explicit platform-specific mode. |
+| Release boundaries | Dependency requirements live at the workspace root; every member inherits version 0.6.1. Three package archives were verified, including normalized profiling-package tests with matching local allocator/sys dependencies. Registry publication is outside this task. |
+
+No new concrete allocator/profiler runtime defect was established in this pass.
+The implemented improvement strengthens ABI maintenance coverage. Source-level
+performance opportunities below need measurement before changing defaults.
+
+## Performance diagnostics and priorities
+
+The supplied benchmark-report controls passed. A one-second-per-scenario run
+used portable capture, 64 B–64 KiB allocations and a shared macOS arm64 host.
+The quality gate was enabled; throughput thresholds were diagnostic only.
+
+| Scenario | Drained records | Record drop rate | Pending records | Periodic reports | Max report time | Sampled allocation p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Steady allocation, 1 MiB interval | 81,051 | 0.006169% | 0 | 17 | 975 us | 6,083 ns |
+| Steady live heap, 1 MiB interval | 80,251 | 0.024916% | 0 | 17 | 1,049 us | 6,125 ns |
+
+Both steady scenarios pass the record-quality gate, with zero live drops. The
+allocation scenario still triggers the configured overhead warning; passing a
+quality check does not mean that a 5% runtime-overhead target was met. The small
+512-event post-workload recorder scenarios drop roughly 99% of allocation
+records and are correctly marked LOSSY/QUALITY_WARN. Their apparent low cost
+must not be used as sustainable profiling overhead evidence.
+
+These are short diagnostics, not isolated A/B performance conclusions. There
+is no runtime implementation change to compare in this pass, and the Linux-only
+ABBA driver requires two isolated CPUs unavailable on this host. Its resource
+gate was not bypassed. No speedup or production overhead percentage is claimed.
+Raw output and the v4 history are in `target/review-061-quality/`; reproduce with
+`MIMALLOC_BENCH_DURATION_MS=1000 MIMALLOC_BENCH_ENFORCE_QUALITY=1
+bash scripts/mimalloc_benchmark_report.sh` and a fresh output directory.
+
+Prioritized next work:
+
+1. **Sampling cost under realistic traffic.** The steady diagnostics capture
+   around 80,000 events/second. Compare sample intervals and stack depths under
+   application accuracy/p99 budgets; on Linux GNU, compare Portable and Native
+   with isolated same-binary controls and loss/drift gates. Keep the portable
+   default until cross-platform evidence supports another policy.
+2. **Live metadata budget.** The default 16,384-entry configuration reports
+   15,826,944 bytes (about 15.1 MiB) of live-table payload, excluding hash-control
+   bytes and headers. Entries retain fixed-depth stack keys, so metadata can be
+   substantial even with few current live samples. Tune `max_live_samples` with
+   drop counters first; investigate bounded stack interning or compact storage
+   only with lifecycle/collision/concurrency and memory evidence.
+3. **Reporting contention and phase costs.** Portable unwinding, reporter ring
+   locks, live shard removal and loader/file metadata work are distinct costs.
+   `last_pprof_encode_elapsed_micros` excludes aggregation and stack resolution.
+   Measure whole-report latency and lock hold times before caching mappings or
+   moving buffer allocations; retain fresh image identity and visible idle-thread
+   records. The global recorder budget also excludes per-worker fixed TLS rings.
+4. **Native allocator workload fit.** Continue Linux burst/idle, cross-thread
+   producer-consumer, THP and cache-sensitive 64 KiB payload experiments with
+   throughput, p95/p99, peak/idle RSS, page faults and reclaim costs. Native
+   context abandonment is an opt-in tool, not a default memory-release policy.
+
+## Validation
+
+Local stable Rust 1.99.1 / macOS arm64 evidence:
+
+- Default workspace tests pass: 42 allocator tests, 68 profiler unit tests,
+  11 profiler behavior tests, optimized profile checks, missing-allocator
+  rejection, standalone sys/startup tests, Windows source checks and doctests.
+- `secure,debug`, `no_profile`, `secure,debug,no_profile` and all-feature tests
+  pass. Both normally ignored profiler pressure tests pass when explicitly run.
+- Optimized profile tests pass in ordinary release and source-enabled release
+  (`CARGO_PROFILE_RELEASE_DEBUG=1`, no strip, source assertions enabled).
+- Formatting, all-target checking, all-target/all-feature Clippy with warnings
+  denied, rustdoc with warnings denied, source/API inventory, ABI projection and
+  negative controls pass.
+- Sys and allocator package builds pass. The normalized profiling archive passes
+  all-feature tests and optimized profile validation using matching local path
+  patches; this does not claim that 0.6.1 registry dependencies were published.
+- All three metadata versions and internal requirements match 0.6.1. The single
+  shared changelog is validated; the existing release workflow and tag behavior
+  are unchanged.
+
+## Historical reviews
+
+Earlier results below belong to their original pins and package structures.
+The former two-crate/native-profiler notes do not describe the independent Rust
+profiling crate's capabilities or this pass's validation counts.
+
+## Upstream and wrapper review — 2026-10-16
+
+### Result and scope
 
 Both crates remain **0.6.0** with no declared Cargo MSRV. `git pull --ff-only`
 was current and the starting workspace was clean. The cumulative changelog is
@@ -17,7 +175,7 @@ Asia/Shanghai. It is a fixed `dev3` development snapshot after the v3.5.4 interi
 tag. The C version remains **30504**; the latest published upstream release is
 still [v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3).
 
-## Merged PRs and direct development
+### Merged PRs and direct development
 
 The live merged-PR search since October 14 returned three PRs. Closed proposals
 were inspected separately; a direct incorporation is not reported as a merge.
@@ -34,7 +192,7 @@ were inspected separately; a direct incorporation is not reported as a merge.
 | Quiescent fork cleanup | Registers an atfork child handler to abandon pages belonging to vanished threads. Other threads must already be quiescent outside mimalloc. This is not unrestricted allocator use after arbitrary multithreaded Rust forks. |
 | Inline linkage | `cee18e1c` fixes the upstream static-in-inline diagnostic seen at the prior pin. The new Cargo C build no longer emits those arena warnings. |
 
-## Public API delta and exposure
+### Public API delta and exposure
 
 `mimalloc.h` adds exactly four public functions. `mimalloc-profile.h` and
 `mimalloc-stats.h` are unchanged. Option IDs, the profiler callback table, heap
@@ -62,7 +220,7 @@ Structured statistics, legacy aliases, subprocess migration and experimental
 arena persistence remain outside the wrapper scope. Actual calls verify the
 new functions' linkage and behavior.
 
-## Custom tracking support
+### Custom tracking support
 
 `rustfs-mimalloc/examples/custom_tracking.rs` supplies the exact two C symbols
 required by upstream's internal tracking header. Enable them explicitly with:
@@ -85,7 +243,7 @@ pointer, and heap destruction does not emit one free hook per block
 or Rust-object lifetime model. CI now runs the example on Linux/macOS/Windows
 in both supported configurations.
 
-## Functional review and remaining optimization work
+### Functional review and remaining optimization work
 
 No new wrapper memory-safety defect was established in the reviewed global
 allocator, owned/borrowed heaps or cached contexts. The main boundary risks in
@@ -106,7 +264,7 @@ The global allocator's Rust dispatch, alignment guarantees, general free path,
 feature defaults, retention/purge policy and CPU architecture baseline are
 unchanged. Imported upstream C behavior, including cache offsets, does change.
 
-## Performance experiment and rejected attribution
+### Performance experiment and rejected attribution
 
 Frozen release executables compare the old and new pins with the same Rust
 1.99.1 compiler, lockfile and default features. A1/B1/B2/A2 run in fresh processes,
@@ -136,7 +294,7 @@ benchmark executable at each exact pin, then running identical filters in
 A/B/B/A order with the parameters above and a 5% gate on both A1/A2 and B1/B2.
 Do not compare timings collected while rebuilding or from different build modes.
 
-## Validation
+### Validation
 
 On stable Rust 1.99.1 / macOS arm64:
 
@@ -162,14 +320,14 @@ The prior commit's CI is confirmed green. The new commit's CI result is reported
 separately after push; local checks do not establish Windows, Linux, musl or
 older-toolchain execution at the new pin. No release/tag workflow is requested.
 
-## Historical reviews
+### Historical reviews
 
 The following sections retain earlier pins, results and limitations at their
 original dates; they are not current validation or performance conclusions.
 
-## Upstream and wrapper review — 2026-10-14
+### Upstream and wrapper review — 2026-10-14
 
-### Result and provenance
+#### Result and provenance
 
 The workspace stays at **0.6.0**. The former Unreleased changelog is consolidated
 under `0.6.0` dated 2026-10-14. This delivery commits and pushes code only; it
@@ -186,7 +344,7 @@ This is a fixed `dev3` development snapshot after the v3.5.4 interim tag;
 remains [v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3),
 and `main3` still points to its release merge at the time of this review.
 
-### Upstream changes and merged PR audit
+#### Upstream changes and merged PR audit
 
 | Item | Verified effect and disposition |
 | --- | --- |
@@ -204,7 +362,7 @@ The latest merged-PR list was read independently of the commit history. There
 are no newly merged PRs after the old pin among the recent upstream results;
 the 34 added commits are development/refactor changes, not new release PRs.
 
-### Public API audit and implementation
+#### Public API audit and implementation
 
 `mimalloc.h` and `mimalloc-stats.h` are unchanged between the two pins.
 `mimalloc-profile.h` changes only formatting and a documentation link.
@@ -238,7 +396,7 @@ The changing `mi_stats_t` layout remains unmirrored; JSON/text diagnostics avoid
 that extra ABI dependency. There is no new safe profiler owner while sampled
 allocations and callbacks can outlive registration.
 
-### Review findings and optimization priorities
+#### Review findings and optimization priorities
 
 | Priority | Evidence and disposition |
 | --- | --- |
@@ -255,7 +413,7 @@ or heap ownership implementation. Raw-pointer operations remain subject to their
 unsafe contracts. Windows, Linux, musl and 32-bit runtime behavior is not proven
 by macOS host tests.
 
-### Performance evidence
+#### Performance evidence
 
 Two release benchmark executables were frozen before measurement. A uses the
 old upstream pin; B uses the new pin, the same stable compiler, lockfile,
@@ -290,7 +448,7 @@ frozen executables in A/B/B/A order with `RAYON_NUM_THREADS=1`, `--sample-size 5
 filters. Time reduction is `1 - (B1 + B2) / (A1 + A2)` only when both drift gates
 pass. The benchmark directory is ignored and is not included in the package.
 
-### Validation
+#### Validation
 
 On stable Rust 1.99.1 / macOS arm64:
 
@@ -318,14 +476,14 @@ Windows runtime startup, Linux/musl execution or older-toolchain compatibility;
 those results must be read from the matching CI run. No tag or publication is
 part of this delivery.
 
-### Historical reviews
+#### Historical reviews
 
 The following sections retain prior evidence at their original pins and dates.
 Their measurements and validation counts are historical, not current results.
 
-### Upstream and wrapper review — 2026-10-04
+#### Upstream and wrapper review — 2026-10-04
 
-#### Current result
+##### Current result
 
 The crate version remains **0.6.0**, as requested. The three existing
 `rust-version` removals are included; both workspace packages report no Cargo
@@ -339,7 +497,7 @@ The submodule advances from v3.5.4 interim (`f8401bef`) to the fixed
 mimalloc version. `MI_MALLOC_VERSION` remains 30504. The latest full GitHub
 Release and main3 still reference v3.5.3 at review time.
 
-#### Profiling-free build follow-up
+##### Profiling-free build follow-up
 
 Added the opt-in `no_profile` feature, keeping default behavior unchanged. It
 sets `MI_PROFILE=0` while retaining allocation alignment, zeroing, statistics,
@@ -400,7 +558,7 @@ runs passed (36 unit tests, 6 doctests and the sys integration executable).
 Clippy, all-feature rustdoc and both no_profile package builds also passed;
 wrapper packaging used a temporary local registry patch for the sys crate.
 
-#### Performance implementation follow-up
+##### Performance implementation follow-up
 
 Added `Heap::thread_local()` and the borrowed `ThreadHeap` view. It caches the
 upstream per-thread heap context, eliminating repeated TLS/cache lookups when
@@ -460,7 +618,7 @@ and release validation passed (36 unit tests, 6 doctests, plus the sys integrati
 executable). Clippy, rustdoc and wrapper package verification also passed. The
 version remains 0.6.0.
 
-#### Newly merged upstream changes
+##### Newly merged upstream changes
 
 | PR | Merge and effect on this crate |
 | --- | --- |
@@ -469,7 +627,7 @@ version remains 0.6.0.
 | [#1416](https://github.com/microsoft/mimalloc/pull/1416) | Merged into dev, then carried into dev3. The existing `mi_malloc_size` and `mi_malloc_usable_size` implementations are no longer conditional on malloc override. Their Rust declarations already existed, but linking a caller failed under the default feature set before this update. |
 | [#1418](https://github.com/microsoft/mimalloc/pull/1418) | Merged into dev, then carried into dev3. Makes internal bitmap.h self-contained. No Rust public API change. |
 
-#### API audit
+##### API audit
 
 The public headers `mimalloc.h`, `mimalloc-profile.h`, and `mimalloc-stats.h`
 are byte-identical to the previous v3.5.4 pin. This round adds **no new upstream
@@ -482,7 +640,7 @@ existing C functions: `mi_register_error`, `mi_register_output`, and
 explicit concurrency, lifetime and no-unwind contracts. There is no safe global
 callback wrapper, since a Rust-side lock cannot synchronize unrelated C calls.
 
-#### Findings and changes
+##### Findings and changes
 
 - **P1, fixed by upstream sync:** stale heap caches and pending cross-thread frees
   during heap destruction. The Rust integration executable now exercises these
@@ -501,7 +659,7 @@ callback wrapper, since a Rust-side lock cannot synchronize unrelated C calls.
 - **Documentation corrected:** Cargo no longer declares an MSRV; release templates
   and READMEs no longer instruct maintainers to restore the removed field.
 
-#### Performance conclusions and next steps
+##### Performance conclusions and next steps
 
 The sync mainly fixes correctness and platform-specific code generation; it does
 not justify changing GlobalAlloc to a local-only free or changing global THP,
@@ -514,7 +672,7 @@ For ARM64/ARM64EC, validate actual clang-cl code generation and runtime behavior
 on the target. Fix upstream profiler activation before relying on its worker
 samples for those performance conclusions.
 
-#### Upstream-sync validation and benchmark evidence
+##### Upstream-sync validation and benchmark evidence
 
 On macOS aarch64 / Rust 1.99.0, formatting, all-target checking, default,
 `secure,debug`, all-feature and release tests, Clippy with warnings denied and
@@ -541,9 +699,9 @@ among 30 samples. It motivates repeatable workload analysis rather than a
 universal speedup claim. This comparison is against System on this host, not
 an old-versus-new mimalloc measurement. No default allocator policy was changed.
 
-#### Previous review — 2026-10-02
+##### Previous review — 2026-10-02
 
-##### Baseline and upstream provenance
+###### Baseline and upstream provenance
 
 The workspace was clean and `git pull --ff-only` reported it up to date.
 The previous submodule was v3.5.3 (`d4881d338125e1cb7c47ba4cfb398d6f7c0c8d45`).
@@ -564,7 +722,7 @@ Merged PRs and direct commits were checked separately:
 | [#1404](https://github.com/microsoft/mimalloc/pull/1404) | Closed without GitHub merge status; its exclusive child-arena fix was incorporated directly as d4881d33. Do not call this a merged PR. |
 | v3.5.3 → v3.5.4 | Most new work is direct development commits: pprof, local small frees, allocation/free code generation, adaptive full-page retention, and cross-thread reclamation enabled by default. |
 
-##### Public API delta
+###### Public API delta
 
 Comparing `mimalloc.h` and `mimalloc-profile.h` across the tags found exactly
 five added C functions; all five now have Rust FFI declarations:
@@ -589,7 +747,7 @@ layout without changing MI_STAT_VERSION. JSON/text stats avoid that ABI hazard.
 This is an audit of the new upstream API delta, not a claim that every legacy,
 platform compatibility, deprecated, or C++ helper is wrapped.
 
-##### Review findings and disposition
+###### Review findings and disposition
 
 | Priority | Finding | Disposition |
 | --- | --- | --- |
@@ -602,7 +760,7 @@ platform compatibility, deprecated, or C++ helper is wrapped.
 | P2 | Small-free contracts omitted over-alignment/page ownership constraints; borrowed heap handles omitted the heap's required lifetime. | Strengthen safety contracts, keep GlobalAlloc's general free path, and test aligned zero/reallocation plus immediate local frees. |
 | P3 | Diagnostic output copied an already owned UTF-8 buffer; benchmarks claimed System comparison while only using the global mimalloc allocator. | Reuse the buffer and add explicit System plus generic/local small-free benchmark paths. |
 
-##### Performance work to prioritize next
+###### Performance work to prioritize next
 
 1. Measure v3.5.3 versus this fixed v3.5.4 pin on the same compiler and machine,
    including producer/consumer cross-thread frees, short-lived workers, and
@@ -623,7 +781,7 @@ Local microbenchmarks are diagnostic only; no application-level performance
 improvement percentage is claimed. Linux, Windows, musl, MSRV and architecture
 coverage are reported separately from macOS host validation.
 
-##### Validation results
+###### Validation results
 
 On the macOS aarch64 host with Rust 1.99.0:
 

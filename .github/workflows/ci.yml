@@ -344,6 +344,9 @@ jobs:
       - name: Public mimalloc API parity
         run: python3 scripts/check_upstream_api.py
 
+      - name: Public mimalloc ABI projection and negative controls
+        run: python3 scripts/check_upstream_abi.py && python3 scripts/test_upstream_abi.py
+
       - name: Clippy (all targets and features)
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
