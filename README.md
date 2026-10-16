@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `4e64fce6`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `6f45cc52`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 ### Why this crate?
 
@@ -140,14 +140,15 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 4e64fce6](https://github.com/microsoft/mimalloc/commit/4e64fce6248cb7247f66d900ee35c1b9e8ecc465),
+The submodule pins [upstream commit 6f45cc52](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a),
 after the v3.5.4 interim tag. The source version remains 30504. This pin
-includes upstream fixes through 2026-10-14, plus new statistics-merge and
+includes upstream fixes through 2026-10-16, plus new statistics-merge and
 arena-purge controls.
 
-The 34 commits after the previous `a28efddd` pin reorganize internal sources
-and fix arena bitmap rollback; they do not add public C APIs or option IDs.
-The immediate-purge threshold for large ranges now defaults to 32 MiB.
+The 31 commits after the previous `4e64fce6` pin add four public C APIs,
+custom tracking hooks, quiescent fork cleanup, natural-alignment improvements
+and allocation cache offsets. The source is a development snapshot, not a new
+upstream release. The immediate-purge threshold for large ranges is 32 MiB.
 See [the upstream and performance review](UPSTREAM_REVIEW.md) for the PR audit,
 verification results, and remaining optimization opportunities.
 
@@ -163,6 +164,33 @@ verification results, and remaining optimization opportunities.
 Audit the binding names and option IDs against the pinned C headers with
 `python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`.
 The inventory records unbound C exports; name parity does not verify the ABI.
+
+- Unsafe `MiMalloc::thread_id_of` returns a snapshot of a page's mimalloc owner,
+  or zero for null/abandoned/detached pages. It is not a Rust `ThreadId` and
+  does not establish the preconditions for local-only free operations.
+- `Heap::set_debug_fill_preserve` atomically adjusts how much of a block is
+  skipped by debug pattern filling. Free-list metadata can still overwrite the
+  prefix; this does not permit reading freed Rust objects.
+- Unsafe `ThreadHeap::quiescent_abandon` abandons the current worker's pages
+  while retaining live blocks and the reusable context. Raw `mi_theap_delete`
+  additionally invalidates the context and **every cached alias**; it has no
+  wrapper deletion method. Reacquire through `Heap::thread_local` after deletion.
+
+Custom allocation tracking from upstream [#1396](https://github.com/microsoft/mimalloc/pull/1396)
+uses application-defined `mi_track_malloc_hook` and `mi_track_free_hook` symbols:
+
+```sh
+CFLAGS=-DMI_TRACK_CUSTOM cargo run --release -p rustfs-mimalloc --example custom_tracking
+```
+
+See [the example](rustfs-mimalloc/examples/custom_tracking.rs) for exact ABI and
+metadata. Hooks can run concurrently and during startup; they must not allocate,
+panic or unwind. Aligned allocations can report their backing block rather than
+the adjusted pointer; heap destruction does not report each freed block. This is
+a C build opt-in, not a runtime registration API or a complete leak detector.
+Default builds leave it disabled. `fork` support requires every other thread to
+be quiescent outside mimalloc; it does not make unrestricted Rust code safe in
+the child of a multithreaded process.
 
 - `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
   path. These unsafe functions require a small allocation whose page is **still
@@ -256,7 +284,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (post-v3.5.4 interim, commit `4e64fce6`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (post-v3.5.4 interim, commit `6f45cc52`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

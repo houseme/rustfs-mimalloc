@@ -75,6 +75,43 @@ jobs:
       - name: Test doc-tests
         run: cargo test --doc --features "${{ matrix.features }}"
 
+  custom-tracking:
+    name: Custom tracking (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    env:
+      CFLAGS: -DMI_TRACK_CUSTOM
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify application hook metadata (release)
+        run: cargo run --release -p rustfs-mimalloc --example custom_tracking --locked
+      - name: Verify hooks with secure debug and no profiling
+        run: cargo run -p rustfs-mimalloc --example custom_tracking --features secure,debug,no_profile --locked
+
+  upstream-native:
+    name: Upstream C regressions (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Configure upstream debug C build
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-cmake -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=OFF -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON
+      - name: Build focused upstream tests
+        run: cmake --build target/upstream-cmake --target mimalloc-test-api mimalloc-test-api-fill mimalloc-test-arena mimalloc-test-bitmap mimalloc-test-fork --parallel 2
+      - name: Check allocation, fill, arena, bitmap and quiescent fork contracts
+        run: ctest --test-dir target/upstream-cmake --output-on-failure --timeout 120 -R '^(test-api|test-api-fill|test-arena|test-bitmap|test-fork)$'
+
   # ── Cross-compilation (musl) ───────────────────────────────────────────────
 
   cross-musl:

@@ -69,6 +69,20 @@ impl MiMalloc {
         unsafe { rustfs_mimalloc_sys::mi_usable_size(ptr as *const c_void) }
     }
 
+    /// Snapshot of the allocation page's current mimalloc owner identifier.
+    ///
+    /// Returns zero for null, abandoned or detached pages. The value is not a
+    /// Rust `ThreadId` and does not authorize local-only frees: page ownership
+    /// can change after the query.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live mimalloc allocation. Keep the allocation and
+    /// its heap alive throughout the call; exclude concurrent destruction.
+    #[inline]
+    pub unsafe fn thread_id_of(ptr: *const u8) -> usize {
+        unsafe { rustfs_mimalloc_sys::mi_thread_id_of(ptr.cast()) }
+    }
+
     /// Allocation size class for a requested byte count, useful for capacity planning.
     /// This is a hint; it does not allocate memory or increase an existing allocation.
     #[inline]

@@ -144,6 +144,121 @@ fn header_and_runtime_versions_agree() {
     );
 }
 
+fn deleted_context_preserves_blocks_and_resets_the_default() {
+    unsafe {
+        let heap = mi_heap_new();
+        assert!(!heap.is_null());
+        let context = mi_heap_theap(heap);
+        assert!(!context.is_null());
+        let previous = mi_theap_set_default(context);
+        let ptr = mi_theap_malloc(context, 128).cast::<u8>();
+        assert!(!ptr.is_null());
+        ptr.write_bytes(0x5A, 128);
+        assert_ne!(mi_thread_id_of(ptr.cast()), 0);
+        mi_theap_delete(context);
+        // The raw context and all borrowed views are invalid after deletion.
+        assert_ne!(mi_theap_get_default(), context);
+        assert_eq!(mi_thread_id_of(ptr.cast()), 0);
+        assert!((0..128).all(|i| *ptr.add(i) == 0x5A));
+        let replacement = mi_heap_theap(heap);
+        assert!(!replacement.is_null());
+        let fresh = mi_theap_zalloc(replacement, 64);
+        assert!(!fresh.is_null());
+        mi_free(fresh);
+        mi_free(ptr.cast());
+        mi_theap_set_default(previous);
+        mi_heap_delete(heap);
+        mi_theap_delete(std::ptr::null_mut());
+        mi_theap_quiescent_abandon(std::ptr::null_mut());
+        assert_eq!(mi_thread_id_of(std::ptr::null()), 0);
+    }
+}
+
+fn foreign_abandon_requires_a_quiescent_owner() {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    struct Handshake {
+        context: AtomicUsize,
+        allocation: AtomicUsize,
+        ready: AtomicBool,
+        resume: AtomicBool,
+    }
+    let state = Arc::new(Handshake {
+        context: AtomicUsize::new(0),
+        allocation: AtomicUsize::new(0),
+        ready: AtomicBool::new(false),
+        resume: AtomicBool::new(false),
+    });
+    let heap = unsafe { mi_heap_new() };
+    assert!(!heap.is_null());
+    let address = heap as usize;
+    let worker_state = state.clone();
+    let worker = std::thread::spawn(move || unsafe {
+        let context = mi_heap_theap(address as *mut mi_heap_t);
+        assert!(!context.is_null());
+        let ptr = mi_theap_malloc(context, 128).cast::<u8>();
+        assert!(!ptr.is_null());
+        ptr.write_bytes(0xA5, 128);
+        worker_state
+            .context
+            .store(context as usize, Ordering::Relaxed);
+        worker_state
+            .allocation
+            .store(ptr as usize, Ordering::Relaxed);
+        worker_state.ready.store(true, Ordering::Release);
+        // After publishing readiness, only atomics/spinning run until resume:
+        // no allocator calls, held allocator locks, callbacks or heap deletion.
+        while !worker_state.resume.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+        let fresh = mi_theap_malloc(context, 256);
+        assert!(!fresh.is_null());
+        assert!((0..128).all(|i| *ptr.add(i) == 0xA5));
+        mi_free(ptr.cast());
+        mi_free(fresh);
+        mi_theap_delete(context);
+    });
+    while !state.ready.load(Ordering::Acquire) {
+        assert!(
+            !worker.is_finished(),
+            "worker failed before reaching quiescence"
+        );
+        std::thread::yield_now();
+    }
+    unsafe {
+        let ptr = state.allocation.load(Ordering::Relaxed) as *const c_void;
+        assert_ne!(mi_thread_id_of(ptr), 0);
+        mi_theap_quiescent_abandon(state.context.load(Ordering::Relaxed) as *mut mi_theap_t);
+        assert_eq!(mi_thread_id_of(ptr), 0);
+    }
+    state.resume.store(true, Ordering::Release);
+    worker.join().unwrap();
+    unsafe { mi_heap_delete(heap) };
+}
+
+fn heap_lifecycle_includes_direct_os_pages() {
+    unsafe {
+        // Process-wide options are changed only in this serial executable,
+        // after all workers have joined, and restored before other checks.
+        let option = mi_option_t::mi_option_disallow_arena_alloc;
+        let original = mi_option_get(option);
+        mi_option_set(option, 1);
+        let heap = mi_heap_new();
+        assert!(!heap.is_null());
+        let ptr = mi_heap_malloc(heap, 65536).cast::<u8>();
+        assert!(!ptr.is_null());
+        ptr.write_bytes(0x5A, 65536);
+        mi_heap_delete(heap);
+        assert!((0..65536).all(|i| *ptr.add(i) == 0x5A));
+        mi_free(ptr.cast());
+        let heap = mi_heap_new();
+        assert!(!heap.is_null());
+        assert!(!mi_heap_malloc(heap, 65536).is_null());
+        mi_heap_destroy(heap); // all its blocks are invalid; never access them
+        mi_option_set(option, original);
+    }
+}
+
 fn additional_allocation_symbols_link_and_preserve_data() {
     unsafe {
         let heap = mi_heap_new();
@@ -398,6 +513,9 @@ fn main() {
         no_profile_ignores_automatic_profile_startup();
     }
     header_and_runtime_versions_agree();
+    deleted_context_preserves_blocks_and_resets_the_default();
+    foreign_abandon_requires_a_quiescent_owner();
+    heap_lifecycle_includes_direct_os_pages();
     additional_allocation_symbols_link_and_preserve_data();
     new_option_ids_match_upstream_header();
     // Keep this process-wide purge check in this serial integration executable,

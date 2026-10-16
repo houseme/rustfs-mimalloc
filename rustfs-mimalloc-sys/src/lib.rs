@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream commit 4e64fce6 (post-v3.5.4 interim).
+//! Pinned to upstream commit 6f45cc52 (post-v3.5.4 interim).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -219,6 +219,10 @@ unsafe extern "C" {
     /// Zero-initialized reallocation retaining the original power-of-two alignment.
     pub fn mi_rezalloc_aligned(p: *mut c_void, newsize: size_t, alignment: size_t) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> size_t;
+    /// Snapshot of the allocation page's current owner, or zero for null,
+    /// detached or abandoned pages. Not a Rust `ThreadId` or an ownership lock.
+    /// A non-null pointer must be a live mimalloc allocation; its owner can change.
+    pub fn mi_thread_id_of(p: *const c_void) -> size_t;
     pub fn mi_good_size(size: size_t) -> size_t;
     pub fn mi_free_size(p: *mut c_void, size: size_t);
     pub fn mi_free_small(p: *mut c_void);
@@ -383,6 +387,10 @@ unsafe extern "C" {
     pub fn mi_any_heap_contains(p: *const c_void) -> bool;
     /// Call only while no thread accesses the heap (including its allocations).
     pub fn mi_heap_set_numa_affinity(heap: *mut mi_heap_t, numa_node: c_int);
+    /// Atomically preserve up to 1 MiB of each block from debug-pattern filling.
+    /// This does not preserve freed objects: free-list metadata can overwrite them.
+    /// `heap` must stay alive; null selects the main heap.
+    pub fn mi_heap_set_debug_fill_preserve(heap: *mut mi_heap_t, preserve: size_t);
     pub fn mi_heap_theap(heap: *mut mi_heap_t) -> *mut mi_theap_t;
 
     pub fn mi_heap_malloc(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
@@ -456,6 +464,15 @@ unsafe extern "C" {
     pub fn mi_theap_get_default() -> *mut mi_theap_t;
     pub fn mi_theap_set_default(theap: *mut mi_theap_t) -> *mut mi_theap_t;
     pub fn mi_theap_collect(theap: *mut mi_theap_t, force: bool);
+    /// Owner-thread only. Abandons pages while preserving live allocations and
+    /// the parent heap. Invalidates this handle and every cached `ThreadHeap`
+    /// alias; reacquire a context through `mi_heap_theap` before reuse. Upstream
+    /// retains the current thread's main context as a special case.
+    pub fn mi_theap_delete(theap: *mut mi_theap_t);
+    /// Abandon pages, preserving live allocations and this context for reuse.
+    /// The owner must be the caller or quiescent outside mimalloc. Exclude
+    /// concurrent heap/context deletion and keep the parent heap alive.
+    pub fn mi_theap_quiescent_abandon(theap: *mut mi_theap_t);
     pub fn mi_theap_calloc(theap: *mut mi_theap_t, count: size_t, size: size_t) -> *mut c_void;
     pub fn mi_theap_malloc_aligned(
         theap: *mut mi_theap_t,

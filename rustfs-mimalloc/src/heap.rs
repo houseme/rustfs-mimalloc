@@ -76,6 +76,22 @@ pub struct ThreadHeap<'heap> {
 }
 
 impl ThreadHeap<'_> {
+    /// Abandon this worker context's pages while keeping live blocks valid.
+    ///
+    /// The context remains usable, so subsequent allocation may reclaim pages
+    /// or allocate new ones. This can help idle workers release page ownership;
+    /// it does not guarantee that memory is immediately returned to the OS.
+    ///
+    /// # Safety
+    /// The cached-context lifetime requirements of [`Self::malloc`] apply.
+    /// Do not call from allocator callbacks or concurrently with raw deletion
+    /// of this context or its parent heap. This method only operates on the
+    /// calling thread's context; foreign-thread cleanup requires raw FFI and
+    /// external proof that the owner is quiescent outside mimalloc.
+    pub unsafe fn quiescent_abandon(&self) {
+        unsafe { rustfs_mimalloc_sys::mi_theap_quiescent_abandon(self.ptr.as_ptr()) }
+    }
+
     /// Allocate from this heap without another TLS lookup.
     ///
     /// # Safety
@@ -398,6 +414,16 @@ impl Heap {
         unsafe { rustfs_mimalloc_sys::mi_heap_collect(self.ptr.as_ptr(), force) }
     }
 
+    /// Skip debug-pattern filling for the first `preserve` bytes of each block.
+    ///
+    /// Upstream clamps this to 1 MiB and stores it atomically. It affects debug
+    /// pattern fills, not zero allocation, padding checks or free-list metadata.
+    /// This neither extends object lifetimes nor makes reading freed memory safe.
+    pub fn set_debug_fill_preserve(&self, preserve: usize) {
+        // SAFETY: this handle keeps the heap alive and the upstream setting is atomic.
+        unsafe { rustfs_mimalloc_sys::mi_heap_set_debug_fill_preserve(self.ptr.as_ptr(), preserve) }
+    }
+
     /// Allocation statistics for this heap as JSON. Returns empty string on failure.
     pub fn stats_json(&self) -> String {
         unsafe {
@@ -534,6 +560,43 @@ mod tests {
     fn heap_create_delete() {
         let heap = Heap::new().expect("heap::new failed");
         heap.delete();
+    }
+
+    #[test]
+    fn abandon_preserves_live_blocks_and_reuses_the_cached_context() {
+        let heap = Heap::new().unwrap();
+        let local = heap.thread_local().unwrap();
+        unsafe {
+            let ptr = local.malloc(128);
+            assert!(!ptr.is_null());
+            ptr.write_bytes(0xA5, 128);
+            let owner = crate::MiMalloc::thread_id_of(ptr);
+            assert_ne!(owner, 0);
+            local.quiescent_abandon();
+            assert_eq!(crate::MiMalloc::thread_id_of(ptr), 0);
+            assert!((0..128).all(|i| *ptr.add(i) == 0xA5));
+            let fresh = local.zalloc(64);
+            assert!(!fresh.is_null());
+            assert!(heap.contains(fresh));
+            assert!((0..64).all(|i| *fresh.add(i) == 0));
+            assert_eq!(crate::MiMalloc::thread_id_of(fresh), owner);
+            rustfs_mimalloc_sys::mi_free(fresh.cast());
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
+    }
+
+    #[test]
+    fn debug_fill_preservation_does_not_override_zero_initialization() {
+        let heap = Heap::new().unwrap();
+        for preserve in [0, 16, usize::MAX] {
+            heap.set_debug_fill_preserve(preserve);
+            unsafe {
+                let ptr = heap.zalloc(128);
+                assert!(!ptr.is_null());
+                assert!((0..128).all(|i| *ptr.add(i) == 0));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            }
+        }
     }
 
     #[test]

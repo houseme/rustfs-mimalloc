@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `4e64fce6` after v3.5.4 interim.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `6f45cc52` after v3.5.4 interim.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -93,13 +93,23 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
 
 The source pin follows the **interim** tag and includes fixes from upstream
 PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
-through 2026-10-14. New public APIs include `mi_arenas_purge` and two options
+through 2026-10-16. New public APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
-The 34 commits after the previous pin add no public C declarations or option
-IDs. This update also exposes existing `mi_expand`, zero-initialized
+The 31 commits after `4e64fce6` add `mi_thread_id_of`,
+`mi_heap_set_debug_fill_preserve`, `mi_theap_delete` and
+`mi_theap_quiescent_abandon`; all four have raw bindings. Context deletion
+invalidates cached aliases. Foreign-context abandonment requires a quiescent
+owner outside mimalloc and no concurrent heap/context deletion. No option IDs
+or profiler ABI fields change. This release also exposes existing `mi_expand`, zero-initialized
 reallocation, checked heap array allocation, and heap small-allocation APIs.
 Run `python3 scripts/check_upstream_api.py` from the repository root to audit
 binding names and option IDs; integration tests cover linkage and behavior.
+
+Upstream custom tracking requires `MI_TRACK_CUSTOM` at C compile time and two
+application-defined C symbols. See the wrapper's `custom_tracking` example;
+hooks must never allocate or unwind, and must tolerate concurrent/startup calls.
+These are application symbols, not mimalloc exports or registration functions.
+
 The inherited `profile_disabled` flag
 can prevent sampling in new thread heaps; dedicated-heap and worker-thread
 profiling are not reliable at this pin. Profiling callbacks must not unwind;

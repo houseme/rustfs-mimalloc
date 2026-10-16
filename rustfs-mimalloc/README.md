@@ -72,7 +72,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **post-v3.5.4 interim (`4e64fce6`)**.
+The submodule is pinned to upstream **post-v3.5.4 interim (`6f45cc52`)**.
 Allocation helpers match this snapshot. `MiMalloc::expand` can reuse a
 block's existing capacity without moving it; padding-enabled builds can reject
 the request. `MiMalloc::rezalloc{,_aligned}`, `Heap::rezalloc{,_aligned}` and
@@ -80,6 +80,15 @@ the request. `MiMalloc::rezalloc{,_aligned}`, `Heap::rezalloc{,_aligned}` and
 `ThreadHeap::{calloc,malloc_csize,zalloc_csize,realloc,rezalloc}` reuse the cached
 worker context. Check raw pointer results for null and follow each method's
 initialization, alignment and lifetime requirements.
+
+The latest sync adds unsafe `MiMalloc::thread_id_of`, safe
+`Heap::set_debug_fill_preserve` and unsafe `ThreadHeap::quiescent_abandon`.
+Owner IDs are snapshots, debug prefix preservation does not extend object
+lifetimes, and abandonment keeps live blocks and the context usable. Raw
+`mi_theap_delete` invalidates every cached view and is intentionally not a
+method on the borrowed wrapper. The `custom_tracking` example demonstrates
+application hooks enabled with `CFLAGS=-DMI_TRACK_CUSTOM`; default builds
+leave them disabled.
 
 Runtime option setters and toggles are now unsafe because upstream storage is not atomic; configure
 before starting threads or exclude all concurrent mimalloc access. The raw

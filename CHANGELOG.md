@@ -5,17 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-10-14
+## [0.6.0] - 2026-10-16
 
 ### Changed
 
-- Pin mimalloc to upstream `dev3` commit `4e64fce6` (2026-10-14), after the
+- Pin mimalloc to upstream `dev3` commit `6f45cc52` (2026-10-16 review), after the
   **v3.5.4 interim** tag. The C source version remains 30504. This includes
   allocation/free improvements, adaptive full-page retention, cross-thread page
   reclamation, the arena/bitmap source reorganization, and bitmap rollback
-  fixes through 2026-10-14. The large-range immediate-purge default is now
-  32 MiB. Workload-specific throughput and
-  RSS still require measurement.
+  fixes through the 2026-10-16 review. Includes naturally aligned allocation
+  size-class improvements, cache offsets, OS-page heap lifecycle/visiting fixes,
+  and quiescent fork support. The large-range immediate-purge default is 32 MiB.
+  Workload-specific throughput and RSS still require measurement.
 - **Breaking:** match the experimental profiler ABI: add `on_snapshot` and use
   mutable heap pointers in allocation/free callbacks.
 - **Breaking:** make runtime option setters/toggles unsafe because upstream
@@ -26,14 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bound all four new upstream public APIs: `mi_thread_id_of`,
+  `mi_heap_set_debug_fill_preserve`, `mi_theap_delete`, and
+  `mi_theap_quiescent_abandon`. Added `MiMalloc::thread_id_of`,
+  `Heap::set_debug_fill_preserve`, and unsafe `ThreadHeap::quiescent_abandon`.
+  Context deletion remains raw FFI because it invalidates all cached aliases.
+- Added a runnable custom allocation-tracking hook example for upstream #1396,
+  enabled with `CFLAGS=-DMI_TRACK_CUSTOM`, with no default hot-path overhead.
+- Added owner-query, quiescent foreign-context cleanup, context deletion,
+  zero-initialization and direct-OS-page lifecycle regression checks.
 - Added `MiMalloc::{expand,rezalloc,rezalloc_aligned}`, heap zero-allocation
   and reallocation helpers, and cached `ThreadHeap::{calloc,malloc_csize,
   zalloc_csize,realloc,rezalloc}`. Added 13 previously unbound public C
   allocation APIs; zero-growth, alignment and overflow behavior are tested.
-- Added a public-header API inventory and option-ID parity check to CI. The
-  34 upstream commits after the previous pin add no public C functions or
-  option IDs; these Rust additions expose existing upstream capabilities.
-
+- Added a public-header API inventory and option-ID parity check to CI,
+  covering 130 Rust function names and 45 option IDs at the current pin.
 - Opt-in `no_profile` builds to remove allocation profiling sampling and automatic
   `MIMALLOC_PROFILE` startup. Statistics, alignment, security/debug checks and raw
   profiler control ABI remain available; explicit snapshots have no allocation samples.
@@ -75,11 +83,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Inherit upstream Windows console detachment, ProcessPrng/legacy RNG loading,
+  naturally aligned allocation, direct-OS-page cleanup, and inline-linkage fixes.
+  Upstream #1428 adds array-reallocation contract tests.
+
 - Updated the Windows static-CRT compatibility source and drift tests for
   upstream moving `src/theap.c` to `src/heap/theap.c`.
 - Clarified raw constant-size free alignment and arena memory ownership
   requirements, and heap reallocation failure/alignment contracts.
-
 - Declare Windows `__ImageBase` with explicit `extern` in C builds. Upstream's
   C++ linkage macro expands to nothing in C and accidentally defined BSS storage,
   shadowing the linker-owned PE base. Static UCRT used that false base for RVA
