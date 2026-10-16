@@ -216,6 +216,12 @@ After pushing a real release, report:
 - GitHub Release URL: `https://github.com/houseme/rustfs-mimalloc/releases/tag/v<VERSION>`
 - whether CI was awaited or intentionally not awaited
 
+Manual real releases check out the existing version tag for every gate and
+publication. The workflow saves a package archive before `cargo publish`, which
+uses temporary archive paths. If upload fails or the version already exists,
+continue only when the official index and download match that saved archive.
+This lets a partially published release resume without changing its tag.
+
 ## Rollback
 
 If the release is published but broken:

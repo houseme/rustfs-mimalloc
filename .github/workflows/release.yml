@@ -41,6 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
           submodules: recursive
 
       - name: Resolve version
@@ -114,6 +115,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -159,6 +161,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -184,6 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
 
@@ -194,9 +198,13 @@ jobs:
         run: |
           set -euo pipefail
           for package in rustfs-mimalloc-sys rustfs-mimalloc rustfs-mimalloc-profiling; do
-            cargo publish --registry crates-io --package "$package" --allow-dirty
-            python3 scripts/verify_registry.py "$package" "$RELEASE_VERSION" \
-              --archive "target/package/$package-$RELEASE_VERSION.crate"
+            cargo package --registry crates-io --package "$package" --allow-dirty
+            archive="$RUNNER_TEMP/$package-$RELEASE_VERSION.crate"
+            cp "target/package/$package-$RELEASE_VERSION.crate" "$archive"
+            if ! cargo publish --registry crates-io --package "$package" --allow-dirty; then
+              echo "Upload did not complete; checking for an identical published package."
+            fi
+            python3 scripts/verify_registry.py "$package" "$RELEASE_VERSION" --archive "$archive"
           done
       - name: Test normalized profiling archive with published dependencies
         run: python3 scripts/verify_profiling_package.py --allow-dirty
@@ -215,6 +223,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
           submodules: recursive
 
       - name: Generate changelog
