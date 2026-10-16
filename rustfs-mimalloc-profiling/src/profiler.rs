@@ -9,6 +9,9 @@
 
 mod live;
 mod mappings;
+mod sampling;
+
+use sampling::{SampleWeight, next_poisson_interval};
 
 use std::{
     alloc::{GlobalAlloc, Layout},
@@ -42,10 +45,6 @@ const RECORDED_SAMPLE_SHARD_COUNT: usize = 8;
 const SYNTHETIC_FRAME: &str = "[mimalloc] unresolved allocation stack";
 const RNG_INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
 const RNG_INITIAL_STATE: u64 = 0xa076_1d64_78bd_642f;
-// Keep worst-case work bounded inside the allocator hook. Very large
-// allocations keep the first intervals stochastic, then fall back to a
-// deterministic approximation instead of looping once per sampled interval.
-const MAX_POISSON_INTERVALS_PER_ALLOCATION: u64 = 64;
 
 static RECORDER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACKEND_CLAIMED: AtomicBool = AtomicBool::new(false);
@@ -191,13 +190,14 @@ impl StackKey {
 #[derive(Debug, Copy, Clone)]
 struct RecordedAllocationSample {
     stack: StackKey,
-    weighted_objects: u64,
-    weighted_bytes: u64,
+    weighted_objects: f64,
+    weighted_bytes: f64,
 }
 
 #[derive(Debug)]
 struct TlsSampleBuffer {
     samples: [Option<RecordedAllocationSample>; TLS_SAMPLE_RING_CAPACITY],
+    head: usize,
     len: usize,
     generation: u64,
 }
@@ -206,6 +206,7 @@ impl TlsSampleBuffer {
     fn new() -> Self {
         Self {
             samples: [None; TLS_SAMPLE_RING_CAPACITY],
+            head: 0,
             len: 0,
             generation: SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire),
         }
@@ -228,15 +229,17 @@ impl TlsSampleBuffer {
             return false;
         }
 
-        self.samples[self.len] = Some(sample);
+        let tail = (self.head + self.len) % TLS_SAMPLE_RING_CAPACITY;
+        self.samples[tail] = Some(sample);
         self.len += 1;
         true
     }
 
     fn clear(&mut self) {
-        for sample in &mut self.samples[..self.len] {
-            *sample = None;
+        for offset in 0..self.len {
+            self.samples[(self.head + offset) % TLS_SAMPLE_RING_CAPACITY] = None;
         }
+        self.head = 0;
         self.len = 0;
     }
 
@@ -245,23 +248,16 @@ impl TlsSampleBuffer {
         out: &mut impl Extend<RecordedAllocationSample>,
         limit: usize,
     ) -> usize {
-        let drain_len = self.len.min(limit);
-        for index in 0..drain_len {
-            if let Some(sample) = self.samples[index].take() {
+        let drained = self.len.min(limit);
+        for offset in 0..drained {
+            let slot = (self.head + offset) % TLS_SAMPLE_RING_CAPACITY;
+            if let Some(sample) = self.samples[slot].take() {
                 out.extend(std::iter::once(sample));
             }
         }
-
-        let remaining = self.len - drain_len;
-        for index in 0..remaining {
-            self.samples[index] = self.samples[drain_len + index].take();
-        }
-        for index in remaining..self.len {
-            self.samples[index] = None;
-        }
-        self.len = remaining;
-
-        drain_len
+        self.head = (self.head + drained) % TLS_SAMPLE_RING_CAPACITY;
+        self.len -= drained;
+        drained
     }
 }
 
@@ -318,8 +314,8 @@ impl Drop for RegisteredTlsSampleBuffer {
 
 #[derive(Debug, Copy, Clone, Default)]
 struct AggregatedAllocationSample {
-    alloc_objects: u64,
-    alloc_space: u64,
+    alloc_objects: f64,
+    alloc_space: f64,
     inuse_objects: f64,
     inuse_space: f64,
 }
@@ -827,26 +823,25 @@ fn realloc_recorded_size(
     }
 }
 
+struct ProfilerReentryGuard<'a> {
+    sampler: &'a Cell<SamplerState>,
+}
+
+impl Drop for ProfilerReentryGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = self.sampler.get();
+        state.in_profiler = false;
+        self.sampler.set(state);
+    }
+}
+
 fn with_recording_guard<R>(f: impl FnOnce(&Cell<SamplerState>) -> R) -> Option<R> {
-    struct ProfilerReentryGuard<'a> {
-        sampler: &'a Cell<SamplerState>,
-    }
-
-    impl Drop for ProfilerReentryGuard<'_> {
-        fn drop(&mut self) {
-            let mut state = self.sampler.get();
-            state.in_profiler = false;
-            self.sampler.set(state);
-        }
-    }
-
     SAMPLER_STATE
         .try_with(|sampler| {
             let mut state = sampler.get();
             if state.profiler_suppressed || state.in_profiler {
                 return None;
             }
-
             state.in_profiler = true;
             sampler.set(state);
             let _guard = ProfilerReentryGuard { sampler };
@@ -861,10 +856,27 @@ fn record_allocation(ptr: *mut u8, size: u64) {
         return;
     }
     let generation = SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire);
-
-    with_recording_guard(|sampler| {
+    let _ = SAMPLER_STATE.try_with(|sampler| {
         let mut state = sampler.get();
+        if state.profiler_suppressed || state.in_profiler {
+            return;
+        }
 
+        // The common unsampled allocation touches only its byte countdown.
+        // Enter recursion suppression only when resetting, handing off, or
+        // capturing a sample: those operations can allocate or call the unwinder.
+        if size < state.remaining_bytes
+            && state.remaining_config_generation == generation
+            && state.flush_generation == FLUSH_REQUEST_GENERATION.load(Ordering::Relaxed)
+        {
+            state.remaining_bytes -= size;
+            sampler.set(state);
+            return;
+        }
+
+        state.in_profiler = true;
+        sampler.set(state);
+        let _guard = ProfilerReentryGuard { sampler };
         let interval = SAMPLE_INTERVAL_BYTES.load(Ordering::Relaxed).max(1);
         let mut current = state.remaining_bytes;
         if state.remaining_config_generation != generation || current == 0 {
@@ -881,88 +893,17 @@ fn record_allocation(ptr: *mut u8, size: u64) {
             state.remaining_bytes = current - size;
             sampler.set(state);
         } else {
-            let weight = calculate_sample_weight(size, current, interval, &mut state.rng_state);
-            state.remaining_bytes = weight.next_remaining;
+            // Exponential intervals are memoryless. Start at the end of the
+            // allocation; counting all crossed intervals is unnecessary.
+            state.remaining_bytes = next_poisson_interval(interval, &mut state.rng_state);
             sampler.set(state);
-            record_sample(ptr, size, weight, generation);
+            record_sample(
+                ptr,
+                SampleWeight::for_allocation(size, interval),
+                generation,
+            );
         }
     });
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct SampleWeight {
-    weighted_objects: u64,
-    weighted_bytes: u64,
-    next_remaining: u64,
-}
-
-fn calculate_sample_weight(
-    size: u64,
-    current: u64,
-    sample_interval: u64,
-    rng_state: &mut u64,
-) -> SampleWeight {
-    let sample_interval = sample_interval.max(1);
-    let mut remaining_bytes = size.saturating_sub(current.max(1));
-    let mut crossed_intervals = 1_u64;
-    let mut next_remaining = next_poisson_interval(sample_interval, rng_state);
-
-    while remaining_bytes >= next_remaining
-        && crossed_intervals < MAX_POISSON_INTERVALS_PER_ALLOCATION
-    {
-        remaining_bytes -= next_remaining;
-        crossed_intervals = crossed_intervals.saturating_add(1);
-        next_remaining = next_poisson_interval(sample_interval, rng_state);
-    }
-
-    if remaining_bytes >= next_remaining {
-        remaining_bytes -= next_remaining;
-        crossed_intervals = crossed_intervals.saturating_add(1);
-        // Past the bounded stochastic prefix, approximate the rest of an
-        // unusually large allocation with fixed-size intervals. This preserves
-        // proportional weighting while keeping hook latency predictable.
-        let deterministic_intervals = remaining_bytes / sample_interval;
-        crossed_intervals = crossed_intervals.saturating_add(deterministic_intervals);
-        let bytes_into_next_interval = remaining_bytes % sample_interval;
-        next_remaining = if bytes_into_next_interval == 0 {
-            sample_interval
-        } else {
-            sample_interval - bytes_into_next_interval
-        };
-    } else {
-        next_remaining -= remaining_bytes;
-    }
-
-    let weighted_bytes = crossed_intervals.saturating_mul(sample_interval);
-    let weighted_objects = weighted_bytes.checked_div(size).unwrap_or_default().max(1);
-
-    SampleWeight {
-        weighted_objects,
-        weighted_bytes,
-        next_remaining,
-    }
-}
-
-fn next_poisson_interval(sample_interval: u64, rng_state: &mut u64) -> u64 {
-    let sample_interval = sample_interval.max(1);
-    let random = next_random_u64(rng_state);
-    let mantissa = (random >> 11).max(1);
-    let uniform = mantissa as f64 * (1.0 / ((1_u64 << 53) as f64));
-    let interval = -(uniform.ln()) * sample_interval as f64;
-
-    if interval.is_finite() && interval < u64::MAX as f64 {
-        (interval.ceil() as u64).max(1)
-    } else {
-        u64::MAX
-    }
-}
-
-fn next_random_u64(rng_state: &mut u64) -> u64 {
-    if *rng_state == 0 {
-        *rng_state = next_thread_rng_seed();
-    }
-    *rng_state = (*rng_state).wrapping_add(RNG_INCREMENT);
-    splitmix64(*rng_state)
 }
 
 fn next_thread_rng_seed() -> u64 {
@@ -974,31 +915,6 @@ fn splitmix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
-}
-
-#[cfg(test)]
-fn calculate_deterministic_sample_weight(size: u64, current: u64, interval: u64) -> SampleWeight {
-    let interval = interval.max(1);
-    let current = current.clamp(1, interval);
-    let bytes_after_first_sample = size.saturating_sub(current);
-    let crossed_intervals = bytes_after_first_sample
-        .checked_div(interval)
-        .unwrap_or_default()
-        .saturating_add(1);
-    let weighted_bytes = crossed_intervals.saturating_mul(interval);
-    let weighted_objects = weighted_bytes.checked_div(size).unwrap_or_default().max(1);
-    let bytes_into_next_interval = bytes_after_first_sample % interval;
-    let next_remaining = if bytes_into_next_interval == 0 {
-        interval
-    } else {
-        interval - bytes_into_next_interval
-    };
-
-    SampleWeight {
-        weighted_objects,
-        weighted_bytes,
-        next_remaining,
-    }
 }
 
 fn session_is_current(generation: u64) -> bool {
@@ -1025,7 +941,12 @@ fn record_live_reallocation(
         sampler.set(state);
         if hit {
             let stack = StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed));
-            live::record(pointer, stack, size, interval, generation);
+            live::record(
+                pointer,
+                stack,
+                SampleWeight::for_allocation(size, interval),
+                generation,
+            );
         }
     });
     if sampled.is_none() {
@@ -1037,7 +958,7 @@ fn record_live_reallocation(
     }
 }
 
-fn record_sample(ptr: *mut u8, size: u64, weight: SampleWeight, generation: u64) {
+fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
     let tracking_live = live::enabled() && !ptr.is_null();
     let mut stack = None;
     let _ = TLS_SAMPLE_BUFFER.try_with(|buffer| {
@@ -1082,13 +1003,7 @@ fn record_sample(ptr: *mut u8, size: u64, weight: SampleWeight, generation: u64)
     if tracking_live && session_is_current(generation) {
         let stack =
             stack.unwrap_or_else(|| StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed)));
-        live::record(
-            ptr as usize,
-            stack,
-            size,
-            SAMPLE_INTERVAL_BYTES.load(Ordering::Relaxed),
-            generation,
-        );
+        live::record(ptr as usize, stack, weight, generation);
     }
 }
 
@@ -1505,8 +1420,8 @@ fn build_memory_samples_with_resolver(
     let mut aggregated: HashMap<StackKey, AggregatedAllocationSample> = HashMap::new();
     for sample in recorded {
         let entry = aggregated.entry(sample.stack).or_default();
-        entry.alloc_objects = entry.alloc_objects.saturating_add(sample.weighted_objects);
-        entry.alloc_space = entry.alloc_space.saturating_add(sample.weighted_bytes);
+        entry.alloc_objects += sample.weighted_objects;
+        entry.alloc_space += sample.weighted_bytes;
     }
     for sample in live_samples {
         let entry = aggregated.entry(sample.stack).or_default();
@@ -1529,8 +1444,8 @@ fn build_memory_samples_with_resolver(
             });
             AllocationSample {
                 frames,
-                alloc_objects: i64::try_from(sample.alloc_objects).unwrap_or(i64::MAX),
-                alloc_space: i64::try_from(sample.alloc_space).unwrap_or(i64::MAX),
+                alloc_objects: sample.alloc_objects.round() as i64,
+                alloc_space: sample.alloc_space.round() as i64,
                 // Float-to-integer casts saturate at i64::MAX for very large
                 // weighted totals. Round once, after summing the entire stack.
                 inuse_objects: sample.inuse_objects.round() as i64,
@@ -1693,8 +1608,8 @@ mod tests {
     fn test_sample(stack: StackKey) -> RecordedAllocationSample {
         RecordedAllocationSample {
             stack,
-            weighted_objects: 1,
-            weighted_bytes: 1024,
+            weighted_objects: 1.0,
+            weighted_bytes: 1024.0,
         }
     }
 
@@ -1882,8 +1797,7 @@ mod tests {
         live::record(
             100,
             stack,
-            1024,
-            1,
+            SampleWeight::for_allocation(1024, 1),
             SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire),
         );
         backend.report().unwrap();
@@ -1924,7 +1838,12 @@ mod tests {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
         };
-        live::record(100, stack, 1024 * 1024, 1024, generation);
+        live::record(
+            100,
+            stack,
+            SampleWeight::for_allocation(1024 * 1024, 1024),
+            generation,
+        );
         assert_eq!(live::snapshot().len(), 1);
         assert_eq!(live::snapshot().len(), 1);
         std::thread::spawn(|| live::remove(100))
@@ -1952,8 +1871,18 @@ mod tests {
             .next()
             .expect("second pointer with same shard and membership bit");
         let untracked = collisions.next().expect("untracked colliding pointer");
-        live::record(pointer, stack, 1024, 1, generation);
-        live::record(second, stack, 2048, 1, generation);
+        live::record(
+            pointer,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            generation,
+        );
+        live::record(
+            second,
+            stack,
+            SampleWeight::for_allocation(2048, 1),
+            generation,
+        );
         live::remove(untracked);
         assert_eq!(live::sample_count(), 2);
         live::remove(pointer);
@@ -1977,9 +1906,19 @@ mod tests {
         let collision = (101..)
             .find(|other| splitmix64(*other as u64) % 64 == splitmix64(pointer as u64) % 64)
             .expect("colliding pointer");
-        live::record(pointer, stack, 1024, 1, generation);
+        live::record(
+            pointer,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            generation,
+        );
         let pending = live::begin_reallocation(pointer).expect("reserve sampled pointer");
-        live::record(collision, stack, 2048, 1, generation);
+        live::record(
+            collision,
+            stack,
+            SampleWeight::for_allocation(2048, 1),
+            generation,
+        );
         assert_eq!(live::dropped_sample_count(), 1);
         pending.finish(0, 0);
         assert_eq!(live::sample_count(), 1);
@@ -2003,7 +1942,12 @@ mod tests {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
         };
-        live::record(100, stack, 1024, 1, old_generation);
+        live::record(
+            100,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            old_generation,
+        );
         let pending = live::begin_reallocation(100).expect("reserve old-session pointer");
         RECORDER_ACTIVE.store(false, Ordering::Release);
         live::clear();
@@ -2011,9 +1955,19 @@ mod tests {
         live::prepare(true, 4096);
         RECORDER_ACTIVE.store(true, Ordering::Release);
         pending.finish(0, 0);
-        live::record(100, stack, 1024, 1, old_generation);
+        live::record(
+            100,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            old_generation,
+        );
         assert_eq!(live::sample_count(), 0);
-        live::record(100, stack, 2048, 1, generation);
+        live::record(
+            100,
+            stack,
+            SampleWeight::for_allocation(2048, 1),
+            generation,
+        );
         assert_eq!(live::sample_count(), 1);
     }
 
@@ -2168,7 +2122,12 @@ mod tests {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
         };
-        live::record(100, stack, 1024, 1, generation);
+        live::record(
+            100,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            generation,
+        );
         drop(live::begin_reallocation(100).expect("reserve live slot"));
         assert_eq!(live::sample_count(), 1);
         live::remove(100);
@@ -2193,7 +2152,12 @@ mod tests {
             // allocator so the test can install an exact live sample.
             let pointer = unsafe { allocator.inner.alloc(layout) };
             assert!(!pointer.is_null());
-            live::record(pointer as usize, stack, 1024, 1, generation);
+            live::record(
+                pointer as usize,
+                stack,
+                SampleWeight::for_allocation(1024, 1),
+                generation,
+            );
             assert_eq!(live::sample_count(), 1);
             SAMPLER_STATE.with(|sampler| {
                 let mut state = sampler.get();
@@ -2230,7 +2194,12 @@ mod tests {
                 frames: [42; MAX_CAPTURE_DEPTH],
                 depth: 1,
             };
-            live::record(pointer as usize, stack, 1024, 1, generation);
+            live::record(
+                pointer as usize,
+                stack,
+                SampleWeight::for_allocation(1024, 1),
+                generation,
+            );
             SAMPLER_STATE.with(|sampler| {
                 let mut state = sampler.get();
                 state.remaining_bytes = 1024 * 1024;
@@ -2886,13 +2855,13 @@ mod tests {
             vec![
                 RecordedAllocationSample {
                     stack,
-                    weighted_objects: 8,
-                    weighted_bytes: 1024,
+                    weighted_objects: 8.0,
+                    weighted_bytes: 1024.0,
                 },
                 RecordedAllocationSample {
                     stack,
-                    weighted_objects: 4,
-                    weighted_bytes: 1024,
+                    weighted_objects: 4.0,
+                    weighted_bytes: 1024.0,
                 },
             ],
             DEFAULT_MAX_DEPTH,
@@ -2989,8 +2958,8 @@ mod tests {
             .into_iter()
             .map(|stack| RecordedAllocationSample {
                 stack,
-                weighted_objects: 1,
-                weighted_bytes: 1024,
+                weighted_objects: 1.0,
+                weighted_bytes: 1024.0,
             })
             .collect();
         let mut resolutions = HashMap::<usize, usize>::new();
@@ -3125,53 +3094,59 @@ mod tests {
     }
 
     #[test]
-    fn calculate_sample_weight_uses_interval_for_small_allocation() {
-        let mut rng_state = 1;
-        let weight = calculate_sample_weight(128, 128, 1024, &mut rng_state);
-
-        assert_eq!(weight.weighted_objects, 8);
-        assert_eq!(weight.weighted_bytes, 1024);
-        assert!(weight.next_remaining > 0);
+    fn allocation_estimates_round_only_after_stack_aggregation() {
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        let samples = vec![
+            RecordedAllocationSample {
+                stack,
+                weighted_objects: 1.4,
+                weighted_bytes: 1075.2,
+            };
+            2
+        ];
+        let profile = build_allocation_samples(samples, 8);
+        assert_eq!(profile.len(), 1);
+        assert_eq!(profile[0].alloc_objects, 3);
+        assert_eq!(profile[0].alloc_space, 2150);
     }
 
     #[test]
-    fn calculate_sample_weight_carries_large_allocation_overshoot_with_poisson_intervals() {
-        let mut rng_state = 1;
-        let weight = calculate_sample_weight(2500, 1000, 1000, &mut rng_state);
-
-        assert!(weight.weighted_objects >= 1);
-        assert!(weight.weighted_bytes >= 1000);
-        assert!(weight.next_remaining > 0);
-    }
-
-    #[test]
-    fn calculate_sample_weight_bounds_large_allocation_interval_work() {
-        let mut rng_state = 1;
-        let size = (MAX_POISSON_INTERVALS_PER_ALLOCATION + 1024) * 1024;
-        let weight = calculate_sample_weight(size, 1, 1024, &mut rng_state);
-
-        assert!(weight.weighted_objects >= 1);
-        assert!(weight.weighted_bytes >= MAX_POISSON_INTERVALS_PER_ALLOCATION * 1024);
-        assert!(weight.next_remaining > 0);
-    }
-
-    #[test]
-    fn deterministic_sample_weight_documents_previous_interval_semantics() {
-        let weight = calculate_deterministic_sample_weight(2500, 1000, 1000);
-
-        assert_eq!(weight.weighted_objects, 1);
-        assert_eq!(weight.weighted_bytes, 2000);
-        assert_eq!(weight.next_remaining, 500);
-    }
-
-    #[test]
-    fn next_poisson_interval_uses_thread_rng_state() {
-        let mut rng_state = 1;
-        let first = next_poisson_interval(1024, &mut rng_state);
-        let second = next_poisson_interval(1024, &mut rng_state);
-
-        assert!(first > 0);
-        assert!(second > 0);
-        assert_ne!(first, second);
+    fn tls_ring_wraps_and_partial_drains_preserve_fifo_without_compaction() {
+        let mut ring = TlsSampleBuffer::new();
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        for value in 0..TLS_SAMPLE_RING_CAPACITY {
+            let mut sample = test_sample(stack);
+            sample.weighted_bytes = value as f64;
+            assert!(ring.push(sample));
+        }
+        let mut drained = Vec::new();
+        assert_eq!(ring.drain_into(&mut drained, 1), 1);
+        assert_eq!(ring.head, 1);
+        assert_eq!(ring.samples[1].unwrap().weighted_bytes, 1.0);
+        let mut sample = test_sample(stack);
+        sample.weighted_bytes = TLS_SAMPLE_RING_CAPACITY as f64;
+        assert!(ring.push(sample));
+        assert_eq!(
+            ring.drain_into(&mut drained, usize::MAX),
+            TLS_SAMPLE_RING_CAPACITY
+        );
+        assert_eq!(
+            drained
+                .iter()
+                .map(|s| s.weighted_bytes as usize)
+                .collect::<Vec<_>>(),
+            (0..=TLS_SAMPLE_RING_CAPACITY).collect::<Vec<_>>()
+        );
+        ring.clear();
+        assert!(ring.is_empty());
+        assert!(ring.push(test_sample(stack)));
+        assert_eq!(ring.drain_into(&mut Vec::new(), 0), 0);
+        assert_eq!(ring.len(), 1);
     }
 }

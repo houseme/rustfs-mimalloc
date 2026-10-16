@@ -10,7 +10,8 @@ use std::{
 };
 
 use super::{
-    SAMPLING_CONFIG_GENERATION, StackKey, session_is_current, splitmix64, with_profiler_suppressed,
+    SAMPLING_CONFIG_GENERATION, SampleWeight, StackKey, session_is_current, splitmix64,
+    with_profiler_suppressed,
 };
 
 const SHARD_COUNT: usize = 64;
@@ -136,7 +137,7 @@ impl LiveMap {
     }
 }
 
-pub(super) fn record(pointer: usize, stack: StackKey, size: u64, interval: u64, generation: u64) {
+pub(super) fn record(pointer: usize, stack: StackKey, weight: SampleWeight, generation: u64) {
     let Some(shards) = SHARDS.get() else {
         return;
     };
@@ -153,29 +154,18 @@ pub(super) fn record(pointer: usize, stack: StackKey, size: u64, interval: u64, 
         DROPPED.fetch_add(1, Ordering::Relaxed);
         return;
     }
-    let (weighted_objects, weighted_bytes) = weights(size, interval);
     entries.samples.insert(
         pointer,
         LiveEntry {
             sample: LiveAllocationSample {
                 stack,
-                weighted_objects,
-                weighted_bytes,
+                weighted_objects: weight.weighted_objects,
+                weighted_bytes: weight.weighted_bytes,
             },
             reallocating: false,
         },
     );
     entries.add_membership(shard, bit);
-}
-
-// One pointer can cross many Poisson intervals, but contributes one live hit.
-// Use its inclusion probability, rather than interval crossings, to avoid
-// overweighting large objects and rounding small-object bytes to zero.
-fn weights(size: u64, interval: u64) -> (f64, f64) {
-    let probability = -(-(size as f64) / interval.max(1) as f64).exp_m1();
-    let objects = (1.0 / probability).max(1.0);
-    let bytes = (size as f64 / probability).max(size as f64);
-    (objects, bytes)
 }
 
 pub(super) fn remove(pointer: usize) {
@@ -362,20 +352,4 @@ pub(super) fn dropped_sample_count() -> u64 {
 
 pub(super) fn metadata_payload_bytes() -> usize {
     METADATA_PAYLOAD_BYTES.load(Ordering::Relaxed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inclusion_weights_cover_small_and_large_allocations() {
-        let (objects, bytes) = weights(1, 1024);
-        assert!((objects - 1024.5).abs() < 0.001);
-        assert_eq!(objects, bytes);
-        assert_eq!(weights(1024 * 1024, 1024), (1.0, (1024 * 1024) as f64));
-        let (objects, bytes) = weights(512, 1024);
-        assert!((objects - 2.5414940825).abs() < 0.000001);
-        assert!((bytes - objects * 512.0).abs() < 0.000001);
-    }
 }

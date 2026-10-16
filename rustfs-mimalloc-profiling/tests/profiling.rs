@@ -34,6 +34,46 @@ mod tests {
     }
 
     #[test]
+    fn encoded_allocation_counts_reconstruct_the_observed_population() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut profiler = Profiler::start(MimallocConfig {
+            sample_interval_bytes: 1024,
+            ring_capacity: 65_536,
+            report_drain_limit: 65_536,
+            ..MimallocConfig::default()
+        })
+        .unwrap();
+        let allocations = 64_000;
+        for _ in 0..allocations {
+            let allocation = allocate_statistical_marker();
+            std::hint::black_box(&allocation);
+        }
+        let encoded = profiler.report().unwrap();
+        let stats = mimalloc_stats();
+        profiler.stop();
+        // Decoding allocates too; do it after the measured session ends.
+        let profile = Profile::decode(encoded.as_slice()).unwrap();
+        assert_eq!(stats.dropped_samples, 0);
+        assert_eq!(stats.buffered_samples, Some(0));
+        let objects =
+            sample_value_for_frame(&profile, "allocate_statistical_marker", "alloc_objects");
+        let bytes = sample_value_for_frame(&profile, "allocate_statistical_marker", "alloc_space");
+        assert!(
+            (objects as f64 / allocations as f64 - 1.0).abs() < 0.02,
+            "estimated objects: {objects}"
+        );
+        assert!(
+            (bytes as f64 / (allocations as f64 * 768.0) - 1.0).abs() < 0.02,
+            "estimated bytes: {bytes}"
+        );
+    }
+
+    #[inline(never)]
+    fn allocate_statistical_marker() -> Vec<u8> {
+        std::hint::black_box(vec![0; 768])
+    }
+
+    #[test]
     fn failed_configuration_does_not_claim_the_recorder() {
         use rustfs_mimalloc_profiling::Error;
         let _guard = TEST_LOCK.lock().unwrap();

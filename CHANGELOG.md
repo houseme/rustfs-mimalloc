@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Correct allocation object counts by sharing the inclusion-probability weights
+  with live heap tracking and rounding after stack aggregation. The former
+  per-event integer division underestimated object counts for allocation sizes
+  near the sampling interval.
+- Replace interval-crossing loops and their deterministic fallback with one
+  memoryless sampling step. Keep the unsampled path to a TLS countdown and
+  use a FIFO TLS ring so partial drains do not move retained stacks.
+
 ### Added
 
 - Add the independent `rustfs-mimalloc-profiling` companion crate, extracted

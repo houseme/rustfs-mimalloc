@@ -42,8 +42,9 @@ Applications schedule reports and provide their own storage or uploader.
 - Default reports contain interval `alloc_objects/count` and `alloc_space/bytes`.
 - `live_heap_tracking` adds `inuse_objects/count` and `inuse_space/bytes`; live
   samples survive reports, and `inuse_space` becomes the default sample type.
-- Allocation counters are sampled, weighted requested bytes and objects. They
-  are not process RSS or allocator usable-size measurements.
+- Allocation and live counters use the same inclusion-probability weights,
+  retaining fractional counts until stack aggregation. They estimate requested
+  bytes and objects, rather than process RSS or allocator usable sizes.
 - Reports are uncompressed pprof protobufs with timestamps and duration. The
   `__delta__="false"` sample label tells compatible consumers, including
   Pyroscope, that allocation counters already describe intervals. Other pprof
