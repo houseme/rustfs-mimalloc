@@ -1,0 +1,29 @@
+[package]
+name = "rustfs-mimalloc-profiling"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+homepage.workspace = true
+description = "Sampled allocation and live heap profiles for mimalloc"
+documentation = "https://docs.rs/rustfs-mimalloc-profiling"
+readme = "README.md"
+keywords = ["mimalloc", "profiling", "pprof", "heap", "allocator"]
+categories = ["memory-management", "development-tools::profiling"]
+
+[dependencies]
+rustfs-mimalloc = { workspace = true }
+backtrace = "0.3"
+libc = "0.2"
+log = "0.4"
+prost = "0.14"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
+findshlibs = "0.10"
+object = "0.40"
+# Keep the transitive decoder above the RUSTSEC-2026-0344 vulnerable range.
+ruzstd = "0.9.1"
+
+[dev-dependencies]
+libflate = "2.1"
