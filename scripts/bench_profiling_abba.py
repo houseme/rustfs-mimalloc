@@ -74,6 +74,7 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--duration-ms", type=int, default=8000)
+    parser.add_argument("--case", dest="cases", action="append", choices=CASES)
     args = parser.parse_args()
     if args.duration_ms <= 0:
         parser.error("--duration-ms must be positive")
@@ -111,7 +112,8 @@ def main():
         },
     }
     passed = True
-    for name, overrides in CASES.items():
+    for name in args.cases or CASES:
+        overrides = CASES[name]
         environment = {**os.environ, **base_env, **overrides}
         warmup = {**environment, "MIMALLOC_BENCH_DURATION_MS": "1000"}
         for binary in binaries.values():

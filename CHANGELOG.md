@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require reporter-visible TLS registration before accepting allocation events;
+  count registration contention and unavailable TLS as drops. Remove the
+  allocation-side flush notification protocol and its hidden pending buffers.
 - Correct allocation object counts by sharing the inclusion-probability weights
   with live heap tracking and rounding after stack aggregation. The former
   per-event integer division underestimated object counts for allocation sizes

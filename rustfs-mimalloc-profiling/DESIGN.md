@@ -50,14 +50,21 @@ Exponential memorylessness permits a fresh interval at the end of each sampled
 allocation. Sampling therefore uses one RNG draw per hit, with no loop over
 crossed intervals and no deterministic large-allocation fallback. Unsampled
 allocations in the current generation update their TLS byte countdown without
-entering the recursion guard; resets, handoffs and captures retain suppression.
+entering the recursion guard; resets and captures retain suppression.
+
+A TLS buffer must be registered before it accepts records. Registry contention
+rejects the event with an explicit drop count; a later sampling hit can retry.
+Thus an idle worker cannot retain accepted records invisible to the reporter.
+Reports drain registered buffers directly, so allocation hooks no longer poll
+a flush-request generation or participate in a separate handoff protocol.
+Unavailable TLS during thread teardown is also counted as a dropped event.
 
 The fixed TLS queue is a FIFO ring with head/length indices. A partial drain
 moves only the records consumed and never compacts remaining stack records.
-The existing global overflow shards, fair report budgets, generation checks,
-realloc rollback and reliable cross-thread free handling preserve recorder
-ownership and bounded storage. These mechanisms handle real concurrency and
-pressure contracts and are kept together rather than replaced by extra modes.
+Global overflow shards absorb full-ring handoffs and thread-exit data. Fair
+report budgets prevent either source from starving. Generation checks,
+realloc rollback and reliable cross-thread free handling retain session and
+pointer lifecycle correctness under one recorder admission rule.
 
 Instruction addresses, source metadata and interval/live snapshot semantics
 remain unchanged. The pprof sample label `__delta__="false"` identifies interval
@@ -98,23 +105,26 @@ seed. Tests cover multiple sizes and intervals, fractional aggregation, actual
 allocator-to-pprof population reconstruction, and FIFO wraparound.
 
 A same-binary control followed by frozen-binary A/B/B/A comparisons ran on two
-fixed Linux VM CPUs, with 8-second workload windows and the same compiler/build
-configuration. All four comparisons passed 5% drift and 1% record-drop gates:
+fixed Linux VM CPUs with the same compiler/build configuration. The accepted
+per-workload comparisons passed 5% drift and 1% record-drop gates:
 
-| Workload | Throughput change |
-| --- | ---: |
-| Allocation, 1 MiB interval, one worker | -0.05% |
-| Allocation, 1 MiB interval, two workers | -1.91% |
-| Allocation, 1 KiB interval, fixed 64 KiB objects | +11.31% |
-| Live heap, 1 MiB interval, one worker | +2.84% |
+| Workload | Window | Throughput change |
+| --- | ---: | ---: |
+| Allocation, 1 MiB interval, one worker | 8 s | +0.23% |
+| Allocation, 1 MiB interval, two workers | 8 s | -1.01% |
+| Allocation, 1 KiB interval, fixed 64 KiB objects | 8 s | +8.83% |
+| Live heap, 1 MiB interval, one worker | 20 s | -0.43% |
 
 The ordinary workloads are near measurement noise; the clear local benefit is
 in dense sampling. This does not establish production overhead or universal
 optimality. The first shorter control had excessive baseline drift and was
-rejected. Its results are not used for attribution.
+rejected. The final live case also exceeded candidate drift in its 8-second
+run; the longer 20-second retry passed. Rejected runs are retained but are not
+used for attribution.
 
 `scripts/bench_profiling_abba.py` reproduces the comparison from two frozen
 executables, retains raw outputs and hashes locally, and rejects unstable or
 lossy comparisons. Run the same executable for both arguments as a control
-before comparing different builds. Configure CPU affinity and resource
-isolation outside the driver and use a fresh output directory for every run.
+before comparing different builds. Use `--case` to rerun a failed workload
+without repeating valid cases. Configure CPU affinity and resource isolation
+outside the driver and use a fresh output directory for every run.

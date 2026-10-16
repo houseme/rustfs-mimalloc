@@ -61,8 +61,9 @@ direct C allocations are outside its coverage. The Rust wrapper is independent
 of the experimental native mimalloc profiler. The allocator's `no_profile`
 feature disables native sampling, but does not disable this wrapper.
 
-Allocation event buffers and the live table are bounded. Pressure can omit new
-samples; tracked frees remove metadata before addresses can be reused. Live
+Allocation event buffers and the live table are bounded. Registry/queue
+contention can omit new samples, counted explicitly. Accepted events are in
+reporter-visible buffers even while their thread is idle; tracked frees remove metadata before addresses can be reused. Live
 removals may wait for a shard lock. Reports copy live shards individually, so
 snapshots do not freeze the application at one global instant.
 

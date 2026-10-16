@@ -54,7 +54,6 @@ static ALLOCATOR_SEEN: AtomicBool = AtomicBool::new(false);
 static SAMPLE_INTERVAL_BYTES: AtomicU64 = AtomicU64::new(DEFAULT_SAMPLE_INTERVAL_BYTES);
 static SAMPLING_CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 static SAMPLING_RNG_SEED: AtomicU64 = AtomicU64::new(RNG_INITIAL_STATE);
-static FLUSH_REQUEST_GENERATION: AtomicU64 = AtomicU64::new(0);
 static MAX_RECORDED_SAMPLES: AtomicUsize = AtomicUsize::new(DEFAULT_RING_CAPACITY);
 static GLOBAL_BUFFERED_SAMPLE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static NEXT_RECORDED_SAMPLE_SHARD: AtomicUsize = AtomicUsize::new(0);
@@ -82,11 +81,9 @@ static TLS_SAMPLE_BUFFER_REGISTRY: LazyLock<Mutex<TlsSampleBufferRegistry>> =
 struct SamplerState {
     in_profiler: bool,
     profiler_suppressed: bool,
-    has_buffer: bool,
     remaining_bytes: u64,
     remaining_config_generation: u64,
     rng_state: u64,
-    flush_generation: u64,
 }
 
 impl SamplerState {
@@ -94,11 +91,9 @@ impl SamplerState {
         Self {
             in_profiler: false,
             profiler_suppressed: false,
-            has_buffer: false,
             remaining_bytes: DEFAULT_SAMPLE_INTERVAL_BYTES,
             remaining_config_generation: 0,
             rng_state: 0,
-            flush_generation: 0,
         }
     }
 }
@@ -277,19 +272,20 @@ impl RegisteredTlsSampleBuffer {
         }
     }
 
-    fn ensure_registered(&self) {
-        if self.id.get().is_none() {
-            self.id.set(register_tls_sample_buffer(self.buffer.clone()));
+    fn ensure_registered(&self) -> Option<usize> {
+        if let Some(id) = self.id.get() {
+            return Some(id);
         }
+        let id = register_tls_sample_buffer(self.buffer.clone())?;
+        self.id.set(Some(id));
+        Some(id)
     }
 
     fn try_lock(&self) -> Option<std::sync::MutexGuard<'_, TlsSampleBuffer>> {
-        let _ = SAMPLER_STATE.try_with(|sampler| {
-            let mut state = sampler.get();
-            state.has_buffer = true;
-            sampler.set(state);
-        });
-        self.ensure_registered();
+        // Every accepted record must be visible to the reporter. A registry
+        // contention miss is counted as a dropped event, never hidden in an
+        // unregistered ring waiting for this thread to allocate again.
+        self.ensure_registered()?;
         self.buffer.try_lock().ok()
     }
 }
@@ -299,7 +295,7 @@ impl Drop for RegisteredTlsSampleBuffer {
         with_profiler_suppressed(|| {
             if RECORDER_ACTIVE.load(Ordering::Acquire)
                 && let Ok(mut buffer) = self.buffer.lock()
-                && !flush_tls_samples_for_report(&mut buffer)
+                && !flush_tls_samples_on_exit(&mut buffer)
             {
                 drop_tls_samples(&mut buffer);
             }
@@ -410,7 +406,8 @@ pub struct MimallocStats {
     pub flushes: u64,
     /// Number of samples moved from TLS rings into global buffers or reports.
     pub flushed_samples: u64,
-    /// Number of sample records dropped because the recorder was full or locked.
+    /// Sample records rejected by queue pressure, registration contention,
+    /// or unavailable TLS during thread teardown.
     pub dropped_samples: u64,
     /// Number of samples currently buffered for the next report, if the buffer lock is available.
     pub buffered_samples: Option<usize>,
@@ -698,7 +695,6 @@ impl Profiler {
             // their TLS rings alive. Clear registered rings at the session boundary
             // so old samples cannot be flushed into the next profile interval.
             clear_registered_tls_samples();
-            reset_current_thread_sample_buffer();
             warm_backtrace();
             live::prepare(self.config.live_heap_tracking, self.config.max_live_samples);
             RECORDER_ACTIVE.store(true, Ordering::Release);
@@ -732,7 +728,6 @@ impl Profiler {
                 .map(|last_report| duration_to_i64_nanos(now.duration_since(last_report)))
                 .unwrap_or_default();
 
-            request_tls_sample_flush();
             let recorded = drain_samples_for_report(self.config.report_drain_limit);
             let recorded_count = recorded.len();
             let dropped_count = DROPPED_SAMPLES.load(Ordering::Relaxed);
@@ -863,12 +858,9 @@ fn record_allocation(ptr: *mut u8, size: u64) {
         }
 
         // The common unsampled allocation touches only its byte countdown.
-        // Enter recursion suppression only when resetting, handing off, or
+        // Enter recursion suppression only when resetting or
         // capturing a sample: those operations can allocate or call the unwinder.
-        if size < state.remaining_bytes
-            && state.remaining_config_generation == generation
-            && state.flush_generation == FLUSH_REQUEST_GENERATION.load(Ordering::Relaxed)
-        {
+        if size < state.remaining_bytes && state.remaining_config_generation == generation {
             state.remaining_bytes -= size;
             sampler.set(state);
             return;
@@ -880,14 +872,10 @@ fn record_allocation(ptr: *mut u8, size: u64) {
         let interval = SAMPLE_INTERVAL_BYTES.load(Ordering::Relaxed).max(1);
         let mut current = state.remaining_bytes;
         if state.remaining_config_generation != generation || current == 0 {
-            if state.has_buffer {
-                clear_current_thread_samples();
-            }
             state.rng_state = next_thread_rng_seed();
             current = next_poisson_interval(interval, &mut state.rng_state);
             state.remaining_config_generation = generation;
         }
-        flush_requested_tls_samples_with_state(&mut state);
 
         if size < current {
             state.remaining_bytes = current - size;
@@ -961,43 +949,49 @@ fn record_live_reallocation(
 fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
     let tracking_live = live::enabled() && !ptr.is_null();
     let mut stack = None;
-    let _ = TLS_SAMPLE_BUFFER.try_with(|buffer| {
-        let Some(mut buffer) = buffer.try_lock() else {
-            DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
-            return;
-        };
-        // Check while holding the ring lock so shutdown/restart cannot admit
-        // a stack captured for the previous profiling session.
-        if !session_is_current(generation) {
-            return;
-        }
-        if buffer.generation != generation {
-            buffer.clear();
-            buffer.generation = generation;
-        }
+    let dropped = TLS_SAMPLE_BUFFER
+        .try_with(|buffer| {
+            let Some(mut buffer) = buffer.try_lock() else {
+                return true;
+            };
+            // Check while holding the ring lock so shutdown/restart cannot admit
+            // a stack captured for the previous profiling session.
+            if !session_is_current(generation) {
+                return false;
+            }
+            if buffer.generation != generation {
+                buffer.clear();
+                buffer.generation = generation;
+            }
 
-        if buffer.is_full() {
-            flush_tls_samples(&mut buffer);
-        }
-        if buffer.is_full() && !tracking_live {
-            DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
+            if buffer.is_full() {
+                flush_tls_samples(&mut buffer);
+            }
+            if buffer.is_full() && !tracking_live {
+                return true;
+            }
 
-        let captured = StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed));
-        stack = Some(captured);
-        let sample = RecordedAllocationSample {
-            stack: captured,
-            weighted_objects: weight.weighted_objects,
-            weighted_bytes: weight.weighted_bytes,
-        };
+            let captured = StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed));
+            stack = Some(captured);
+            let sample = RecordedAllocationSample {
+                stack: captured,
+                weighted_objects: weight.weighted_objects,
+                weighted_bytes: weight.weighted_bytes,
+            };
 
-        if buffer.push(sample) {
-            RECORDED_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
-        } else {
-            DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
-        }
-    });
+            if buffer.push(sample) {
+                RECORDED_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
+                false
+            } else {
+                true
+            }
+        })
+        .unwrap_or(true);
+    // Registry contention, queue pressure, and unavailable TLS all reject
+    // the event explicitly. Drops from an already-stale session are ignored.
+    if dropped && session_is_current(generation) {
+        DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
+    }
     // The allocation event queue and live table have independent budgets.
     // Dropping an interval event must not suppress an otherwise valid live hit.
     if tracking_live && session_is_current(generation) {
@@ -1005,65 +999,6 @@ fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
             stack.unwrap_or_else(|| StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed)));
         live::record(ptr as usize, stack, weight, generation);
     }
-}
-
-fn flush_current_thread_samples() -> bool {
-    TLS_SAMPLE_BUFFER
-        .try_with(|buffer| {
-            let Some(mut buffer) = buffer.try_lock() else {
-                return false;
-            };
-            flush_tls_samples(&mut buffer)
-        })
-        .unwrap_or(false)
-}
-
-fn request_tls_sample_flush() {
-    FLUSH_REQUEST_GENERATION.fetch_add(1, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-fn flush_requested_tls_samples() {
-    SAMPLER_STATE.with(|sampler| {
-        let mut state = sampler.get();
-        flush_requested_tls_samples_with_state(&mut state);
-        sampler.set(state);
-    });
-}
-
-fn flush_requested_tls_samples_with_state(state: &mut SamplerState) {
-    let requested_generation = FLUSH_REQUEST_GENERATION.load(Ordering::Relaxed);
-    if state.flush_generation == requested_generation {
-        return;
-    }
-    // Threads without a sampling hit need no ring allocation or registry entry.
-    if !state.has_buffer {
-        state.flush_generation = requested_generation;
-        return;
-    }
-
-    if flush_current_thread_samples() {
-        state.flush_generation = requested_generation;
-    }
-}
-
-fn reset_current_thread_sample_buffer() {
-    let generation = FLUSH_REQUEST_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
-    SAMPLER_STATE.with(|sampler| {
-        let mut state = sampler.get();
-        state.flush_generation = generation;
-        sampler.set(state);
-    });
-    clear_current_thread_samples();
-}
-
-fn clear_current_thread_samples() {
-    let _ = TLS_SAMPLE_BUFFER.try_with(|buffer| {
-        if let Some(mut buffer) = buffer.try_lock() {
-            buffer.clear();
-            buffer.generation = SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire);
-        }
-    });
 }
 
 #[derive(Debug)]
@@ -1104,8 +1039,8 @@ impl TlsSampleBufferRegistry {
 
 fn register_tls_sample_buffer(buffer: Arc<Mutex<TlsSampleBuffer>>) -> Option<usize> {
     // TLS registration can happen from the allocator hook on first use. Do not
-    // wait for the global registry lock there; unregistered threads still keep
-    // local TLS buffering and can flush on ring pressure or thread exit.
+    // wait for the global registry lock there. Admission requires registration;
+    // a later sampling hit retries after an explicitly counted contention drop.
     let Ok(mut registry) = TLS_SAMPLE_BUFFER_REGISTRY.try_lock() else {
         return None;
     };
@@ -1153,17 +1088,6 @@ fn count_recorded_samples() -> usize {
             }
         })
         .sum()
-}
-
-#[cfg(test)]
-fn flush_registered_tls_samples() {
-    // `report()` is outside the allocation hot path, so it can block briefly to
-    // make the profile interval deterministic instead of best-effort.
-    for buffer in registered_tls_sample_buffers() {
-        if let Ok(mut buffer) = buffer.lock() {
-            flush_tls_samples_for_report(&mut buffer);
-        }
-    }
 }
 
 fn drain_registered_tls_samples_for_report(
@@ -1216,7 +1140,7 @@ fn flush_tls_samples(buffer: &mut TlsSampleBuffer) -> bool {
     flush_tls_samples_to_global(buffer, GlobalSampleShardLock::Try)
 }
 
-fn flush_tls_samples_for_report(buffer: &mut TlsSampleBuffer) -> bool {
+fn flush_tls_samples_on_exit(buffer: &mut TlsSampleBuffer) -> bool {
     flush_tls_samples_to_global(buffer, GlobalSampleShardLock::Blocking)
 }
 
@@ -1750,7 +1674,6 @@ mod tests {
         let before = registered_tls_sample_buffers().len();
         std::thread::spawn(|| {
             record_allocation(std::ptr::null_mut(), 1);
-            SAMPLER_STATE.with(|sampler| assert!(!sampler.get().has_buffer));
         })
         .join()
         .expect("join unsampled thread");
@@ -2103,7 +2026,7 @@ mod tests {
         let mut buffer = TlsSampleBuffer::new();
         buffer.push(test_sample(stack));
         SAMPLING_CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
-        assert!(flush_tls_samples_for_report(&mut buffer));
+        assert!(flush_tls_samples_on_exit(&mut buffer));
         assert!(buffer.is_empty());
         assert_eq!(count_recorded_samples(), 0);
         assert_eq!(GLOBAL_BUFFERED_SAMPLE_COUNT.load(Ordering::Relaxed), 0);
@@ -2204,7 +2127,6 @@ mod tests {
                 let mut state = sampler.get();
                 state.remaining_bytes = 1024 * 1024;
                 state.remaining_config_generation = generation;
-                state.flush_generation = FLUSH_REQUEST_GENERATION.load(Ordering::Relaxed);
                 sampler.set(state);
             });
             RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
@@ -2487,13 +2409,91 @@ mod tests {
     }
 
     #[test]
+    fn allocation_after_tls_ring_teardown_is_counted_as_dropped() {
+        struct LateAllocation;
+        impl Drop for LateAllocation {
+            fn drop(&mut self) {
+                record_allocation(std::ptr::null_mut(), 4096);
+            }
+        }
+        thread_local! {
+            static LATE_ALLOCATION: LateAllocation = const { LateAllocation };
+        }
+        let _guard = TEST_LOCK.lock().unwrap();
+        clear_test_buffers();
+        let previous_interval = SAMPLE_INTERVAL_BYTES.swap(1, Ordering::Relaxed);
+        SAMPLING_CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
+        RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
+        DROPPED_SAMPLES.store(0, Ordering::Relaxed);
+        RECORDER_ACTIVE.store(true, Ordering::Release);
+        let _active = RecorderActiveGuard;
+        std::thread::spawn(|| {
+            // Reverse destruction order closes the recorder before this last
+            // allocation, as can happen in an application's other TLS values.
+            LATE_ALLOCATION.with(|_| {});
+            TLS_SAMPLE_BUFFER.with(|_| {});
+        })
+        .join()
+        .unwrap();
+        SAMPLE_INTERVAL_BYTES.store(previous_interval, Ordering::Relaxed);
+        assert_eq!(RECORDED_SAMPLE_COUNT.load(Ordering::Relaxed), 0);
+        assert_eq!(DROPPED_SAMPLES.load(Ordering::Relaxed), 1);
+        clear_test_buffers();
+    }
+
+    #[test]
+    fn registry_contention_never_accepts_samples_hidden_from_the_reporter() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        clear_test_buffers();
+        live::prepare(false, 0);
+        let previous_interval = SAMPLE_INTERVAL_BYTES.swap(1, Ordering::Relaxed);
+        SAMPLING_CONFIG_GENERATION.fetch_add(1, Ordering::AcqRel);
+        RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
+        DROPPED_SAMPLES.store(0, Ordering::Relaxed);
+        RECORDER_ACTIVE.store(true, Ordering::Release);
+        let _active = RecorderActiveGuard;
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (continue_tx, continue_rx) = std::sync::mpsc::channel();
+        let registry = TLS_SAMPLE_BUFFER_REGISTRY.lock().unwrap();
+        let worker = std::thread::spawn(move || {
+            record_allocation(std::ptr::null_mut(), 4096);
+            ready_tx.send(()).unwrap();
+            continue_rx.recv().unwrap();
+            record_allocation(std::ptr::null_mut(), 4096);
+            ready_tx.send(()).unwrap();
+            continue_rx.recv().unwrap();
+        });
+        ready_rx.recv().unwrap();
+        drop(registry);
+        let accepted_while_contended = RECORDED_SAMPLE_COUNT.load(Ordering::Relaxed);
+        let first = drain_samples_for_report(10);
+        let dropped_while_contended = DROPPED_SAMPLES.load(Ordering::Relaxed);
+        continue_tx.send(()).unwrap();
+        ready_rx.recv().unwrap();
+        // The worker is idle: reporting must not require another allocation.
+        let retried = drain_samples_for_report(10);
+        continue_tx.send(()).unwrap();
+        worker.join().unwrap();
+        SAMPLE_INTERVAL_BYTES.store(previous_interval, Ordering::Relaxed);
+        clear_test_buffers();
+        assert_eq!(
+            accepted_while_contended,
+            first.len() as u64,
+            "accepted samples were invisible while their thread was idle"
+        );
+        assert_eq!(accepted_while_contended, 0);
+        assert_eq!(dropped_while_contended, 1);
+        assert_eq!(retried.len(), 1);
+    }
+
+    #[test]
     fn tls_sample_buffer_retries_registration_after_initial_contention() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         let registry_guard = TLS_SAMPLE_BUFFER_REGISTRY.lock().expect("lock registry");
 
         let buffer = RegisteredTlsSampleBuffer::new();
         assert_eq!(buffer.id.get(), None);
-        drop(buffer.try_lock().expect("lock local buffer"));
+        assert!(buffer.try_lock().is_none());
         assert_eq!(buffer.id.get(), None);
 
         drop(registry_guard);
@@ -2579,116 +2579,6 @@ mod tests {
         FLUSH_COUNT.store(0, Ordering::Relaxed);
         FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         clear_test_buffers();
-    }
-
-    #[test]
-    fn flush_requested_tls_samples_flushes_current_thread_buffer_once() {
-        let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        clear_test_buffers();
-        MAX_RECORDED_SAMPLES.store(10, Ordering::Relaxed);
-        FLUSH_COUNT.store(0, Ordering::Relaxed);
-        FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
-        TLS_SAMPLE_BUFFER.with(|buffer| {
-            let mut buffer = buffer.try_lock().expect("lock current thread buffer");
-            assert!(buffer.push(test_sample(stack)));
-            assert!(buffer.push(test_sample(stack)));
-        });
-
-        request_tls_sample_flush();
-        flush_requested_tls_samples();
-
-        assert_eq!(mimalloc_stats().buffered_samples, Some(2));
-        assert_eq!(mimalloc_stats().flushes, 1);
-        assert_eq!(mimalloc_stats().flushed_samples, 2);
-
-        flush_requested_tls_samples();
-        assert_eq!(mimalloc_stats().buffered_samples, Some(2));
-        assert_eq!(mimalloc_stats().flushes, 1);
-        assert_eq!(mimalloc_stats().flushed_samples, 2);
-
-        clear_test_buffers();
-        FLUSH_COUNT.store(0, Ordering::Relaxed);
-        FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
-        MAX_RECORDED_SAMPLES.store(DEFAULT_RING_CAPACITY, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn flush_requested_tls_samples_retries_after_lock_failure() {
-        let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        clear_test_buffers();
-        MAX_RECORDED_SAMPLES.store(10, Ordering::Relaxed);
-        FLUSH_COUNT.store(0, Ordering::Relaxed);
-        FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
-
-        TLS_SAMPLE_BUFFER.with(|buffer| {
-            let mut locked_buffer = buffer.try_lock().expect("lock current thread buffer");
-            assert!(locked_buffer.push(test_sample(stack)));
-
-            request_tls_sample_flush();
-            flush_requested_tls_samples();
-            assert_eq!(mimalloc_stats().flushes, 0);
-            assert_eq!(locked_buffer.len(), 1);
-        });
-
-        flush_requested_tls_samples();
-
-        assert_eq!(mimalloc_stats().flushes, 1);
-        assert_eq!(mimalloc_stats().flushed_samples, 1);
-
-        clear_test_buffers();
-        FLUSH_COUNT.store(0, Ordering::Relaxed);
-        FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
-        MAX_RECORDED_SAMPLES.store(DEFAULT_RING_CAPACITY, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn flush_registered_tls_samples_drains_live_worker_thread_buffer() {
-        let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        clear_test_buffers();
-        MAX_RECORDED_SAMPLES.store(10, Ordering::Relaxed);
-        FLUSH_COUNT.store(0, Ordering::Relaxed);
-        FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-
-        let worker = std::thread::spawn(move || {
-            TLS_SAMPLE_BUFFER.with(|buffer| {
-                let mut buffer = buffer.try_lock().expect("lock worker buffer");
-                assert!(buffer.push(test_sample(stack)));
-                assert!(buffer.push(test_sample(stack)));
-            });
-            ready_tx.send(()).expect("send ready");
-            release_rx.recv().expect("wait for release");
-        });
-
-        ready_rx.recv().expect("wait for worker buffer");
-        assert_eq!(registered_tls_buffered_samples(), Some(2));
-
-        flush_registered_tls_samples();
-
-        let stats = mimalloc_stats();
-        assert_eq!(stats.flushes, 1);
-        assert_eq!(stats.flushed_samples, 2);
-        assert_eq!(stats.buffered_samples, Some(2));
-
-        release_tx.send(()).expect("release worker");
-        worker.join().expect("join worker");
-        clear_test_buffers();
-        FLUSH_COUNT.store(0, Ordering::Relaxed);
-        FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
-        MAX_RECORDED_SAMPLES.store(DEFAULT_RING_CAPACITY, Ordering::Relaxed);
     }
 
     #[test]
