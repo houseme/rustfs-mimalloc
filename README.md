@@ -40,6 +40,15 @@ fn main() {
 }
 ```
 
+## Sampled Rust heap profiling
+
+The optional companion [rustfs-mimalloc-profiling](rustfs-mimalloc-profiling)
+crate provides a sampling allocator, interval allocation reports, opt-in live
+heap tracking, and standard pprof output. It has no Pyroscope or network
+dependency. The base allocator does not depend on the profiling crate.
+This Rust wrapper is separate from the experimental native profiling APIs
+described below; `no_profile` disables native sampling only.
+
 ## Features
 
 | Feature | Default | Description |

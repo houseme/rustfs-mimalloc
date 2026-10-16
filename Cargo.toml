@@ -1,5 +1,5 @@
 [workspace]
-members = ["rustfs-mimalloc-sys", "rustfs-mimalloc"]
+members = ["rustfs-mimalloc-sys", "rustfs-mimalloc", "rustfs-mimalloc-profiling"]
 resolver = "3"
 
 [workspace.package]

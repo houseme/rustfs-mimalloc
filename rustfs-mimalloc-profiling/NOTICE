@@ -1,0 +1,4 @@
+The sampling profiler and pprof encoder originated in grafana/pyroscope-rs,
+pull request #572, commit 344090cd100229f50e689736552a08c532929f62.
+https://github.com/grafana/pyroscope-rs/pull/572
+The original code is distributed under the Apache License, Version 2.0.

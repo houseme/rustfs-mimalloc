@@ -75,6 +75,49 @@ jobs:
       - name: Test doc-tests
         run: cargo test --doc --features "${{ matrix.features }}"
 
+  profiling-release:
+    name: Profiling release (${{ matrix.os }}, ${{ matrix.profile.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        profile:
+          - { name: stripped, debug: "0", strip: symbols, source: "0" }
+          - { name: source, debug: "1", strip: none, source: "1" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate optimized profile quality and lifecycle
+        env:
+          CARGO_PROFILE_RELEASE_DEBUG: ${{ matrix.profile.debug }}
+          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.profile.strip }}
+          MIMALLOC_TEST_EXPECT_SOURCE: ${{ matrix.profile.source }}
+        run: cargo test --locked --release -p rustfs-mimalloc-profiling --test mimalloc_release
+
+  profiling-benchmark:
+    name: Profiling quality diagnostics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bash scripts/test_mimalloc_benchmark_report.sh
+      - name: Validate sampling quality with periodic reports
+        env:
+          MIMALLOC_BENCH_DURATION_MS: "1000"
+          MIMALLOC_BENCH_ENFORCE_QUALITY: "1"
+        run: bash scripts/mimalloc_benchmark_report.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: profiling-benchmark
+          path: target/mimalloc-benchmark
+          retention-days: 14
+
   custom-tracking:
     name: Custom tracking (${{ matrix.os }})
     strategy:
@@ -307,6 +350,9 @@ jobs:
 
       - name: Check doc links (rustfs-mimalloc)
         run: cargo rustdoc -p rustfs-mimalloc -- -D warnings
+
+      - name: Check doc links (rustfs-mimalloc-profiling)
+        run: cargo rustdoc -p rustfs-mimalloc-profiling -- -D warnings
 
       - name: Check doc links (rustfs-mimalloc-sys)
         run: cargo rustdoc -p rustfs-mimalloc-sys -- -D warnings
