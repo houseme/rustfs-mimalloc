@@ -118,7 +118,7 @@ jobs:
         toolchain: [stable]
         include:
           - os: ubuntu-latest
-            toolchain: 1.96.0
+            toolchain: 1.95.0
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:

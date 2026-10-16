@@ -302,7 +302,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 | Options API | Full get/set/enable/disable | Partial |
 | Heap API | Full (create/delete/destroy/alloc) | Basic |
 | Arena API | Full (reserve/manage) | Basic |
-| Cargo MSRV declaration | None; stable and 1.96.0 checked in CI | 1.46.0 |
+| Cargo MSRV declaration | None; stable and 1.95.0 checked in CI | 1.46.0 |
 
 ## Design Decisions
 
@@ -421,7 +421,7 @@ not a guarantee of production throughput.
 ## Rust Toolchain Compatibility
 
 The workspace and member manifests intentionally omit `rust-version`. CI
-checks the stable toolchain and compatibility with Rust 1.96.0. A passing
+checks the stable toolchain and compatibility with Rust 1.95.0. A passing
 compatibility job does not establish the lowest supported Rust version;
 dependencies may have their own requirements.
 

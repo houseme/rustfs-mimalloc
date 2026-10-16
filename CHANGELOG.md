@@ -26,8 +26,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 ### Fixed
 
 - Validate release metadata and changelog on stable, pin every release job to
-  the same source commit, and require locked dependencies. Keep the Rust 1.96.0
-  consumer compatibility check; run documentation and strict lint on stable.
+  the same source commit, and require locked dependencies. Validate the upstream
+  Pyroscope CI baseline on Rust 1.95.0; run documentation and strict lint on stable.
 - Preserve package archives before Cargo publication and verify official
   checksums when resuming an already uploaded version. Manual publication
   checks out the existing release tag for every validation and upload step.

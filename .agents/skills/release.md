@@ -65,9 +65,9 @@ version = "<VERSION>"
 ```
 
 The workspace and member manifests intentionally omit `rust-version`. Do not
-reintroduce it during a release. CI keeps a Rust 1.96.0 compatibility job; this
+reintroduce it during a release. CI keeps a Rust 1.95.0 compatibility job; this
 is not a declared Cargo MSRV. Edition 2024's Rust 1.85 language floor does not
-prove compatibility of the code and dependencies. Keep the 1.96.0 check for
+prove compatibility of the code and dependencies. Keep the 1.95.0 check for
 Pyroscope consumers while using current stable for lint and documentation.
 
 The wrapper's registry dependency requirement for the sys crate is also in the workspace root:
@@ -281,4 +281,4 @@ require the exact registry versions, with no path or Git override. Both modes
 run behavior and optimized profile tests from the extracted archive.
 
 The workflow dry run exercises package verification on Linux, macOS and Windows
-plus the Rust 1.96.0 compatibility job. It skips all uploads and release creation.
+plus the Rust 1.95.0 compatibility job. It skips all uploads and release creation.
