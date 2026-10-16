@@ -73,17 +73,16 @@ frame filtering preserves application functions that use profiler types.
 
 ## Release and allocator compatibility
 
-The profiling crate is versioned independently and first releases as 0.5.6.
-Its allocator requirement is `>=0.5.6, <0.7` with a workspace path for local
-development. It uses only the allocator's unchanged `GlobalAlloc` methods.
-Workspace tests exercise allocator 0.6; archive tests exercise the published
-0.5.6 allocator without path or Git overrides. Native profiling APIs are not
-registered or used by this wrapper.
+All three crates inherit the workspace version and release together as 0.6.0.
+The profiling crate uses the allocator's `GlobalAlloc` methods; native
+profiling APIs are not registered or used by this wrapper.
 
-The profiling release uses `profiling-v<VERSION>` tags and the dedicated
-`release-profiling.yml` workflow. The existing `v<VERSION>` workflow releases
-only the allocator/sys pair. The profiling package and checksum must be
-visible in the official registry before consumers switch from Git to crates.io.
+The `v<VERSION>` tag triggers `release.yml`. Pre-publication archive tests use
+local patches for the not-yet-published dependencies. Publication follows sys,
+allocator, then profiling, verifying each official index entry and uploaded
+archive checksum before continuing. The normalized profiling archive is then
+tested against the exact registry allocator/sys versions without local patches.
+Consumers switch from Git only after all three packages are visible.
 
 ## Validation
 
@@ -106,8 +105,8 @@ allocator-to-pprof population reconstruction, and FIFO wraparound.
 
 A same-binary control followed by frozen-binary A/B/B/A comparisons ran on two
 fixed Linux VM CPUs with the same compiler/build configuration and workspace
-allocator 0.6. These historical measurements do not establish the published
-allocator 0.5.6's overhead. The accepted
+allocator 0.6. These historical measurements are specific to that workload
+and build configuration. The accepted
 per-workload comparisons passed 5% drift and 1% record-drop gates:
 
 | Workload | Window | Throughput change |

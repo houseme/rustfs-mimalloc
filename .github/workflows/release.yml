@@ -16,7 +16,14 @@ on:
         description: "Dry run — skip crates.io publish and GitHub release"
         required: false
         type: boolean
-        default: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workspace-release
+  cancel-in-progress: false
 
 env:
   CARGO_INCREMENTAL: 0
@@ -38,23 +45,27 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-            TAG="v${VERSION}"
-          elif [ -n "${GITHUB_REF_NAME}" ] && [[ "${GITHUB_REF_NAME}" == v* ]]; then
-            TAG="${GITHUB_REF_NAME}"
-            VERSION="${TAG#v}"
-          else
-            echo "::error::No version provided. Use workflow_dispatch input or push a v* tag."
-            exit 1
-          fi
-          {
-            echo "version=${VERSION}"
-            echo "tag=${TAG}"
-            echo "is_dry_run=${{ inputs.dry_run || false }}"
-          } >> "$GITHUB_OUTPUT"
-          echo "Releasing version: ${VERSION} (tag: ${TAG})"
+          python3 <<'PYTHON'
+          import os
+          import re
+          version = os.environ["REQUESTED_VERSION"]
+          if os.environ["RELEASE_EVENT"] == "push":
+              ref = os.environ["RELEASE_REF"]
+              if not ref.startswith("v"):
+                  raise SystemExit("expected a v<VERSION> tag")
+              version = ref[1:]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+              raise SystemExit("expected a semantic version")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={version}\ntag=v{version}\nis_dry_run={os.environ['RELEASE_DRY_RUN']}\n")
+          print(f"Validated release version: {version}")
+          PYTHON
 
       - name: Verify version consistency
         run: |
@@ -71,11 +82,11 @@ jobs:
           versions = {
               package["name"]: package["version"]
               for package in metadata["packages"]
-              if package["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys"}
+              if package["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}
           }
 
-          if set(versions) != {"rustfs-mimalloc", "rustfs-mimalloc-sys"}:
-              missing = {"rustfs-mimalloc", "rustfs-mimalloc-sys"} - set(versions)
+          if set(versions) != {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}:
+              missing = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"} - set(versions)
               raise SystemExit(f"missing package metadata for: {', '.join(sorted(missing))}")
 
           mismatched = {name: version for name, version in versions.items() if version != expected}
@@ -89,18 +100,24 @@ jobs:
   # ── Full test gate ─────────────────────────────────────────────────────────
 
   test:
-    name: Test (${{ matrix.os }})
+    name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
     needs: prepare
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
+        toolchain: [stable]
+        include:
+          - os: ubuntu-latest
+            toolchain: 1.96.0
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - name: Build (default)
         run: cargo build
@@ -126,6 +143,13 @@ jobs:
       - name: Test (secure debug without allocation profiling)
         run: cargo test --workspace --features secure,debug,no_profile
 
+      - name: Verify sys archive
+        run: cargo package --locked -p rustfs-mimalloc-sys
+      - name: Verify allocator archive before sys publication
+        run: cargo package --locked -p rustfs-mimalloc --config 'patch.crates-io.rustfs-mimalloc-sys.path="rustfs-mimalloc-sys"'
+      - name: Test normalized profiling archive before dependency publication
+        run: python3 scripts/verify_profiling_package.py --local-dependencies
+
   # ── Lint gate ──────────────────────────────────────────────────────────────
 
   lint:
@@ -145,6 +169,10 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Documentation
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   # ── Publish to crates.io ──────────────────────────────────────────────────
 
@@ -159,21 +187,19 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish rustfs-mimalloc-sys
+      - name: Publish and verify all three crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          cd rustfs-mimalloc-sys
-          cargo publish --registry crates-io --package rustfs-mimalloc-sys --allow-dirty
-          echo "Waiting for crates.io index..."
-          sleep 30
-
-      - name: Publish rustfs-mimalloc
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd rustfs-mimalloc
-          cargo publish --registry crates-io --package rustfs-mimalloc --allow-dirty
+          set -euo pipefail
+          for package in rustfs-mimalloc-sys rustfs-mimalloc rustfs-mimalloc-profiling; do
+            cargo publish --registry crates-io --package "$package" --allow-dirty
+            python3 scripts/verify_registry.py "$package" "$RELEASE_VERSION" \
+              --archive "target/package/$package-$RELEASE_VERSION.crate"
+          done
+      - name: Test normalized profiling archive with published dependencies
+        run: python3 scripts/verify_profiling_package.py --allow-dirty
 
   # ── GitHub Release ─────────────────────────────────────────────────────────
 
@@ -221,10 +247,10 @@ jobs:
 
           def previous_tag() -> str:
               tag_parent = f"{release_tag}^"
-              tag_previous = git_output("describe", "--tags", "--abbrev=0", tag_parent)
+              tag_previous = git_output("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", tag_parent)
               if tag_previous:
                   return tag_previous
-              return git_output("describe", "--tags", "--abbrev=0", "HEAD^")
+              return git_output("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD^")
 
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
           section_pattern = re.compile(
@@ -274,6 +300,7 @@ jobs:
               "```toml",
               "[dependencies]",
               f'rustfs-mimalloc = "{release_version}"',
+              f'rustfs-mimalloc-profiling = "{release_version}"',
               "```",
           ]
 

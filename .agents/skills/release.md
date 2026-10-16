@@ -1,6 +1,6 @@
 # Release Skill
 
-Publish the allocator/sys pair or the independently versioned profiling crate to crates.io, then create its GitHub Release.
+Publish the synchronized sys, allocator and profiling crates to crates.io, then create their GitHub Release.
 
 ## Trigger
 
@@ -14,6 +14,7 @@ When release behavior, supported Rust versions, feature flags, or publish steps 
 |------|-------------|
 | `Cargo.toml` | Release version changes, MSRV changes, or workspace dependency versions change |
 | `rustfs-mimalloc/Cargo.toml` | Package metadata, inherited fields, features, or dev-dependencies change |
+| `rustfs-mimalloc-profiling/Cargo.toml` | Inherited package version or allocator dependency changes |
 | `rustfs-mimalloc-sys/Cargo.toml` | Package metadata, inherited fields, build features, or build dependencies change |
 | `Cargo.lock` | Cargo updates package versions or dependency resolution |
 | `.gitmodules` | mimalloc submodule URL or path changes |
@@ -44,9 +45,9 @@ git tag --sort=-v:refname | head -8
 
 If the worktree is dirty, inspect the diff and separate unrelated changes before continuing.
 
-## Allocator Version Model
+## Workspace Version Model
 
-The two crates inherit their package version from the workspace:
+All three crates inherit their package version from the workspace:
 
 ```toml
 # Cargo.toml
@@ -96,10 +97,10 @@ with open(metadata_path, encoding="utf-8") as f:
 versions = {
     package["name"]: package["version"]
     for package in metadata["packages"]
-    if package["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys"}
+    if package["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}
 }
 
-missing = {"rustfs-mimalloc", "rustfs-mimalloc-sys"} - set(versions)
+missing = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"} - set(versions)
 if missing:
     raise SystemExit(f"missing package metadata for: {', '.join(sorted(missing))}")
 
@@ -125,6 +126,7 @@ cargo test --workspace --features no_profile
 cargo test --workspace --features secure,debug,no_profile
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
+python3 scripts/verify_profiling_package.py --local-dependencies --allow-dirty
 cargo package -p rustfs-mimalloc-sys --allow-dirty
 cargo package -p rustfs-mimalloc --allow-dirty --config 'patch.crates-io.rustfs-mimalloc-sys.path="rustfs-mimalloc-sys"'
 ```
@@ -182,8 +184,10 @@ The release workflow publishes in this order:
 
 1. `rustfs-mimalloc-sys`
 2. wait for crates.io index propagation
-3. `rustfs-mimalloc`
-4. GitHub Release
+3. `rustfs-mimalloc` and verify its official index/archive
+4. `rustfs-mimalloc-profiling` and verify its official index/archive
+5. Test the normalized profiling archive against the published allocator/sys
+6. GitHub Release
 
 ## Dry Run
 
@@ -207,6 +211,7 @@ After pushing a real release, report:
 - tag: `v<VERSION>`
 - release workflow run URL
 - crates.io sys crate URL: `https://crates.io/crates/rustfs-mimalloc-sys/<VERSION>`
+- crates.io profiling URL: `https://crates.io/crates/rustfs-mimalloc-profiling/<VERSION>`
 - crates.io wrapper crate URL: `https://crates.io/crates/rustfs-mimalloc/<VERSION>`
 - GitHub Release URL: `https://github.com/houseme/rustfs-mimalloc/releases/tag/v<VERSION>`
 - whether CI was awaited or intentionally not awaited
@@ -232,26 +237,17 @@ Delete or edit the GitHub Release manually if the release notes are wrong. Do no
 - Pre-release versions containing `-` are marked as prereleases on GitHub.
 - This crate is v3-only and performance-first. Do not reintroduce v2 or `nightly_allocator_api` release paths.
 
-## Independent profiling releases
+## Profiling package validation
 
-`rustfs-mimalloc-profiling` has its own package version (first release 0.5.6),
-independent of the allocator/sys workspace version. Keep allocator versions
-unchanged when preparing a profiling-only release. Its path dependency range
-supports the released allocator 0.5.6 and workspace allocator 0.6 through the
-unchanged `GlobalAlloc` surface.
+The profiling crate inherits both `version.workspace = true` and
+`rustfs-mimalloc.workspace = true`. Update its README, CHANGELOG and DESIGN
+when release behavior changes. Do not use component-only release tags.
 
-Run workspace checks and `python3 scripts/verify_profiling_package.py` so the
-normalized archive is also tested against registry dependencies without local
-patches. The profiling release workflow performs this check on Linux, macOS
-and Windows. Run the dry-run workflow after publishing it to main:
+Before publication,
+`python3 scripts/verify_profiling_package.py --local-dependencies` verifies the normalized archive using temporary local
+patches for the matching allocator/sys. After publication, omit that flag to
+require the exact registry versions, with no path or Git override. Both modes
+run behavior and optimized profile tests from the extracted archive.
 
-```bash
-gh workflow run release-profiling.yml -f version=0.5.6 -f dry_run=true
-```
-
-Only after the dry run passes, push `profiling-v0.5.6` to trigger the scoped real publish. This workflow
-publishes only the profiling crate and verifies the official index entry and
-download checksum before creating its namespaced GitHub Release.
-
-The existing `v<VERSION>` release workflow continues to publish only the
-allocator/sys pair. Never reuse its tags for a profiling-only release.
+The workflow dry run exercises package verification on Linux, macOS and Windows
+plus the Rust 1.96.0 compatibility job. It skips all uploads and release creation.

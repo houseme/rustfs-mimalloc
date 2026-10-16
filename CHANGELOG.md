@@ -7,32 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-## [rustfs-mimalloc-profiling 0.5.6] - 2026-10-16
-
-### Fixed
-
-- Require reporter-visible TLS registration before accepting allocation events;
-  count registration contention and unavailable TLS as drops. Remove the
-  allocation-side flush notification protocol and its hidden pending buffers.
-- Correct allocation object counts by sharing the inclusion-probability weights
-  with live heap tracking and rounding after stack aggregation. The former
-  per-event integer division underestimated object counts for allocation sizes
-  near the sampling interval.
-- Replace interval-crossing loops and their deterministic fallback with one
-  memoryless sampling step. Keep the unsampled path to a TLS countdown and
-  use a FIFO TLS ring so partial drains do not move retained stacks.
-
-### Added
-
-- Add the independent `rustfs-mimalloc-profiling` companion crate, extracted
-  from grafana/pyroscope-rs#572. It owns the sampling allocator, bounded event
-  recorder, opt-in live allocation tracking, symbol/mapping resolution and
-  pprof encoder. `Profiler` controls one recording session and returns owned
-  profile bytes without an uploader or dependency on Pyroscope.
-- Move allocator behavior, optimized profile quality, stress and benchmark
-  validation alongside the profiling implementation. Keep the base allocator
-  dependency graph free of profiling dependencies.
-
 ## [0.6.0] - 2026-10-16
 
 ### Changed
@@ -54,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retain Rust 1.96.0 as an explicit CI compatibility check, not a Cargo MSRV.
 
 ### Added
+
+- Add the independent `rustfs-mimalloc-profiling` companion crate, extracted
+  from grafana/pyroscope-rs#572. It owns the sampling allocator, bounded event
+  recorder, opt-in live allocation tracking, symbol/mapping resolution and
+  pprof encoder. `Profiler` controls one recording session and returns owned
+  profile bytes without an uploader or dependency on Pyroscope.
+- Move allocator behavior, optimized profile quality, stress and benchmark
+  validation alongside the profiling implementation. Keep the base allocator
+  dependency graph free of profiling dependencies.
 
 - Bound all four new upstream public APIs: `mi_thread_id_of`,
   `mi_heap_set_debug_fill_preserve`, `mi_theap_delete`, and
@@ -102,14 +85,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   malloc override and THP defaults; benchmark comparisons against `System` and
   the generic/local small-free paths.
 
-### Known upstream limitation
-
-- V3.5.4 interim copies `profile_disabled=true` into new thread heaps without
-  clearing it. Dedicated-heap and worker-thread profiling can remain inactive.
-  Profiling stays experimental raw FFI; the integration test proves main-heap
-  sampling in an isolated single-threaded process only.
-
 ### Fixed
+
+- Require reporter-visible TLS registration before accepting allocation events;
+  count registration contention and unavailable TLS as drops. Remove the
+  allocation-side flush notification protocol and its hidden pending buffers.
+- Correct allocation object counts by sharing the inclusion-probability weights
+  with live heap tracking and rounding after stack aggregation. The former
+  per-event integer division underestimated object counts for allocation sizes
+  near the sampling interval.
+- Replace interval-crossing loops and their deterministic fallback with one
+  memoryless sampling step. Keep the unsampled path to a TLS countdown and
+  use a FIFO TLS ring so partial drains do not move retained stacks.
 
 - Inherit upstream Windows console detachment, ProcessPrng/legacy RNG loading,
   naturally aligned allocation, direct-OS-page cleanup, and inline-linkage fixes.
@@ -151,6 +138,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correct TLS/security documentation, remove the dead Windows TLS feature hook,
   strengthen small-free and borrowed-heap safety contracts, and reuse the text
   diagnostic buffer instead of copying valid UTF-8 output.
+
+### Known upstream limitation
+
+- V3.5.4 interim copies `profile_disabled=true` into new thread heaps without
+  clearing it. Dedicated-heap and worker-thread profiling can remain inactive.
+  Profiling stays experimental raw FFI; the integration test proves main-heap
+  sampling in an isolated single-threaded process only.
 
 ## [0.5.6] - 2026-09-22
 

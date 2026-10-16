@@ -9,12 +9,12 @@ The base `rustfs-mimalloc` crate does not depend on it.
 
 ```toml
 [dependencies]
-rustfs-mimalloc-profiling = "0.5.6"
+rustfs-mimalloc-profiling = "0.6.0"
 ```
 
-The profiling crate has an independent release version. It supports the
-allocator's unchanged `GlobalAlloc` interface in the 0.5.6 and 0.6 release
-families; registry packages and the workspace allocator are tested separately.
+The profiling crate shares version 0.6.0 with the allocator and sys crates.
+It uses the allocator's `GlobalAlloc` interface and adds no dependencies to
+programs that use only the base allocator.
 
 ```rust
 use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingMiMalloc};

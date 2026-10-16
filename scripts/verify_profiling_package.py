@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test the normalized profiling archive with published allocator dependencies."""
+"""Test the normalized profiling archive with matching allocator dependencies."""
 import argparse
 import json
 import os
@@ -9,12 +9,15 @@ import tarfile
 import tempfile
 
 
+CONFIG = []
+
+
 def cargo(*args, cwd=None):
-    return subprocess.run(["cargo", *args], cwd=cwd, check=True)
+    return subprocess.run(["cargo", *CONFIG, *args], cwd=cwd, check=True)
 
 
 def metadata(manifest=None):
-    command = ["cargo", "metadata", "--format-version", "1"]
+    command = ["cargo", *CONFIG, "metadata", "--format-version", "1"]
     if manifest:
         command += ["--manifest-path", str(manifest)]
     else:
@@ -25,9 +28,14 @@ def metadata(manifest=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--local-dependencies", action="store_true",
+                        help="Use matching workspace dependencies before publication")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     os.chdir(root)
+    if args.local_dependencies:
+        for name in ("rustfs-mimalloc", "rustfs-mimalloc-sys"):
+            CONFIG.extend(["--config", f'patch.crates-io.{name}.path="{(root / name).as_posix()}"'])
     workspace = metadata()
     package = next(p for p in workspace["packages"] if p["name"] == "rustfs-mimalloc-profiling")
     command = ["package", "--locked", "-p", package["name"]]
@@ -48,9 +56,12 @@ def main():
         manifest = extracted / "Cargo.toml"
         resolved = metadata(manifest)
         allocators = [p for p in resolved["packages"] if p["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys"}]
-        if len(allocators) != 2 or any(not (p.get("source") or "").startswith("registry+") for p in allocators):
+        if len(allocators) != 2 or any(p["version"] != package["version"] for p in allocators):
+            raise RuntimeError("package must use matching allocator/sys versions")
+        if not args.local_dependencies and any(not (p.get("source") or "").startswith("registry+") for p in allocators):
             raise RuntimeError("package verification must use registry allocator dependencies")
-        print("Registry allocator versions:", {p["name"]: p["version"] for p in allocators}, flush=True)
+        print("Allocator versions:", {p["name"]: p["version"] for p in allocators},
+              "(local patches)" if args.local_dependencies else "(registry)", flush=True)
         cargo("test", "--locked", "--all-features", "--manifest-path", str(manifest), cwd=extracted)
         cargo("test", "--locked", "--release", "--test", "mimalloc_release", "--manifest-path", str(manifest), cwd=extracted)
 
