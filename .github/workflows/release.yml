@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.1.0). Leave empty to use tag."
-        required: false
+        description: "Workspace version to validate or publish (e.g. 0.6.1)."
+        required: true
         type: string
       dry_run:
         description: "Dry run — skip crates.io publish and GitHub release"
@@ -34,15 +34,22 @@ jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       is_dry_run: ${{ steps.version.outputs.is_dry_run }}
+      revision: ${{ steps.source.outputs.revision }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.sha }}
           submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record release revision
+        id: source
+        run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Resolve version
         id: version
@@ -71,32 +78,33 @@ jobs:
       - name: Verify version consistency
         run: |
           EXPECTED="${{ steps.version.outputs.version }}"
-          cargo metadata --no-deps --format-version 1 > /tmp/metadata.json
-          python3 - "${EXPECTED}" <<'PY'
+          cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
+          python3 - "${EXPECTED}" <<'PYTHON'
           import json
+          from pathlib import Path
+          import re
           import sys
 
           expected = sys.argv[1]
-          with open("/tmp/metadata.json", encoding="utf-8") as f:
-              metadata = json.load(f)
-
-          versions = {
-              package["name"]: package["version"]
-              for package in metadata["packages"]
-              if package["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}
-          }
-
-          if set(versions) != {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}:
-              missing = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"} - set(versions)
-              raise SystemExit(f"missing package metadata for: {', '.join(sorted(missing))}")
-
-          mismatched = {name: version for name, version in versions.items() if version != expected}
-          if mismatched:
-              details = ", ".join(f"{name}={version}" for name, version in sorted(mismatched.items()))
-              raise SystemExit(f"version mismatch; expected {expected}, got {details}")
-
-          print(f"Version OK: {expected}")
-          PY
+          metadata = json.loads(Path("/tmp/metadata.json").read_text())
+          names = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}
+          packages = {p["name"]: p for p in metadata["packages"] if p["name"] in names}
+          if set(packages) != names:
+              raise SystemExit(f"missing packages: {sorted(names - set(packages))}")
+          for name, package in packages.items():
+              if package["version"] != expected or package["edition"] != "2024":
+                  raise SystemExit(f"{name}: expected version {expected} and edition 2024")
+              for dependency in package["dependencies"]:
+                  if dependency["name"] in names and dependency["req"] != f"^{expected}":
+                      raise SystemExit(f"{name}: internal dependency version mismatch: {dependency}")
+          notes = re.search(
+              rf"^## \[{re.escape(expected)}\][^\n]*\n(.*?)(?=^## |\Z)",
+              Path("CHANGELOG.md").read_text(), re.MULTILINE | re.DOTALL,
+          )
+          if not notes or not notes.group(1).strip():
+              raise SystemExit(f"missing changelog entries for {expected}")
+          print(f"Version, edition, dependency requirements and changelog OK: {expected}")
+          PYTHON
 
   # ── Full test gate ─────────────────────────────────────────────────────────
 
@@ -112,38 +120,39 @@ jobs:
           - os: ubuntu-latest
             toolchain: 1.96.0
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          ref: ${{ needs.prepare.outputs.revision }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Build (default)
-        run: cargo build
+        run: cargo build --locked
 
       - name: Test (default)
-        run: cargo test
+        run: cargo test --locked
 
       - name: Build (secure)
-        run: cargo build --features secure
+        run: cargo build --locked --features secure
 
       - name: Test (secure)
-        run: cargo test --features secure
+        run: cargo test --locked --features secure
 
       - name: Build (stable feature set)
-        run: cargo build --features secure,debug
+        run: cargo build --locked --features secure,debug
 
       - name: Test (stable feature set)
-        run: cargo test --features secure,debug
+        run: cargo test --locked --features secure,debug
 
       - name: Test (no allocation profiling)
-        run: cargo test --workspace --features no_profile
+        run: cargo test --locked --workspace --features no_profile
 
       - name: Test (secure debug without allocation profiling)
-        run: cargo test --workspace --features secure,debug,no_profile
+        run: cargo test --locked --workspace --features secure,debug,no_profile
 
       - name: Verify sys archive
         run: cargo package --locked -p rustfs-mimalloc-sys
@@ -158,10 +167,11 @@ jobs:
     name: Lint
     needs: prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          ref: ${{ needs.prepare.outputs.revision }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -171,9 +181,9 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Documentation
-        run: cargo doc --workspace --no-deps
+        run: cargo doc --locked --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -184,10 +194,11 @@ jobs:
     needs: [ prepare, test, lint ]
     if: needs.prepare.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          ref: ${{ needs.prepare.outputs.revision }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
 
@@ -198,10 +209,10 @@ jobs:
         run: |
           set -euo pipefail
           for package in rustfs-mimalloc-sys rustfs-mimalloc rustfs-mimalloc-profiling; do
-            cargo package --registry crates-io --package "$package" --allow-dirty
+            cargo package --locked --registry crates-io --package "$package" --allow-dirty
             archive="$RUNNER_TEMP/$package-$RELEASE_VERSION.crate"
             cp "target/package/$package-$RELEASE_VERSION.crate" "$archive"
-            if ! cargo publish --registry crates-io --package "$package" --allow-dirty; then
+            if ! cargo publish --locked --registry crates-io --package "$package" --allow-dirty; then
               echo "Upload did not complete; checking for an identical published package."
             fi
             python3 scripts/verify_registry.py "$package" "$RELEASE_VERSION" --archive "$archive"
@@ -216,6 +227,7 @@ jobs:
     needs: [ prepare, publish ]
     if: needs.prepare.outputs.is_dry_run != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -223,7 +235,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          ref: ${{ needs.prepare.outputs.revision }}
           submodules: recursive
 
       - name: Generate changelog
@@ -355,6 +367,7 @@ jobs:
     needs: [ prepare, test, lint ]
     if: needs.prepare.outputs.is_dry_run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Summary
         run: |

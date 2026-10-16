@@ -66,7 +66,9 @@ version = "<VERSION>"
 
 The workspace and member manifests intentionally omit `rust-version`. Do not
 reintroduce it during a release. CI keeps a Rust 1.96.0 compatibility job; this
-is not a declared Cargo MSRV.
+is not a declared Cargo MSRV. Edition 2024's Rust 1.85 language floor does not
+prove compatibility of the code and dependencies. Keep the 1.96.0 check for
+Pyroscope consumers while using current stable for lint and documentation.
 
 The wrapper's registry dependency requirement for the sys crate is also in the workspace root:
 
@@ -199,7 +201,9 @@ git push origin main
 git push origin v<VERSION>
 ```
 
-Pushing the tag triggers `.github/workflows/release.yml`.
+Pushing the tag triggers `.github/workflows/release.yml`. Preparation resolves
+one immutable source revision; every following job checks out that commit.
+Use locked dependency resolution and validate the shared changelog in dry runs.
 
 The release workflow publishes in this order:
 

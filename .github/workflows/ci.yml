@@ -8,6 +8,13 @@ on:
   schedule:
     - cron: "17 03 * * *"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
@@ -58,6 +65,7 @@ jobs:
             features: "secure,debug"
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v7
@@ -67,13 +75,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build
-        run: cargo build --features "${{ matrix.features }}"
+        run: cargo build --locked --features "${{ matrix.features }}"
 
       - name: Test
-        run: cargo test --features "${{ matrix.features }}"
-
-      - name: Test doc-tests
-        run: cargo test --doc --features "${{ matrix.features }}"
+        run: cargo test --locked --features "${{ matrix.features }}"
 
   profiling-release:
     name: Profiling release (${{ matrix.os }}, ${{ matrix.profile.name }})
@@ -85,6 +90,7 @@ jobs:
           - { name: stripped, debug: "0", strip: symbols, source: "0" }
           - { name: source, debug: "1", strip: none, source: "1" }
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -100,6 +106,7 @@ jobs:
   profiling-benchmark:
     name: Profiling quality diagnostics
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -125,6 +132,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     env:
       CFLAGS: -DMI_TRACK_CUSTOM
     steps:
@@ -133,9 +141,9 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify application hook metadata (release)
-        run: cargo run --release -p rustfs-mimalloc --example custom_tracking --locked
+        run: cargo run --locked --release -p rustfs-mimalloc --example custom_tracking
       - name: Verify hooks with secure debug and no profiling
-        run: cargo run -p rustfs-mimalloc --example custom_tracking --features secure,debug,no_profile --locked
+        run: cargo run --locked -p rustfs-mimalloc --example custom_tracking --features secure,debug,no_profile
 
   upstream-native:
     name: Upstream C regressions (${{ matrix.os }})
@@ -144,6 +152,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest ]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -160,6 +169,7 @@ jobs:
   cross-musl:
     name: Cross (x86_64-unknown-linux-musl)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -173,10 +183,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build (musl, static)
-        run: cargo build --target x86_64-unknown-linux-musl --features secure
+        run: cargo build --locked --target x86_64-unknown-linux-musl --features secure
 
       - name: Build (musl, static, no profiling)
-        run: cargo build --target x86_64-unknown-linux-musl --features secure,no_profile
+        run: cargo build --locked --target x86_64-unknown-linux-musl --features secure,no_profile
 
   # ── Windows static CRT ────────────────────────────────────────────────────
 
@@ -187,6 +197,7 @@ jobs:
       matrix:
         features: ["", "secure", "secure,debug", "secure,debug,no_profile"]
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       RUSTFLAGS: -C target-feature=+crt-static
       CC_ENABLE_DEBUG_OUTPUT: 1
@@ -198,16 +209,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build (static CRT)
-        run: cargo build --verbose --features "${{ matrix.features }}"
+        run: cargo build --locked --verbose --features "${{ matrix.features }}"
 
       - name: Test startup before libtest (static CRT)
-        run: cargo test -p rustfs-mimalloc --test startup --features "${{ matrix.features }}"
+        run: cargo test --locked -p rustfs-mimalloc --test startup --features "${{ matrix.features }}"
 
       - name: Test (static CRT)
-        run: cargo test --verbose --workspace --features "${{ matrix.features }}" -- --nocapture
+        run: cargo test --locked --verbose --workspace --features "${{ matrix.features }}" -- --nocapture
 
       - name: Test startup (release, static CRT)
-        run: cargo test -p rustfs-mimalloc --release --test startup --features "${{ matrix.features }}"
+        run: cargo test --locked -p rustfs-mimalloc --release --test startup --features "${{ matrix.features }}"
 
       - name: Diagnose native startup crash
         if: failure()
@@ -241,7 +252,7 @@ jobs:
           & $debugger $rustControl
           Write-Output "Rust System baseline exit: $LASTEXITCODE"
           $map = Join-Path $env:RUNNER_TEMP 'startup.map'
-          cargo rustc -p rustfs-mimalloc --test startup --features "${{ matrix.features }}" -- -C "link-arg=/MAP:$map"
+          cargo rustc --locked -p rustfs-mimalloc --test startup --features "${{ matrix.features }}" -- -C "link-arg=/MAP:$map"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $test = Get-ChildItem target\debug\deps\startup-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $test) { throw 'Startup test executable was not built' }
@@ -271,6 +282,7 @@ jobs:
   windows-clang-cl:
     name: Windows clang-cl (C11 atomics)
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
       CC: clang-cl
       CFLAGS: /std:c11
@@ -285,36 +297,38 @@ jobs:
         run: clang-cl --version
 
       - name: Test (clang-cl)
-        run: cargo test --workspace --features secure,debug
+        run: cargo test --locked --workspace --features secure,debug
 
       - name: Test (clang-cl, no profiling)
-        run: cargo test --workspace --features secure,debug,no_profile
+        run: cargo test --locked --workspace --features secure,debug,no_profile
 
   # ── Older toolchain compatibility (no declared Cargo MSRV) ─────────────────
 
   compatibility:
     name: Rust 1.96.0 compatibility
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.96.0"
 
       - name: Build
-        run: cargo build
+        run: cargo build --locked
 
       - name: Test
-        run: cargo test
+        run: cargo test --locked
 
   # ── Lint: fmt + clippy ────────────────────────────────────────────────────
 
   lint:
     name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -330,38 +344,37 @@ jobs:
       - name: Public mimalloc API parity
         run: python3 scripts/check_upstream_api.py
 
-      - name: Clippy (default)
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Clippy (stable feature set)
-        run: cargo clippy --workspace --features secure,debug -- -D warnings
+      - name: Clippy (all targets and features)
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   # ── Documentation ──────────────────────────────────────────────────────────
 
   doc:
     name: Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Check doc links (rustfs-mimalloc)
-        run: cargo rustdoc -p rustfs-mimalloc -- -D warnings
+        run: cargo rustdoc --locked -p rustfs-mimalloc -- -D warnings
 
       - name: Check doc links (rustfs-mimalloc-profiling)
-        run: cargo rustdoc -p rustfs-mimalloc-profiling -- -D warnings
+        run: cargo rustdoc --locked -p rustfs-mimalloc-profiling -- -D warnings
 
       - name: Check doc links (rustfs-mimalloc-sys)
-        run: cargo rustdoc -p rustfs-mimalloc-sys -- -D warnings
+        run: cargo rustdoc --locked -p rustfs-mimalloc-sys -- -D warnings
 
   # ── Bench (compile-only, no execution) ─────────────────────────────────────
 
   bench:
     name: Bench (compile check)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -370,4 +383,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build benchmarks
-        run: cargo bench --no-run
+        run: cargo bench --locked --no-run
