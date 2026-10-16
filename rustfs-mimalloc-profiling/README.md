@@ -7,9 +7,14 @@ The base `rustfs-mimalloc` crate does not depend on it.
 
 ## Usage
 
-This crate is developed in the `rustfs-mimalloc` workspace. Before its first
-registry release, consumers should use an immutable Git revision containing
-the crate, or a path dependency for local development.
+```toml
+[dependencies]
+rustfs-mimalloc-profiling = "0.5.6"
+```
+
+The profiling crate has an independent release version. It supports the
+allocator's unchanged `GlobalAlloc` interface in the 0.5.6 and 0.6 release
+families; registry packages and the workspace allocator are tested separately.
 
 ```rust
 use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingMiMalloc};
@@ -58,7 +63,7 @@ Applications schedule reports and provide their own storage or uploader.
 Only Rust allocations through `SamplingMiMalloc` after initialization are
 observed. Using `rustfs_mimalloc::MiMalloc` alone does not enable this profiler;
 direct C allocations are outside its coverage. The Rust wrapper is independent
-of the experimental native mimalloc profiler. The allocator's `no_profile`
+of the experimental native mimalloc profiler. The 0.6 allocator's `no_profile`
 feature disables native sampling, but does not disable this wrapper.
 
 Allocation event buffers and the live table are bounded. Registry/queue

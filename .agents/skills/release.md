@@ -1,6 +1,6 @@
 # Release Skill
 
-Publish a new version of `rustfs-mimalloc` and `rustfs-mimalloc-sys` to crates.io, then create the GitHub Release.
+Publish the allocator/sys pair or the independently versioned profiling crate to crates.io, then create its GitHub Release.
 
 ## Trigger
 
@@ -44,7 +44,7 @@ git tag --sort=-v:refname | head -8
 
 If the worktree is dirty, inspect the diff and separate unrelated changes before continuing.
 
-## Version Model
+## Allocator Version Model
 
 The two crates inherit their package version from the workspace:
 
@@ -231,3 +231,27 @@ Delete or edit the GitHub Release manually if the release notes are wrong. Do no
 - The repository must have the `CARGO_REGISTRY_TOKEN` GitHub Actions secret.
 - Pre-release versions containing `-` are marked as prereleases on GitHub.
 - This crate is v3-only and performance-first. Do not reintroduce v2 or `nightly_allocator_api` release paths.
+
+## Independent profiling releases
+
+`rustfs-mimalloc-profiling` has its own package version (first release 0.5.6),
+independent of the allocator/sys workspace version. Keep allocator versions
+unchanged when preparing a profiling-only release. Its path dependency range
+supports the released allocator 0.5.6 and workspace allocator 0.6 through the
+unchanged `GlobalAlloc` surface.
+
+Run workspace checks and `python3 scripts/verify_profiling_package.py` so the
+normalized archive is also tested against registry dependencies without local
+patches. The profiling release workflow performs this check on Linux, macOS
+and Windows. Run the dry-run workflow after publishing it to main:
+
+```bash
+gh workflow run release-profiling.yml -f version=0.5.6 -f dry_run=true
+```
+
+Only after the dry run passes, push `profiling-v0.5.6` to trigger the scoped real publish. This workflow
+publishes only the profiling crate and verifies the official index entry and
+download checksum before creating its namespaced GitHub Release.
+
+The existing `v<VERSION>` release workflow continues to publish only the
+allocator/sys pair. Never reuse its tags for a profiling-only release.

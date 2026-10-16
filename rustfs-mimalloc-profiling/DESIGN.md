@@ -71,19 +71,19 @@ remain unchanged. The pprof sample label `__delta__="false"` identifies interval
 samples for compatible consumers without depending on an uploader. Profiler
 frame filtering preserves application functions that use profiler types.
 
-The allocator dependency comes from this workspace's current main (0.6.0),
-whereas the original Pyroscope implementation used 0.5.6. This dependency change
-needs correctness and performance revalidation; old timings are not evidence
-for the extracted crate. Native profiling is not enabled or registered by this
-crate. Existing native APIs and their worker-thread/lifetime restrictions are
-a separate implementation choice, not a prerequisite for extraction.
+## Release and allocator compatibility
 
-## Delivery
+The profiling crate is versioned independently and first releases as 0.5.6.
+Its allocator requirement is `>=0.5.6, <0.7` with a workspace path for local
+development. It uses only the allocator's unchanged `GlobalAlloc` methods.
+Workspace tests exercise allocator 0.6; archive tests exercise the published
+0.5.6 allocator without path or Git overrides. Native profiling APIs are not
+registered or used by this wrapper.
 
-Keep the Pyroscope adapter small and retain service integration tests there.
-Before a registry release, pin its Git dependency to a reviewed immutable
-commit; local path overrides are validation-only. Do not commit machine paths.
-The workspace release workflow includes this crate after the allocator package.
+The profiling release uses `profiling-v<VERSION>` tags and the dedicated
+`release-profiling.yml` workflow. The existing `v<VERSION>` workflow releases
+only the allocator/sys pair. The profiling package and checksum must be
+visible in the official registry before consumers switch from Git to crates.io.
 
 ## Validation
 
@@ -105,7 +105,9 @@ seed. Tests cover multiple sizes and intervals, fractional aggregation, actual
 allocator-to-pprof population reconstruction, and FIFO wraparound.
 
 A same-binary control followed by frozen-binary A/B/B/A comparisons ran on two
-fixed Linux VM CPUs with the same compiler/build configuration. The accepted
+fixed Linux VM CPUs with the same compiler/build configuration and workspace
+allocator 0.6. These historical measurements do not establish the published
+allocator 0.5.6's overhead. The accepted
 per-workload comparisons passed 5% drift and 1% record-drop gates:
 
 | Workload | Window | Throughput change |

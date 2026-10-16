@@ -13,9 +13,11 @@ Cargo manifests intentionally omit `rust-version`. CI checks stable and Rust
 Cargo.toml                      workspace root
 rustfs-mimalloc-sys/            FFI sys crate (C compilation + bindings)
 rustfs-mimalloc/                safe Rust wrapper (GlobalAlloc + stats/heap APIs)
+rustfs-mimalloc-profiling/      independently versioned Rust heap profiler
 .agents/skills/release.md       release skill (/release)
 .github/workflows/ci.yml        CI
-.github/workflows/release.yml   release workflow
+.github/workflows/release.yml   allocator/sys release workflow
+.github/workflows/release-profiling.yml profiling-only release workflow
 docs/release-checklist.md       release checklist (git ignored)
 ```
 
@@ -36,3 +38,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 Use the `/release` skill to publish a new version. Flow: version validation → local checks → commit → tag → push triggers CI auto-publish.
 
 See `docs/release-checklist.md` for detailed documentation (git ignored).
+
+Profiling is independently versioned (first release 0.5.6). Use the profiling-only
+workflow and `profiling-v<VERSION>` tags; keep allocator/sys versions unchanged.
+See `.agents/skills/release.md` for archive checks and the required dry run.

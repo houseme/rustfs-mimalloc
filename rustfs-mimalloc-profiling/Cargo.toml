@@ -1,6 +1,6 @@
 [package]
 name = "rustfs-mimalloc-profiling"
-version.workspace = true
+version = "0.5.6"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -13,7 +13,8 @@ keywords = ["mimalloc", "profiling", "pprof", "heap", "allocator"]
 categories = ["memory-management", "development-tools::profiling"]
 
 [dependencies]
-rustfs-mimalloc = { workspace = true }
+# The profiler uses the unchanged GlobalAlloc surface in both release families.
+rustfs-mimalloc = { path = "../rustfs-mimalloc", version = ">=0.5.6, <0.7" }
 backtrace = "0.3"
 libc = "0.2"
 log = "0.4"
