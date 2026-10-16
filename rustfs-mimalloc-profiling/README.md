@@ -9,10 +9,10 @@ The base `rustfs-mimalloc` crate does not depend on it.
 
 ```toml
 [dependencies]
-rustfs-mimalloc-profiling = "0.6.0"
+rustfs-mimalloc-profiling = "0.6.1"
 ```
 
-The profiling crate shares version 0.6.0 with the allocator and sys crates.
+The profiling crate shares its release version with the allocator and sys crates.
 It uses the allocator's `GlobalAlloc` interface and adds no dependencies to
 programs that use only the base allocator.
 
@@ -116,3 +116,6 @@ go tool pprof -sample_index=inuse_space -top target/heap.pprof.gz
 
 The export contains the final report, not merged allocation intervals. See
 [DESIGN.md](DESIGN.md) for the extraction boundary and [NOTICE](NOTICE) for origin.
+
+Release notes are maintained in the shared
+[workspace changelog](https://github.com/houseme/rustfs-mimalloc/blob/main/CHANGELOG.md).

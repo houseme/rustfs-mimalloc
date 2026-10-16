@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.6.0"
+rustfs-mimalloc = "0.6.1"
 ```
 
 ```rust
@@ -137,7 +137,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.6.0", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.6.1", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
@@ -191,3 +191,6 @@ Rust 1.96.0 compatibility; no minimum Rust version is declared by these crates.
 ## License
 
 Apache-2.0.
+
+Release notes are maintained in the shared
+[workspace changelog](https://github.com/houseme/rustfs-mimalloc/blob/main/CHANGELOG.md).

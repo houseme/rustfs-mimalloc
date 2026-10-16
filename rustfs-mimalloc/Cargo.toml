@@ -32,7 +32,7 @@ no_profile = ["rustfs-mimalloc-sys/no_profile"]
 rustfs-mimalloc-sys = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.8.2", features = ["html_reports"] }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [[bench]]
 name = "alloc"

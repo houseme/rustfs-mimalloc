@@ -5,7 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
+and `rustfs-mimalloc-profiling`, which share one release version.
+
 ## Unreleased
+
+## [0.6.1] - 2026-10-16
+
+### Changed
+
+- Manage all dependency version requirements in the root
+  `workspace.dependencies`; member crates inherit them while retaining their
+  feature selections and target-platform conditions.
+- Raise the profiling test dependency `libflate` requirement from `2.1` to
+  `2.3` and refresh the workspace lockfile, including `prost-derive`'s
+  `itertools 0.14` resolution.
+- Consolidate profiling release notes into this workspace changelog and link
+  each crate README to the same source.
+
+### Fixed
+
+- Preserve package archives before Cargo publication and verify official
+  checksums when resuming an already uploaded version. Manual publication
+  checks out the existing release tag for every validation and upload step.
 
 ## [0.6.0] - 2026-10-16
 
@@ -32,8 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add the independent `rustfs-mimalloc-profiling` companion crate, extracted
   from grafana/pyroscope-rs#572. It owns the sampling allocator, bounded event
   recorder, opt-in live allocation tracking, symbol/mapping resolution and
-  pprof encoder. `Profiler` controls one recording session and returns owned
-  profile bytes without an uploader or dependency on Pyroscope.
+  pprof encoder. `Profiler` provides an exclusive recording session with explicit
+  stop and Drop cleanup, returning owned profile bytes without an uploader or
+  dependency on Pyroscope. The wrapper uses the matching allocator's
+  `GlobalAlloc` interface; direct native allocations are outside its coverage
+  and bounded recorder pressure can omit samples.
 - Move allocator behavior, optimized profile quality, stress and benchmark
   validation alongside the profiling implementation. Keep the base allocator
   dependency graph free of profiling dependencies.

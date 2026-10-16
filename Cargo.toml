@@ -3,7 +3,7 @@ members = ["rustfs-mimalloc-sys", "rustfs-mimalloc", "rustfs-mimalloc-profiling"
 resolver = "3"
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 license = "Apache-2.0"
 homepage = "https://houseme.github.io/rustfs-mimalloc"
@@ -14,6 +14,17 @@ keywords = ["allocator", "mimalloc", "memory"]
 categories = ["memory-management", "no-std"]
 
 [workspace.dependencies]
-rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.6.0" }
-rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.6.0" }
+rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.6.1" }
+rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.6.1" }
+
+backtrace = "0.3"
 cc = "1.8.0"
+criterion = "0.8.2"
+findshlibs = "0.10"
+libc = "0.2"
+libflate = "2.3"
+log = "0.4"
+object = "0.40"
+prost = "0.14"
+# Keep the transitive decoder above the RUSTSEC-2026-0344 vulnerable range.
+ruzstd = "0.9.1"

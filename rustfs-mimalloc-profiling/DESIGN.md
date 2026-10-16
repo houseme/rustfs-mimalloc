@@ -73,7 +73,9 @@ frame filtering preserves application functions that use profiler types.
 
 ## Release and allocator compatibility
 
-All three crates inherit the workspace version and release together as 0.6.0.
+All three crates inherit the workspace version and release together.
+Dependency versions and release notes are managed in the root `Cargo.toml`
+and `CHANGELOG.md`.
 The profiling crate uses the allocator's `GlobalAlloc` methods; native
 profiling APIs are not registered or used by this wrapper.
 

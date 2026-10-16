@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.6.0"
+rustfs-mimalloc-sys = "0.6.1"
 ```
 
 ```rust
@@ -127,3 +127,6 @@ Rust 1.96.0 compatibility; no minimum Rust version is declared by these crates.
 ## License
 
 Apache-2.0. The vendored mimalloc C library is MIT-licensed.
+
+Release notes are maintained in the shared
+[workspace changelog](https://github.com/houseme/rustfs-mimalloc/blob/main/CHANGELOG.md).

@@ -21,6 +21,7 @@ When release behavior, supported Rust versions, feature flags, or publish steps 
 | `CHANGELOG.md` | User-visible release notes or release date changes |
 | `README.md` | Install snippet, feature table, MSRV, platform support, or comparison table changes |
 | `rustfs-mimalloc/README.md` | Dependency snippet version, feature table, or MSRV changes |
+| `rustfs-mimalloc-profiling/README.md` | Dependency snippet version or shared changelog link changes |
 | `rustfs-mimalloc-sys/README.md` | Dependency snippet version, feature table, or MSRV changes |
 | `.github/workflows/ci.yml` | MSRV, feature matrix, musl setup, lint, docs, or bench gates change |
 | `.github/workflows/release.yml` | Release gates, publish order, dry-run behavior, or release-note generation changes |
@@ -47,7 +48,15 @@ If the worktree is dirty, inspect the diff and separate unrelated changes before
 
 ## Workspace Version Model
 
-All three crates inherit their package version from the workspace:
+All three crates inherit their package version from the workspace. Keep every
+dependency version requirement in `[workspace.dependencies]`; members use
+`workspace = true`, retaining feature selections and target conditions locally.
+
+`CHANGELOG.md` at the workspace root is the single release-note source for all
+three crates. Name the affected crate in entries when a change is specific to
+one member; do not create separate member changelogs.
+
+The package version is declared once:
 
 ```toml
 # Cargo.toml
@@ -76,9 +85,21 @@ For a release version bump, update:
 - `README.md`: dependency snippet if the recommended version changes
 - `rustfs-mimalloc/README.md`: dependency snippet version (e.g., `rustfs-mimalloc = "<VERSION>"`)
 - `rustfs-mimalloc-sys/README.md`: dependency snippet version (e.g., `rustfs-mimalloc-sys = "<VERSION>"`)
+- `rustfs-mimalloc-profiling/README.md`: dependency snippet version
 - `Cargo.lock`: only if Cargo changes it after validation
 
 Do not add direct `version = "..."` fields to the member crate manifests unless the workspace inheritance model changes.
+
+## Dependency Updates
+
+Use the current stable toolchain. Review both requirement and lockfile changes:
+
+```bash
+RUSTUP_TOOLCHAIN=stable cargo update --verbose && RUSTUP_TOOLCHAIN=stable cargo upgrade --verbose
+```
+
+Keep version requirements in the root after upgrading. Verify that inherited
+features and platform conditions survive Cargo archive normalization.
 
 ## Version Consistency Check
 
@@ -246,8 +267,8 @@ Delete or edit the GitHub Release manually if the release notes are wrong. Do no
 ## Profiling package validation
 
 The profiling crate inherits both `version.workspace = true` and
-`rustfs-mimalloc.workspace = true`. Update its README, CHANGELOG and DESIGN
-when release behavior changes. Do not use component-only release tags.
+`rustfs-mimalloc.workspace = true`. Update its README and DESIGN plus the
+root CHANGELOG when release behavior changes. Do not use component-only release tags.
 
 Before publication,
 `python3 scripts/verify_profiling_package.py --local-dependencies` verifies the normalized archive using temporary local

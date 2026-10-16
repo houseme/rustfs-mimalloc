@@ -14,16 +14,15 @@ categories = ["memory-management", "development-tools::profiling"]
 
 [dependencies]
 rustfs-mimalloc.workspace = true
-backtrace = "0.3"
-libc = "0.2"
-log = "0.4"
-prost = "0.14"
+backtrace.workspace = true
+libc.workspace = true
+log.workspace = true
+prost.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
-findshlibs = "0.10"
-object = "0.40"
-# Keep the transitive decoder above the RUSTSEC-2026-0344 vulnerable range.
-ruzstd = "0.9.1"
+findshlibs.workspace = true
+object.workspace = true
+ruzstd.workspace = true
 
 [dev-dependencies]
-libflate = "2.1"
+libflate.workspace = true

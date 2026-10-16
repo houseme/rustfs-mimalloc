@@ -32,6 +32,13 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 `secure` / `debug` / `debug_in_debug` / `override` / `local_dynamic_tls` / `no_thp` / `no_profile`
 
+## Dependency and changelog policy
+
+All dependency version requirements belong in root `[workspace.dependencies]`.
+Members inherit them with `workspace = true` and keep feature selections and
+target conditions locally. The root `CHANGELOG.md` is the only changelog for
+all three crates; member READMEs link to it.
+
 ## Release
 
 Use the `/release` skill to publish a new version. Flow: version validation → local checks → commit → tag → push triggers CI auto-publish.

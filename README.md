@@ -12,6 +12,8 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 `rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `6f45cc52`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
+Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
+
 ### Why this crate?
 
 - **V3 only** — exclusively targets mimalloc V3, no multi-version complexity
@@ -25,7 +27,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.6.0"
+rustfs-mimalloc = "0.6.1"
 ```
 
 ```rust
@@ -353,7 +355,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.6.0", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.6.1", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
