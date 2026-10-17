@@ -1,5 +1,5 @@
 //! Allocation profiler for applications that install
-//! [`SamplingMiMalloc`] as their global allocator.
+//! [`SamplingAllocator`] as their global allocator.
 //!
 //! The allocator hot path records sampled allocation events into fixed TLS
 //! rings with best-effort, non-blocking handoff to sharded global buffers.
@@ -24,8 +24,6 @@ use std::{
     },
     time::Instant,
 };
-
-use rustfs_mimalloc as mimalloc;
 
 use crate::{
     Error, Result,
@@ -367,7 +365,7 @@ pub struct MimallocConfig {
     /// Disabled by default. This adds a sharded lookup on deallocation and
     /// successful reallocation. Removals may briefly wait for a shard lock so
     /// cross-thread frees never leave stale live entries. Only Rust allocations
-    /// made through `SamplingMiMalloc` after initialization are tracked.
+    /// made through `SamplingAllocator` after initialization are tracked.
     /// Same-address realloc preserves the original allocation stack and object
     /// weight while updating size. Moving realloc samples the replacement
     /// independently, without depending on the allocation-event byte remainder.
@@ -500,47 +498,56 @@ impl MimallocConfig {
     }
 }
 
-/// A mimalloc global allocator wrapper that records allocation samples.
+/// A sampling wrapper around an application's chosen global allocator.
 ///
-/// Use this type as the application's global allocator when enabling
-/// a profiling session:
+/// Install this wrapper as `#[global_allocator]` to observe Rust allocations.
+/// Sampling is active only while a [`Profiler`] session is running.
 ///
-/// ```rust
-/// use rustfs_mimalloc_profiling::SamplingMiMalloc;
+/// ```
+/// use rustfs_mimalloc_profiling::SamplingAllocator;
 ///
 /// #[global_allocator]
-/// static ALLOC: SamplingMiMalloc = SamplingMiMalloc::new();
+/// static ALLOC: SamplingAllocator<std::alloc::System> =
+///     SamplingAllocator::with_allocator(std::alloc::System);
 /// ```
-///
-/// The profiler cannot record allocation call stacks when an application uses
-/// `rustfs_mimalloc::MiMalloc` directly.
-pub struct SamplingMiMalloc {
-    inner: mimalloc::MiMalloc,
+pub struct SamplingAllocator<A> {
+    inner: A,
 }
 
-impl SamplingMiMalloc {
-    /// Create a `SamplingMiMalloc` allocator.
-    ///
-    /// The allocator is always safe to install, but it only records samples while
-    /// a profiling session is active.
-    pub const fn new() -> Self {
-        Self {
-            inner: mimalloc::MiMalloc,
-        }
+impl<A> SamplingAllocator<A> {
+    /// Wrap an allocator without allocating or starting a recording session.
+    pub const fn with_allocator(inner: A) -> Self {
+        Self { inner }
     }
 }
 
-impl Default for SamplingMiMalloc {
+impl<A: Default> Default for SamplingAllocator<A> {
     fn default() -> Self {
-        Self::new()
+        Self::with_allocator(A::default())
     }
 }
 
-unsafe impl GlobalAlloc for SamplingMiMalloc {
+/// Sampling wrapper for the RustFS mimalloc provider.
+///
+/// Enable `rustfs-allocator` to retain the pre-0.7 convenience API.
+#[cfg(feature = "rustfs-allocator")]
+pub type SamplingMiMalloc = SamplingAllocator<rustfs_mimalloc::MiMalloc>;
+
+#[cfg(feature = "rustfs-allocator")]
+impl SamplingAllocator<rustfs_mimalloc::MiMalloc> {
+    /// Construct the optional RustFS provider wrapper.
+    pub const fn new() -> Self {
+        Self::with_allocator(rustfs_mimalloc::MiMalloc)
+    }
+}
+
+// SAFETY: Every allocation operation is forwarded to the same A with the exact
+// pointer/layout contract. Recorder bookkeeping never substitutes an allocator.
+unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         mark_allocator_seen();
-        // SAFETY: `SamplingMiMalloc` preserves the caller's `GlobalAlloc`
-        // contract and forwards the exact layout to the wrapped mimalloc
+        // SAFETY: `SamplingAllocator` preserves the caller's `GlobalAlloc`
+        // contract and forwards the exact layout to the wrapped
         // allocator.
         let ptr = unsafe { self.inner.alloc(layout) };
         if !ptr.is_null() {
@@ -552,7 +559,7 @@ unsafe impl GlobalAlloc for SamplingMiMalloc {
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         mark_allocator_seen();
         // SAFETY: The caller provided a valid `GlobalAlloc` layout; this wrapper
-        // only forwards it to mimalloc and records after successful allocation.
+        // only forwards it to the provider and records after successful allocation.
         let ptr = unsafe { self.inner.alloc_zeroed(layout) };
         if !ptr.is_null() {
             record_allocation(ptr, layout.size() as u64);
@@ -562,7 +569,7 @@ unsafe impl GlobalAlloc for SamplingMiMalloc {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // Remove before freeing: another thread may immediately reuse this
-        // address once mimalloc receives it.
+        // address once the provider receives it.
         if live::enabled() {
             remove_live_allocation(ptr as usize);
         }
@@ -573,14 +580,14 @@ unsafe impl GlobalAlloc for SamplingMiMalloc {
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         mark_allocator_seen();
-        // Keep the metadata slot reserved before mimalloc can recycle the old
+        // Keep the metadata slot reserved before the provider can recycle the old
         // address. Lifecycle maintenance must also run while sampling is suppressed.
         let pending = if live::enabled() {
             with_profiler_suppressed(|| live::begin_reallocation(ptr as usize))
         } else {
             None
         };
-        // SAFETY: Reallocation is forwarded unchanged to mimalloc with the
+        // SAFETY: Reallocation is forwarded unchanged to the provider with the
         // caller-provided pointer, old layout, and requested new size.
         let new_ptr = unsafe { self.inner.realloc(ptr, layout, new_size) };
         let previous = pending.and_then(|pending| {
@@ -612,7 +619,7 @@ pub struct Profiler {
 }
 
 impl Profiler {
-    /// Start a session after installing [`SamplingMiMalloc`] as global allocator.
+    /// Start a session after installing [`SamplingAllocator`] as global allocator.
     ///
     /// Fails if the configuration is invalid, the sampling allocator has not
     /// observed allocations, or another session is active.
@@ -1520,6 +1527,55 @@ mod tests {
 
     static TEST_LOCK: TestMutex<()> = TestMutex::new(());
 
+    // Force each realloc outcome without depending on a provider's size classes.
+    struct ReallocProvider {
+        always_move: bool,
+    }
+
+    const TEST_ALLOCATION_CAPACITY: usize = 8 * 1024 * 1024;
+
+    // SAFETY: Each logical allocation reserves a fixed System block. All frees
+    // reconstruct that exact System layout, and moves copy only the valid prefix.
+    unsafe impl GlobalAlloc for ReallocProvider {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            if layout.size() > TEST_ALLOCATION_CAPACITY {
+                return std::ptr::null_mut();
+            }
+            let reserved =
+                Layout::from_size_align(TEST_ALLOCATION_CAPACITY, layout.align()).unwrap();
+            // SAFETY: The valid reserved layout satisfies the logical request.
+            unsafe { std::alloc::System.alloc(reserved) }
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            let reserved =
+                Layout::from_size_align(TEST_ALLOCATION_CAPACITY, layout.align()).unwrap();
+            // SAFETY: alloc reserved this exact System layout and ownership is live.
+            unsafe { std::alloc::System.dealloc(pointer, reserved) }
+        }
+
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            if size > TEST_ALLOCATION_CAPACITY {
+                return std::ptr::null_mut();
+            }
+            if !self.always_move {
+                return pointer;
+            }
+            let next_layout = Layout::from_size_align(size, layout.align()).unwrap();
+            // SAFETY: The new layout is valid and remains within reserved capacity.
+            let next = unsafe { self.alloc(next_layout) };
+            if !next.is_null() {
+                // SAFETY: Distinct live reserved blocks do not overlap. Both logical
+                // allocations contain the copied prefix; release the old one last.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(pointer, next, layout.size().min(size));
+                    self.dealloc(pointer, layout);
+                }
+            }
+            next
+        }
+    }
+
     struct RecorderActiveGuard;
 
     impl Drop for RecorderActiveGuard {
@@ -2063,7 +2119,7 @@ mod tests {
         live::prepare(true, 4096);
         RECORDER_ACTIVE.store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let allocator = SamplingMiMalloc::new();
+        let allocator = SamplingAllocator::with_allocator(std::alloc::System);
         let layout = Layout::from_size_align(1024, 8).expect("layout");
         let generation = SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire);
         let stack = StackKey {
@@ -2105,7 +2161,7 @@ mod tests {
         live::prepare(true, 4096);
         RECORDER_ACTIVE.store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let allocator = SamplingMiMalloc::new();
+        let allocator = SamplingAllocator::with_allocator(ReallocProvider { always_move: false });
         let layout = Layout::from_size_align(1024, 8).expect("layout");
         for suppressed in [false, true] {
             let new_size = if suppressed { 1536 } else { 768 };
@@ -2141,7 +2197,7 @@ mod tests {
             if !suppressed {
                 assert_eq!(
                     resized, pointer,
-                    "shrink within the same mimalloc size class"
+                    "controlled provider keeps the reserved block in place"
                 );
             }
             assert_eq!(live::sample_count(), 1);
@@ -2155,6 +2211,41 @@ mod tests {
     }
 
     #[test]
+    fn failed_provider_realloc_restores_the_existing_live_record() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        clear_test_buffers();
+        live::prepare(true, 64);
+        RECORDER_ACTIVE.store(true, Ordering::Release);
+        let _active = RecorderActiveGuard;
+        let allocator = SamplingAllocator::with_allocator(ReallocProvider { always_move: false });
+        let layout = Layout::from_size_align(1024, 64).unwrap();
+        // SAFETY: Valid layout, with ownership retained until the final dealloc.
+        let pointer = unsafe { allocator.inner.alloc(layout) };
+        assert!(!pointer.is_null());
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        live::record(
+            pointer as usize,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire),
+        );
+        // SAFETY: The provider deterministically rejects this valid request.
+        let failed = unsafe { allocator.realloc(pointer, layout, TEST_ALLOCATION_CAPACITY + 1) };
+        assert!(failed.is_null());
+        let samples = live::snapshot();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].stack, stack);
+        assert_eq!(samples[0].weighted_bytes, 1024.0);
+        // SAFETY: Failed realloc leaves the original ownership/layout valid.
+        unsafe { allocator.dealloc(pointer, layout) };
+        assert_eq!(live::sample_count(), 0);
+        clear_test_buffers();
+    }
+
+    #[test]
     fn moved_reallocation_samples_new_physical_allocations_independently() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
@@ -2162,7 +2253,7 @@ mod tests {
         live::prepare(true, 4096);
         RECORDER_ACTIVE.store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let allocator = SamplingMiMalloc::new();
+        let allocator = SamplingAllocator::with_allocator(ReallocProvider { always_move: true });
         let layout = Layout::from_size_align(128, 8).unwrap();
         // SAFETY: A valid layout is supplied to the wrapped allocator.
         let pointer = unsafe { allocator.inner.alloc(layout) };

@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [0.7.0] - 2026-10-17
+
+### Changed
+
+- **Breaking (`rustfs-mimalloc-profiling`):** the default profiling core no
+  longer selects an allocator. Install `SamplingAllocator<A>` around the
+  application's `GlobalAlloc` provider. Both `mimalloc::MiMalloc` and
+  `rustfs_mimalloc::MiMalloc` use the same recorder and pprof implementation.
+- Keep the existing `SamplingMiMalloc::new()` and `Default` convenience API
+  behind the explicit `rustfs-allocator` feature. Library adapters can depend
+  on the core with `default-features = false`.
+- Keep all three crate versions synchronized at 0.7.0 and refresh the locked
+  libc resolution to 0.2.191. The pinned native allocator and ABI are unchanged.
+
+- Restrict direct object parsing to uncompressed Linux ELF metadata, disabling
+  unused format/compression features and removing the ruzstd decoder dependency.
+  Backtrace symbolization keeps its existing features.
+
+### Added
+
+- Stateful-provider forwarding contracts for alignment, zeroing, realloc
+  failure/in-place/move outcomes and cross-thread free, with deterministic
+  live-record rollback checks independent of provider size classes.
+- A shared behavior/release test suite run from independent Cargo workspaces
+  for both providers. Provider requirements come from root workspace dependencies;
+  resolved dependency graphs reject accidental inclusion of a second allocator.
+- Default-core, optional compatibility API and dual-provider validation of the
+  normalized published archive, plus stable/Rust 1.95 and platform CI checks.
+
 ## [0.6.1] - 2026-10-16
 
 ### Changed

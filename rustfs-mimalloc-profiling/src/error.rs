@@ -17,7 +17,7 @@ impl std::fmt::Display for Error {
         let message = match self {
             Self::InvalidConfig(message) => message,
             Self::AllocatorNotObserved => {
-                "mimalloc: SamplingMiMalloc has not observed allocations; install it as #[global_allocator] before starting profiling"
+                "mimalloc: SamplingAllocator has not observed allocations; install it as #[global_allocator] before starting profiling"
             }
             Self::AlreadyActive => "mimalloc: another profiling session is already active",
             Self::Inactive => "mimalloc: profiling session has stopped",

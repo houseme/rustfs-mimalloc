@@ -96,13 +96,13 @@ is_over_threshold() {
 }
 
 run_baseline() {
-    cargo run --locked --release --quiet --example mimalloc_baseline -p rustfs-mimalloc-profiling \
+    cargo run --locked --release --quiet --example mimalloc_baseline -p rustfs-mimalloc-profiling --features rustfs-allocator \
         > "${output_dir}/baseline.env"
 }
 
 run_inactive() {
     MIMALLOC_BENCH_MODE=inactive \
-        cargo run --locked --release --quiet --example mimalloc_overhead -p rustfs-mimalloc-profiling \
+        cargo run --locked --release --quiet --example mimalloc_overhead -p rustfs-mimalloc-profiling --features rustfs-allocator \
         > "${output_dir}/inactive.env"
 }
 
@@ -117,7 +117,7 @@ run_active() {
     MIMALLOC_BENCH_SAMPLE_INTERVAL="$interval_bytes" \
     MIMALLOC_BENCH_REPORT_INTERVAL_MS="$report_interval" \
     MIMALLOC_BENCH_RING_CAPACITY="$ring_capacity" \
-        cargo run --locked --release --quiet --example mimalloc_overhead -p rustfs-mimalloc-profiling \
+        cargo run --locked --release --quiet --example mimalloc_overhead -p rustfs-mimalloc-profiling --features rustfs-allocator \
         > "${output_dir}/${name}.env"
 }
 

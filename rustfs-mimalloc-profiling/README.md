@@ -7,20 +7,25 @@ The base `rustfs-mimalloc` crate does not depend on it.
 
 ## Usage
 
+The profiler has no allocator dependency enabled by default. Applications select
+one provider and install `SamplingAllocator<A>` as their global allocator. The
+same recorder, live tracking, symbolization and pprof implementation serve both
+providers; the wrapper uses static dispatch through `GlobalAlloc`.
+
+For the upstream `mimalloc` provider:
+
 ```toml
 [dependencies]
-rustfs-mimalloc-profiling = "0.6.1"
+rustfs-mimalloc-profiling = { version = "0.7.0", default-features = false }
+mimalloc = "0.1.52"
 ```
 
-The profiling crate shares its release version with the allocator and sys crates.
-It uses the allocator's `GlobalAlloc` interface and adds no dependencies to
-programs that use only the base allocator.
-
 ```rust
-use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingMiMalloc};
+use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingAllocator};
 
 #[global_allocator]
-static ALLOC: SamplingMiMalloc = SamplingMiMalloc::new();
+static ALLOC: SamplingAllocator<mimalloc::MiMalloc> =
+    SamplingAllocator::with_allocator(mimalloc::MiMalloc);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut profiler = Profiler::start(MimallocConfig {
@@ -35,6 +40,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+To use the RustFS provider directly, depend on `rustfs-mimalloc = "0.7.0"`
+and substitute `rustfs_mimalloc::MiMalloc` for the provider above.
+
+### Migration from 0.6
+
+The old convenience name and zero-argument constructor remain available with an
+explicit feature:
+
+```toml
+rustfs-mimalloc-profiling = { version = "0.7.0", features = ["rustfs-allocator"] }
+```
+
+```rust
+use rustfs_mimalloc_profiling::SamplingMiMalloc;
+
+#[global_allocator]
+static ALLOC: SamplingMiMalloc = SamplingMiMalloc::new();
+```
+
+Enable this feature only for applications selecting the RustFS provider. Library
+adapters should depend on the default allocator-neutral core and re-export
+`SamplingAllocator`, leaving provider selection to their applications. Cargo
+features are additive: enabling `rustfs-allocator` elsewhere in the dependency
+graph also brings in the RustFS provider. Use each provider in its own binary.
+
+The three workspace crates still share one release version. All dependency
+requirements are managed in the root `workspace.dependencies`.
 
 Only one `Profiler` may be active per process. `stop()` is idempotent and Drop
 also stops the session. Stopping discards pending samples; collect a report
@@ -60,8 +93,8 @@ Applications schedule reports and provide their own storage or uploader.
 
 ## Scope and constraints
 
-Only Rust allocations through `SamplingMiMalloc` after initialization are
-observed. Using `rustfs_mimalloc::MiMalloc` alone does not enable this profiler;
+Only Rust allocations through `SamplingAllocator` after initialization are
+observed. Installing a bare provider alone does not enable this profiler;
 direct C allocations are outside its coverage. The Rust wrapper is independent
 of the experimental native mimalloc profiler. The 0.6 allocator's `no_profile`
 feature disables native sampling, but does not disable this wrapper.
@@ -88,29 +121,42 @@ whole-process jemalloc parity is guaranteed.
 ## Validation and diagnostics
 
 ```sh
-cargo test -p rustfs-mimalloc-profiling
+cargo test -p rustfs-mimalloc-profiling -- --test-threads=1
+cargo test -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
+python3 scripts/test_profiling_providers.py --local-dependencies
 cargo test -p rustfs-mimalloc-profiling --test profiling -- --ignored
 cargo test -p rustfs-mimalloc-profiling --release --test mimalloc_release
 CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_PROFILE_RELEASE_STRIP=none \
   MIMALLOC_TEST_EXPECT_SOURCE=1 \
   cargo test -p rustfs-mimalloc-profiling --release --test mimalloc_release
 bash scripts/test_mimalloc_benchmark_report.sh
-MIMALLOC_BENCH_DURATION_MS=1000 MIMALLOC_BENCH_ENFORCE_QUALITY=1 \
+MIMALLOC_BENCH_DURATION_MS=1000 MIMALLOC_BENCH_ENFORCE_QUALITY=0 \
   bash scripts/mimalloc_benchmark_report.sh
 ```
 
-The baseline and overhead examples compare plain mimalloc, an inactive
+The sampler is process-global. Run profiling test cases serially so test-harness
+allocations cannot contaminate another case's exact counters; the concurrency
+contracts create their own worker threads. Provider/archive drivers enforce this.
+
+Provider and archive verification scripts require Python 3.11 or newer. The
+provider driver generates separate Cargo workspaces from root dependency
+requirements, runs shared contracts, and rejects unexpected allocator graphs.
+
+The baseline and overhead examples compare plain RustFS mimalloc, an inactive
 wrapper, allocation sampling, and live tracking. Periodic-report scenarios
 check dropped and pending records. Benchmark history preserves the sampling
 policy, capture engine, worker count, and quality status. Lossy pressure rows
-must not be presented as lossless profiling cost. Performance attribution
+must not be presented as lossless profiling cost. CI retains the real pressure
+report as diagnostics and gates its strict classifier using replayed fixtures.
+Set `MIMALLOC_BENCH_ENFORCE_QUALITY=1` to reject any nonzero live loss in steady
+scenarios; snapshot contention can cause such loss by design. Performance attribution
 requires resource-isolated repeated runs with drift checks.
 
 To export an example's final report after timing ends:
 
 ```sh
 MIMALLOC_BENCH_MODE=live MIMALLOC_BENCH_PPROF_PATH=target/heap.pprof.gz \
-  cargo run -p rustfs-mimalloc-profiling --release --example mimalloc_overhead
+  cargo run -p rustfs-mimalloc-profiling --features rustfs-allocator --release --example mimalloc_overhead
 go tool pprof -sample_index=inuse_space -top target/heap.pprof.gz
 ```
 

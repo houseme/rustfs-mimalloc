@@ -15,7 +15,7 @@ and documentation use stable; release jobs share one resolved source commit.
 Cargo.toml                      workspace root
 rustfs-mimalloc-sys/            FFI sys crate (C compilation + bindings)
 rustfs-mimalloc/                safe Rust wrapper (GlobalAlloc + stats/heap APIs)
-rustfs-mimalloc-profiling/      Rust heap profiler, versioned with the allocator
+rustfs-mimalloc-profiling/      Allocator-neutral Rust heap profiler, versioned with the allocator
 .agents/skills/release.md       release skill (/release)
 .github/workflows/ci.yml        CI
 .github/workflows/release.yml   three-crate release workflow
@@ -23,6 +23,8 @@ docs/release-checklist.md       release checklist (git ignored)
 ```
 
 ## Build & Test
+
+Provider/archive verification scripts require Python 3.11+ for TOML parsing.
 
 ```bash
 cargo build
@@ -40,6 +42,13 @@ All dependency version requirements belong in root `[workspace.dependencies]`.
 Members inherit them with `workspace = true` and keep feature selections and
 target conditions locally. The root `CHANGELOG.md` is the only changelog for
 all three crates; member READMEs link to it.
+
+## Profiling providers
+
+The profiling core has no allocator dependency enabled by default. Keep provider
+requirements in root `workspace.dependencies`. The provider-test driver generates
+isolated consumer workspaces so feature unification cannot link both providers.
+`rustfs-allocator` is an additive compatibility API feature on the profiling crate.
 
 ## Release
 

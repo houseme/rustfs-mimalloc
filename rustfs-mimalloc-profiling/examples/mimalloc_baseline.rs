@@ -1,7 +1,7 @@
 //! Baseline mimalloc allocation workload for local overhead comparisons.
 //!
 //! ```sh
-//! cargo run --release --example mimalloc_baseline -p rustfs-mimalloc-profiling
+//! cargo run --release --example mimalloc_baseline -p rustfs-mimalloc-profiling --features rustfs-allocator
 //! ```
 
 #[path = "mimalloc_benchmark/support.rs"]

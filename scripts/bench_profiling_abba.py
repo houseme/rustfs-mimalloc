@@ -21,6 +21,14 @@ CASES = {
         "MIMALLOC_BENCH_MAX_SIZE": "65536",
     },
     "live-default": {"MIMALLOC_BENCH_MODE": "live"},
+    "live-low-rate": {
+        "MIMALLOC_BENCH_MODE": "live",
+        "MIMALLOC_BENCH_SAMPLE_INTERVAL": "16777216",
+        "MIMALLOC_BENCH_REPORT_INTERVAL_MS": "200",
+        # Preserve the retained working set's inclusion probability while
+        # reducing transient-event pressure. Setup remains outside timing.
+        "MIMALLOC_BENCH_LIVE_RETAINED_SIZE": "1048576",
+    },
 }
 ORDER = ("A1", "B1", "B2", "A2")
 

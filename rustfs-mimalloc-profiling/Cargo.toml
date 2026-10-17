@@ -12,8 +12,12 @@ readme = "README.md"
 keywords = ["mimalloc", "profiling", "pprof", "heap", "allocator"]
 categories = ["memory-management", "development-tools::profiling"]
 
+[features]
+default = []
+rustfs-allocator = ["dep:rustfs-mimalloc"]
+
 [dependencies]
-rustfs-mimalloc.workspace = true
+rustfs-mimalloc = { workspace = true, optional = true }
 backtrace.workspace = true
 libc.workspace = true
 log.workspace = true
@@ -21,8 +25,17 @@ prost.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))'.dependencies]
 findshlibs.workspace = true
-object.workspace = true
-ruzstd.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+object = { workspace = true, features = ["read_core", "elf", "std"] }
 
 [dev-dependencies]
 libflate.workspace = true
+
+[[example]]
+name = "mimalloc_baseline"
+required-features = ["rustfs-allocator"]
+
+[[example]]
+name = "mimalloc_overhead"
+required-features = ["rustfs-allocator"]
