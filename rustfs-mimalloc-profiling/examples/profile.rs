@@ -1,7 +1,8 @@
-use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingMiMalloc};
+use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingAllocator};
 
 #[global_allocator]
-static ALLOC: SamplingMiMalloc = SamplingMiMalloc::new();
+static ALLOC: SamplingAllocator<std::alloc::System> =
+    SamplingAllocator::with_allocator(std::alloc::System);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut profiler = Profiler::start(MimallocConfig {

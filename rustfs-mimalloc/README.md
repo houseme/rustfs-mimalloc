@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.6.1"
+rustfs-mimalloc = "0.7.0"
 ```
 
 ```rust
@@ -137,7 +137,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.6.1", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.0", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

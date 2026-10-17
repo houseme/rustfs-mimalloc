@@ -1,8 +1,8 @@
 //! SamplingMiMalloc allocation workload for local overhead comparisons.
 //!
 //! ```sh
-//! cargo run --release --example mimalloc_overhead -p rustfs-mimalloc-profiling
-//! MIMALLOC_BENCH_MODE=active cargo run --release --example mimalloc_overhead -p rustfs-mimalloc-profiling
+//! cargo run --release --example mimalloc_overhead -p rustfs-mimalloc-profiling --features rustfs-allocator
+//! MIMALLOC_BENCH_MODE=active cargo run --release --example mimalloc_overhead -p rustfs-mimalloc-profiling --features rustfs-allocator
 //! ```
 
 #[path = "mimalloc_benchmark/support.rs"]

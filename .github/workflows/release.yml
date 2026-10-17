@@ -130,6 +130,9 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
 
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
       - name: Build (default)
         run: cargo build --locked
 
@@ -153,6 +156,11 @@ jobs:
 
       - name: Test (secure debug without allocation profiling)
         run: cargo test --locked --workspace --features secure,debug,no_profile
+
+      - name: Test isolated provider contracts
+        run: python3 scripts/test_profiling_providers.py --local-dependencies
+      - name: Test optional RustFS convenience API
+        run: cargo test --locked -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
 
       - name: Verify sys archive
         run: cargo package --locked -p rustfs-mimalloc-sys
@@ -321,7 +329,7 @@ jobs:
               "```toml",
               "[dependencies]",
               f'rustfs-mimalloc = "{release_version}"',
-              f'rustfs-mimalloc-profiling = "{release_version}"',
+              f'rustfs-mimalloc-profiling = {{ version = "{release_version}", features = ["rustfs-allocator"] }}',
               "```",
           ]
 

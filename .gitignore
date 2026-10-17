@@ -23,3 +23,6 @@ docs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Python validation tools
+/scripts/__pycache__/

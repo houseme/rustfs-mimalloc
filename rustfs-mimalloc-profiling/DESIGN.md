@@ -12,7 +12,7 @@ separation for mimalloc, without depending on Pyroscope.
 | Component | Owner |
 | --- | --- |
 | Native allocator and FFI | Existing allocator/sys crates |
-| `SamplingMiMalloc`, Poisson sampling, TLS rings and bounded recorder | Profiling crate |
+| `SamplingAllocator<A>`, Poisson sampling, TLS rings and bounded recorder | Profiling crate |
 | Pointer lifecycle, realloc rollback, live table and session generations | Profiling crate |
 | Stack capture, symbol resolution, mappings, pprof types and encoder | Profiling crate |
 | Config, diagnostics and exclusive `Profiler` session | Profiling crate |
@@ -20,7 +20,13 @@ separation for mimalloc, without depending on Pyroscope.
 | Allocator regressions, symbol quality and overhead workloads | Profiling crate tests/CI |
 | Upload preservation and real-server interval/live queries | Pyroscope tests/CI |
 
-The dependency direction is Pyroscope -> profiling -> allocator -> sys.
+The default dependency direction is Pyroscope -> profiling core. Applications
+supply the wrapped `GlobalAlloc` provider separately; profiling's optional
+`rustfs-allocator` feature exposes the existing RustFS convenience alias.
+The provider is a statically dispatched field, not a trait object. The four
+allocation operations always forward pointers/layouts to that same field.
+No provider-specific recorder or pprof implementation is introduced.
+
 Applications selecting only the allocator do not depend on the profiler,
 backtrace, object parser or protobuf encoder. Tests decode the standard pprof
 wire format independently in both repositories; no shared Rust protobuf type
@@ -83,7 +89,9 @@ The `v<VERSION>` tag triggers `release.yml`. Pre-publication archive tests use
 local patches for the not-yet-published dependencies. Publication follows sys,
 allocator, then profiling, verifying each official index entry and uploaded
 archive checksum before continuing. The normalized profiling archive is then
-tested against the exact registry allocator/sys versions without local patches.
+tested against the exact registry allocator/sys versions without local patches. Its default
+resolved graph is checked for absence of allocator packages; each real provider
+then runs shared contracts from an isolated consumer Cargo workspace.
 Consumers switch from Git only after all three packages are visible.
 
 ## Validation
@@ -93,8 +101,8 @@ standalone behavior tests with concurrent allocation, cross-thread frees,
 realloc failure, session restart and missing-allocator rejection. Exercise
 stripped and source-enabled optimized profiles on Linux/macOS, and preserve
 the quality-gated benchmark diagnostics. The Pyroscope consumer must pass
-default/all-feature tests, raw HTTP payload/auth/tenant checks, and both pinned
-server ingestion paths. Record local and CI results separately.
+default/all-feature tests, raw HTTP payload/auth/tenant checks, and the pinned v2
+server ingestion path. Record local and CI results separately.
 
 ## Sampling review evidence
 

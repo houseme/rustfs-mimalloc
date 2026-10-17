@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+import sys
+
+from test_profiling_providers import reachable_packages
 
 
 CONFIG = []
@@ -16,10 +19,11 @@ def cargo(*args, cwd=None):
     return subprocess.run(["cargo", *CONFIG, *args], cwd=cwd, check=True)
 
 
-def metadata(manifest=None):
+def metadata(manifest=None, all_features=False):
     command = ["cargo", *CONFIG, "metadata", "--format-version", "1"]
     if manifest:
         command += ["--manifest-path", str(manifest)]
+        command += ["--all-features"] if all_features else ["--no-default-features"]
     else:
         command.append("--no-deps")
     return json.loads(subprocess.check_output(command, text=True))
@@ -54,7 +58,11 @@ def main():
             bundle.extractall(temporary)
         extracted = Path(temporary) / f'{package["name"]}-{package["version"]}'
         manifest = extracted / "Cargo.toml"
-        resolved = metadata(manifest)
+        neutral = metadata(manifest)
+        native = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "mimalloc", "libmimalloc-sys"}
+        if native & reachable_packages(neutral):
+            raise RuntimeError("default profiling archive must not select an allocator")
+        resolved = metadata(manifest, all_features=True)
         allocators = [p for p in resolved["packages"] if p["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys"}]
         if len(allocators) != 2 or any(p["version"] != package["version"] for p in allocators):
             raise RuntimeError("package must use matching allocator/sys versions")
@@ -62,8 +70,15 @@ def main():
             raise RuntimeError("package verification must use registry allocator dependencies")
         print("Allocator versions:", {p["name"]: p["version"] for p in allocators},
               "(local patches)" if args.local_dependencies else "(registry)", flush=True)
+        cargo("test", "--locked", "--no-default-features", "--manifest-path", str(manifest), cwd=extracted)
         cargo("test", "--locked", "--all-features", "--manifest-path", str(manifest), cwd=extracted)
         cargo("test", "--locked", "--release", "--test", "mimalloc_release", "--manifest-path", str(manifest), cwd=extracted)
+        provider_command = [sys.executable, str(root / "scripts/test_profiling_providers.py"),
+                            "--profiling-dir", str(extracted),
+                            "--output", str(Path(workspace["target_directory"]) / "package-provider-tests")]
+        if args.local_dependencies:
+            provider_command.append("--local-dependencies")
+        subprocess.run(provider_command, check=True)
 
 
 if __name__ == "__main__":

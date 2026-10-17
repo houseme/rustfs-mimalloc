@@ -149,6 +149,8 @@ cargo test --workspace --features no_profile
 cargo test --workspace --features secure,debug,no_profile
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
+python3 scripts/test_profiling_providers.py --local-dependencies
+cargo test -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
 python3 scripts/verify_profiling_package.py --local-dependencies --allow-dirty
 cargo package -p rustfs-mimalloc-sys --allow-dirty
 cargo package -p rustfs-mimalloc --allow-dirty --config 'patch.crates-io.rustfs-mimalloc-sys.path="rustfs-mimalloc-sys"'
@@ -270,15 +272,18 @@ Delete or edit the GitHub Release manually if the release notes are wrong. Do no
 
 ## Profiling package validation
 
-The profiling crate inherits both `version.workspace = true` and
-`rustfs-mimalloc.workspace = true`. Update its README and DESIGN plus the
+The profiling crate inherits `version.workspace = true` and its optional
+`rustfs-mimalloc` dependency from the workspace. The `rustfs-allocator` feature
+exposes the compatibility alias; defaults must remain allocator-neutral.
+Provider and archive verification scripts require Python 3.11+. Update its README and DESIGN plus the
 root CHANGELOG when release behavior changes. Do not use component-only release tags.
 
 Before publication,
 `python3 scripts/verify_profiling_package.py --local-dependencies` verifies the normalized archive using temporary local
 patches for the matching allocator/sys. After publication, omit that flag to
 require the exact registry versions, with no path or Git override. Both modes
-run behavior and optimized profile tests from the extracted archive.
+verify the default core dependency graph and run behavior, compatibility API,
+optimized profile and isolated dual-provider tests from the extracted archive.
 
 The workflow dry run exercises package verification on Linux, macOS and Windows
 plus the Rust 1.95.0 compatibility job. It skips all uploads and release creation.

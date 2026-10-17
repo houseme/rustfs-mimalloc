@@ -1,14 +1,15 @@
 //! Sampled allocation and optional live heap profiling for mimalloc.
 //!
-//! Install [`SamplingMiMalloc`] as the global allocator, then own a [`Profiler`]
+//! Install [`SamplingAllocator`] as the global allocator, then own a [`Profiler`]
 //! for each recording session. Reports are uncompressed pprof protobuf bytes.
 //! There is no uploader, background thread, or dependency on a profiling service.
 //!
 //! ```no_run
-//! use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingMiMalloc};
+//! use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingAllocator};
 //!
 //! #[global_allocator]
-//! static ALLOC: SamplingMiMalloc = SamplingMiMalloc::new();
+//! static ALLOC: SamplingAllocator<std::alloc::System> =
+//!     SamplingAllocator::with_allocator(std::alloc::System);
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut profiler = Profiler::start(MimallocConfig {
@@ -39,8 +40,12 @@ pub mod pprof;
 
 pub use error::Error;
 pub use profiler::{
-    MimallocConfig, MimallocStackCapture, MimallocStats, Profiler, SamplingMiMalloc, mimalloc_stats,
+    MimallocConfig, MimallocStackCapture, MimallocStats, Profiler, SamplingAllocator,
+    mimalloc_stats,
 };
+
+#[cfg(feature = "rustfs-allocator")]
+pub use profiler::SamplingMiMalloc;
 
 /// Result of starting a profiling session or collecting a report.
 pub type Result<T> = std::result::Result<T, Error>;

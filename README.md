@@ -27,7 +27,7 @@ Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.6.1"
+rustfs-mimalloc = "0.7.0"
 ```
 
 ```rust
@@ -45,11 +45,11 @@ fn main() {
 ## Sampled Rust heap profiling
 
 The optional companion [rustfs-mimalloc-profiling](rustfs-mimalloc-profiling)
-crate provides a sampling allocator, interval allocation reports, opt-in live
-heap tracking, and standard pprof output. It has no Pyroscope or network
-dependency. The base allocator does not depend on the profiling crate.
-This Rust wrapper is separate from the experimental native profiling APIs
-described below; `no_profile` disables native sampling only.
+provides `SamplingAllocator<A: GlobalAlloc>` and an exclusive `Profiler` session.
+Its default core is allocator-neutral: applications select either
+`mimalloc::MiMalloc` or `rustfs_mimalloc::MiMalloc`. An opt-in `rustfs-allocator`
+feature retains `SamplingMiMalloc::new()`. The base allocator does not depend on
+the profiling crate. See the companion README for usage and migration.
 
 ## Features
 
@@ -363,7 +363,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.6.1", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.0", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
