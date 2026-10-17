@@ -118,7 +118,7 @@ jobs:
           MIMALLOC_BENCH_DURATION_MS: "1000"
           MIMALLOC_BENCH_ENFORCE_QUALITY: "1"
         run: bash scripts/mimalloc_benchmark_report.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: profiling-benchmark
