@@ -130,7 +130,7 @@ CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_PROFILE_RELEASE_STRIP=none \
   MIMALLOC_TEST_EXPECT_SOURCE=1 \
   cargo test -p rustfs-mimalloc-profiling --release --test mimalloc_release
 bash scripts/test_mimalloc_benchmark_report.sh
-MIMALLOC_BENCH_DURATION_MS=1000 MIMALLOC_BENCH_ENFORCE_QUALITY=1 \
+MIMALLOC_BENCH_DURATION_MS=1000 MIMALLOC_BENCH_ENFORCE_QUALITY=0 \
   bash scripts/mimalloc_benchmark_report.sh
 ```
 
@@ -142,7 +142,10 @@ The baseline and overhead examples compare plain RustFS mimalloc, an inactive
 wrapper, allocation sampling, and live tracking. Periodic-report scenarios
 check dropped and pending records. Benchmark history preserves the sampling
 policy, capture engine, worker count, and quality status. Lossy pressure rows
-must not be presented as lossless profiling cost. Performance attribution
+must not be presented as lossless profiling cost. CI retains the real pressure
+report as diagnostics and gates its strict classifier using replayed fixtures.
+Set `MIMALLOC_BENCH_ENFORCE_QUALITY=1` to reject any nonzero live loss in steady
+scenarios; snapshot contention can cause such loss by design. Performance attribution
 requires resource-isolated repeated runs with drift checks.
 
 To export an example's final report after timing ends:

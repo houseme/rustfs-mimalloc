@@ -62,6 +62,8 @@ def main():
         native = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "mimalloc", "libmimalloc-sys"}
         if native & reachable_packages(neutral):
             raise RuntimeError("default profiling archive must not select an allocator")
+        if "ruzstd" in reachable_packages(neutral):
+            raise RuntimeError("default profiling archive must not enable unused ELF decompression")
         resolved = metadata(manifest, all_features=True)
         allocators = [p for p in resolved["packages"] if p["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys"}]
         if len(allocators) != 2 or any(p["version"] != package["version"] for p in allocators):

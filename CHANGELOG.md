@@ -22,6 +22,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Keep all three crate versions synchronized at 0.7.0 and refresh the locked
   libc resolution to 0.2.191. The pinned native allocator and ABI are unchanged.
 
+- Restrict direct object parsing to uncompressed Linux ELF metadata, disabling
+  unused format/compression features and removing the ruzstd decoder dependency.
+  Backtrace symbolization keeps its existing features.
+
 ### Added
 
 - Stateful-provider forwarding contracts for alignment, zeroing, realloc

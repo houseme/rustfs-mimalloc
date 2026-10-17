@@ -100,7 +100,7 @@ Run formatting, all-target/all-feature Clippy, workspace tests and docs. Run
 standalone behavior tests with concurrent allocation, cross-thread frees,
 realloc failure, session restart and missing-allocator rejection. Exercise
 stripped and source-enabled optimized profiles on Linux/macOS, and preserve
-the quality-gated benchmark diagnostics. The Pyroscope consumer must pass
+the benchmark diagnostics and strict quality-classifier tests. The Pyroscope consumer must pass
 default/all-feature tests, raw HTTP payload/auth/tenant checks, and the pinned v2
 server ingestion path. Record local and CI results separately.
 

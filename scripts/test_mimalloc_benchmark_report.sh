@@ -56,6 +56,14 @@ if run_report; then
 fi
 awk -F, '$33 == "NO_PERIODIC_REPORTS" { good=1 } END { exit !good }' "$history"
 
+fixture steady-active-1m 1000 0 0 3 0
+fixture steady-live-1m 1000 0 0 3 1
+if run_report; then
+    echo "live sample drops incorrectly passed strict quality enforcement" >&2
+    exit 1
+fi
+awk -F, '$5 == "steady-live-1m" && $19 == "FAIL_QUALITY" && $33 == "LIVE_DROPS" { good=1 } END { exit !good }' "$history"
+
 printf '%s\n' 'old,v2,header' > "$tmp/old-history.csv"
 if MIMALLOC_BENCH_HISTORY="$tmp/old-history.csv" run_report; then
     echo "old history schema incorrectly accepted" >&2
