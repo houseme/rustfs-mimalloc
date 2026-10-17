@@ -121,7 +121,7 @@ whole-process jemalloc parity is guaranteed.
 ## Validation and diagnostics
 
 ```sh
-cargo test -p rustfs-mimalloc-profiling
+cargo test -p rustfs-mimalloc-profiling -- --test-threads=1
 cargo test -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
 python3 scripts/test_profiling_providers.py --local-dependencies
 cargo test -p rustfs-mimalloc-profiling --test profiling -- --ignored
@@ -133,6 +133,10 @@ bash scripts/test_mimalloc_benchmark_report.sh
 MIMALLOC_BENCH_DURATION_MS=1000 MIMALLOC_BENCH_ENFORCE_QUALITY=0 \
   bash scripts/mimalloc_benchmark_report.sh
 ```
+
+The sampler is process-global. Run profiling test cases serially so test-harness
+allocations cannot contaminate another case's exact counters; the concurrency
+contracts create their own worker threads. Provider/archive drivers enforce this.
 
 Provider and archive verification scripts require Python 3.11 or newer. The
 provider driver generates separate Cargo workspaces from root dependency

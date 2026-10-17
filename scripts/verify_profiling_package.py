@@ -16,6 +16,8 @@ CONFIG = []
 
 
 def cargo(*args, cwd=None):
+    if args[0] == "test":
+        args = (*args, "--", "--test-threads=1")
     return subprocess.run(["cargo", *CONFIG, *args], cwd=cwd, check=True)
 
 

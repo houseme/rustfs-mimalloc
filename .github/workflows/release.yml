@@ -27,6 +27,8 @@ concurrency:
 
 env:
   CARGO_INCREMENTAL: 0
+  # The sampler is process-global; concurrency contracts spawn their own workers.
+  RUST_TEST_THREADS: 1
 
 jobs:
   # ── Resolve version ────────────────────────────────────────────────────────

@@ -120,6 +120,9 @@ mod tests;
         args_test = ["test", "--locked", "--manifest-path", str(manifest)]
         if args.release:
             args_test.extend(["--release", "--test", "mimalloc_release"])
+        # A process-wide sampler also observes allocations in libtest workers.
+        # Serialize test cases; the contracts exercise explicit worker concurrency.
+        args_test.extend(["--", "--test-threads=1"])
         command(config, *args_test, env=environment)
         print(f"{provider}: shared contracts PASS; only {sorted(expected)} selected", flush=True)
         (args.output.resolve() / "dependency-graphs.json").write_text(json.dumps(evidence, indent=2) + "\n")
