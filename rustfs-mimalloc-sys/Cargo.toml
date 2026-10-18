@@ -49,3 +49,7 @@ cc = { workspace = true }
 [[test]]
 name = "upstream_api"
 harness = false
+
+[[test]]
+name = "options_env"
+harness = false

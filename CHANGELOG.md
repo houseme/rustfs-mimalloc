@@ -13,8 +13,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 ### Changed
 
 - Synchronize all three crate versions and internal requirements at 0.7.1.
-- Advance the mimalloc source pin to V3.6.0 development commit `1d03ecbd`,
-  15 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
+- Advance the mimalloc source pin to V3.6.0 development commit `b4f183bb`,
+  17 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
   published release remains v3.5.3.
 - Inherit hashed small-page cache offsets, the owned-page release-CAS fast path,
   and the statistics-merge regression fix. Acquisition/release ordering is
@@ -25,6 +25,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   clarified; these comment corrections do not themselves change sampling.
 - `mi_option_page_reclaim_on_free` is captured when a heap is created. Later
   option changes affect new heaps, not existing heaps or their future contexts.
+- Native environment options use an internal integer parser instead of CRT
+  `strtol`/`errno`. Hexadecimal values are accepted; zero-padded decimal numbers
+  are rejected and retain the option default. Public headers/ABI are unchanged
+  by these last two upstream commits; `_mi_strtol` remains an internal function.
+- Include upstream's attempted oversized-page THP detection, with its unresolved
+  512-byte `/proc/meminfo` read and hugetlb/THP distinction documented. This does
+  not establish that oversized-PMD RSS is fixed; upstream PR #1431 remains open.
 
 ### Added
 
@@ -37,6 +44,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   and three exposed C layouts.
 - Concurrent remote-free/content/reuse regression tests across small, medium
   and 64 KiB blocks. Add upstream's enabled-QSBR fake-runtime test to native CI.
+- Twenty-one independent-process native option tests cover signed/hexadecimal
+  integers, native-long limits, malformed/overflowing input and byte/KiB storage
+  with MiB suffixes. Process environments are installed before allocator startup.
 
 ### Fixed
 
@@ -46,6 +56,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   context; coordinator calls do not reclaim every worker's owned pages.
 - Inherit the reclaim-eligibility fallthrough fix and QSBR-delayed page lifecycle
   handling. Ordinary builds retain QSBR-disabled allocation layouts and paths.
+- Document the existing native `K`/`KiB` environment-suffix scaling issue. Use
+  unsuffixed byte counts or `M`/`MiB` suffixes for size options in this snapshot.
 
 ## [0.7.0] - 2026-10-17
 

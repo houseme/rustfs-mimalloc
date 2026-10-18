@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `1d03ecbd`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `b4f183bb`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -151,11 +151,11 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 1d03ecbd](https://github.com/microsoft/mimalloc/commit/1d03ecbd19a07d8cbef4b93b4d08746f397bb59e),
+The submodule pins [upstream commit b4f183bb](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8),
 on the V3.6.0 development line. The source version is 30600; this is a fixed
 development snapshot, not an upstream v3.6.0 release.
 
-The 15 commits after `6f45cc52` add experimental QSBR primitives, a QSBR heap
+The 17 commits after `6f45cc52` add experimental QSBR primitives, a QSBR heap
 constructor, hashed small-page cache offsets and a lighter remote-free CAS
 when the page is already owned. Statistics merging skips zero current/peak
 updates. The immediate-purge threshold for large ranges remains 32 MiB.
@@ -189,6 +189,19 @@ or Cargo QSBR feature. Protected heaps reject ordinary `mi_heap_delete` and need
 terminal destruction only after all readers and mutators have stopped. There is
 no owning Rust `Heap` constructor for this experimental mode. QSBR delays page
 release; it does not make reading freed Rust objects or arbitrary block reuse safe.
+
+Native environment options now accept hexadecimal integers (`0x2A`) and reject
+zero-padded decimal integers (`042`), retaining their default on invalid input.
+For size options, use an unsuffixed byte count or `M`/`MiB`: the current native
+`K`/`KiB` path omits the multiplier (for example, `32KiB` can mean 32 bytes).
+The new integer parser is internal and adds no public Rust API.
+
+The latest upstream THP change does not yet reliably detect oversized PMD pages:
+its 512-byte `/proc/meminfo` read can miss `Hugepagesize`, and that field describes
+hugetlb pages. [PR #1431](https://github.com/microsoft/mimalloc/pull/1431) remains
+open. For affected Linux deployments, evaluate the existing `no_thp` feature or
+set `MIMALLOC_ALLOW_THP=0` before startup; verify RSS and latency on the actual
+kernel. This source update alone does not establish a THP/RSS fix.
 
 `python3 scripts/check_upstream_abi.py` also compiles C projections of the
 Rust extern signatures, callbacks and three exposed `repr(C)` layouts against
@@ -317,7 +330,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.0 development, commit `1d03ecbd`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.0 development, commit `b4f183bb`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
