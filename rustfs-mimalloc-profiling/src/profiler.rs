@@ -1807,6 +1807,41 @@ mod tests {
     }
 
     #[test]
+    fn live_snapshot_storage_tracks_empty_and_sparse_occupancy() {
+        let _guard = TEST_LOCK.lock().expect("lock test");
+        live::prepare(true, DEFAULT_MAX_LIVE_SAMPLES);
+        RECORDER_ACTIVE.store(true, Ordering::Release);
+        let _active = RecorderActiveGuard;
+        let empty = live::snapshot();
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        live::record(
+            100,
+            stack,
+            SampleWeight::for_allocation(1024, 1),
+            SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire),
+        );
+        let sparse = live::snapshot();
+        println!(
+            "live snapshot storage: empty={} bytes, one={} bytes, entry={} bytes",
+            empty.capacity() * size_of::<live::LiveAllocationSample>(),
+            sparse.capacity() * size_of::<live::LiveAllocationSample>(),
+            size_of::<live::LiveAllocationSample>()
+        );
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 0, "idle reports need no live-copy buffer");
+        assert_eq!(sparse.len(), 1);
+        assert_eq!(sparse[0].stack, stack);
+        assert_eq!(sparse[0].weighted_bytes, 1024.0);
+        assert!(
+            sparse.capacity() < DEFAULT_MAX_LIVE_SAMPLES / 64,
+            "sparse reports must not reserve a whole shard's configured capacity"
+        );
+    }
+
+    #[test]
     fn live_snapshot_survives_reports_and_cross_thread_free() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 4096);

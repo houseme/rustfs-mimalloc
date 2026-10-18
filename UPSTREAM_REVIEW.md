@@ -3,7 +3,7 @@
 ## Result and version provenance
 
 The latest `git pull --ff-only` reported the clean repository current at
-`f21aaa1`, the preceding 0.7.1 update. All three crates and internal requirements
+`16c5f34`, the preceding 0.7.1 update. All three crates and internal requirements
 remain at **0.7.1**. The single 0.7.1 changelog section is
 dated 2026-10-19, with no separate Unreleased content. The tagged 0.7.0 and
 older release notes are preserved. This delivery commits/pushes code only;
@@ -12,12 +12,13 @@ no tag or publication is requested.
 Mimalloc advances from
 [`6f45cc52`](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a)
 to [`b4f183bb`](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8),
-**17 commits** later, including two since `f21aaa1`'s `1d03ecbd` pin. The source
+**17 commits** later. This renewed pass finds no further commits after the
+already-vendored `b4f183bb`; no source-pointer or public-API delta is invented. The source
 still identifies itself as **V3.6.0 / 30600**.
 This is a fixed development commit, not a published v3.6.0 release: the latest
 GitHub release is still [v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3),
 and the live tag-prefix query returns no v3.6 tags. The parent revision's
-[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39154616201).
+[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39159669704).
 New-commit CI is checked separately after push.
 
 ## Upstream changes and PR status
@@ -41,6 +42,42 @@ reproduced below.
 | [21d7e2ef](https://github.com/microsoft/mimalloc/commit/21d7e2ef7ae24cc40a799324b38fa25617b2832f) | Adds an initial `contrib/rust` crate with allocator, heap and sys APIs. It is distinct from the registry `mimalloc` 0.1.52 provider tested by this project. This update vendors C changes and retains the existing stable `GlobalAlloc` API/provider model; it does not substitute that new crate or add nightly allocator features. |
 | [55fbfeb0](https://github.com/microsoft/mimalloc/commit/55fbfeb0896bec480997e4b86c8315710d809efa) | Replaces CRT `strtol`/`errno` in environment option initialization with internal `_mi_strtol`. This reduces CRT dependencies at startup, accepts hexadecimal and rejects zero-padded decimal numbers. It does not change a per-allocation algorithm or add public FFI. |
 | [b4f183bb](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8) | Attempts to detect large OS pages from `/proc/meminfo` and disable THP advice above 8 MiB. The fixed read commonly misses the field, which also describes hugetlb rather than PMD THP size. No RSS improvement is established. |
+
+## Profiling report buffer improvement
+
+Reading the complete live-snapshot/realloc paths identified a report-time memory
+cost: reserving a configured shard's capacity even when its live map is empty.
+Under the default 16,384-slot configuration, a release-mode regression probe at
+`16c5f34` observed 256 reserved vector elements for an empty snapshot. One entry
+followed by empty shards grew that buffer to 512 elements. On this macOS arm64
+build, `LiveAllocationSample` is 536 bytes.
+
+| Snapshot state | Previous vector capacity | Updated vector capacity |
+| --- | ---: | ---: |
+| No retained records | 137,216 bytes | 0 bytes |
+| One retained record | 274,432 bytes | 536 bytes |
+
+The same release-mode test reproduced the old behavior before the change and
+passes afterward. These values measure the live-copy vector's requested storage;
+they exclude allocator bookkeeping, preallocated hash tables, aggregation,
+symbolization and pprof output. This establishes a specific temporary-capacity
+reduction, not process RSS, latency or throughput attribution.
+
+The updated vector starts from the existing atomic occupancy counters. They are
+a sizing hint, not a correctness predicate: concurrent admissions can make the
+estimate too small. Before copying, the code checks actual map length under its
+shard lock. If space is insufficient, it unlocks, reserves that shard's hard
+limit, and locks again. Every later admission fits that bounded reservation;
+copying cannot grow the vector while holding the lock. Realloc reservations,
+table rebuilding, membership counters and removal-before-provider-free retain
+their existing behavior. No allocator hot-path code, sampling default or public
+API is changed.
+
+Two regressions check empty/sparse capacity and a deterministic underestimate
+with newly admitted records, including a pending realloc slot. Existing
+concurrent reporting/cross-thread free and explicit pressure tests cover the
+full public path. The live table's initialization footprint remains unchanged;
+this change does not implement stack interning or alter its metadata counter.
 
 ## Follow-up findings and startup compatibility
 
@@ -151,9 +188,9 @@ profile tests independently:
 The stateful-provider tests cover alignment, zeroing, failure, in-place/moving
 realloc and cross-thread free independently of provider size classes. Session
 generations, visible TLS admission, live realloc reservation/rollback and
-bounded drop reporting remain unchanged. Default-core, compatibility API and
-normalized archive/provider checks pass at the new pin. Explicit pressure tests
-and source-enabled optimized profiles remain evidence from the preceding pass.
+bounded drop reporting remain unchanged. Default-core, compatibility API,
+explicit pressure tests and normalized archive/provider checks pass with the
+report-buffer update. Source-enabled optimized profiles are also checked by CI.
 Native `no_profile` does not disable Rust wrapper
 sampling. No profiler algorithm or default sampling policy changes in this pass.
 
@@ -229,28 +266,31 @@ Prioritize further work in this order:
 
 Stable Rust 1.99.1 / macOS arm64 local evidence at `b4f183bb`:
 
-- Default workspace and secure/debug/no-profile/all-feature combinations pass.
-  The final allocator suite has 44 cases; the added overlap case passes four
-  configurations. The profiler has 69 unit cases, shared behavior contracts,
+- Default and all-feature workspace combinations pass for this change; the
+  native feature matrix also passed the preceding commit's CI. The unchanged
+  allocator suite has 44 cases. The profiler now has 71 unit cases, shared behavior contracts,
   missing-allocator rejection, stateful-provider and compatibility API tests.
-- Both normally ignored pressure tests were explicitly executed in the preceding
-  pass; those results are not a rerun at the new pin. Both isolated
+- Both normally ignored pressure tests are explicitly executed for this
+  report-buffer change. Both isolated
   provider graphs pass behavior and optimized profile checks. Test-case
   serialization is not cited as race coverage: the contracts explicitly spawn
   their worker threads.
-- Formatting, all-target check, all-target/all-feature Clippy with warnings denied,
+- Formatting, all-target/all-feature Clippy with warnings denied,
   rustdoc with warnings denied, API/ABI parity and seven controls pass.
-- All three package builds pass, including normalized profiling archive tests
-  with local allocator/sys patches and both provider graphs. This does not claim
-  that matching 0.7.1 registry packages were published.
-- Upstream Debug/C `test-api`, `test-api-fill`, `test-arena`, `test-bitmap`,
-  `test-fork` and enabled `test-qsbr` pass 6/6. CI now includes the QSBR target.
+- The profiling package is rebuilt and its normalized archive passes tests with
+  local allocator/sys patches and both provider graphs. The unchanged sys and
+  allocator packages passed the preceding native pass. This does not claim that
+  matching 0.7.1 registry packages were published.
+- The unchanged upstream source passed Debug/C `test-api`, `test-api-fill`,
+  `test-arena`, `test-bitmap`, `test-fork` and enabled `test-qsbr` 6/6 in the
+  preceding pass; those targets remain in CI.
 - Default and secure/debug/no-profile custom-tracking examples passed with actual
   hooks active in the preceding pass; the current pin is checked in CI.
   Runtime metadata and numeric version agree at 30600.
 - Native option parsing passes all 21 child processes in every local feature
-  configuration. The exact-source THP probe reproduces the documented fallback;
-  separate diagnostic child processes reproduce the existing KiB suffix issue.
+  configuration checked by the preceding native pass. Default/all-feature
+  workspace checks repeat them here. The preceding exact-source THP probe and
+  diagnostic child processes reproduce the documented THP/KiB issues.
 - Python 3.12 runs the provider/archive tools (which require 3.11+). No historical
   toolchain was installed for upstream's new Rust crate. Rust 1.95 compatibility,
   Linux/musl and Windows execution at this pin are checked by the matching CI.

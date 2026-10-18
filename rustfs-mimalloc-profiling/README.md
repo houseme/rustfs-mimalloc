@@ -105,6 +105,11 @@ reporter-visible buffers even while their thread is idle; tracked frees remove m
 removals may wait for a shard lock. Reports copy live shards individually, so
 snapshots do not freeze the application at one global instant.
 
+The temporary live-copy vector is sized from retained occupancy. Stable empty
+snapshots need no vector storage; concurrent admissions can grow that buffer
+outside the shard lock before copying. The preallocated live tables and
+`live_metadata_payload_bytes` accounting are unchanged.
+
 Portable backtrace capture is the default. `MimallocStackCapture::Native` is
 an opt-in Linux GNU collector and is rejected elsewhere. Mapping and build-ID
 collection supports Linux and Apple targets; other targets retain addresses

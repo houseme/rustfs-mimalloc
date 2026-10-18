@@ -50,6 +50,14 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- `rustfs-mimalloc-profiling`: size the temporary live-snapshot vector from
+  retained occupancy instead of reserving configured shard capacity on every
+  report. Stable empty snapshots reserve no vector storage. If concurrent
+  admissions outgrow the estimate, reserve the shard limit outside its lock
+  before copying; retain every entry and pending realloc state.
+- Add regressions for empty/sparse snapshot storage and occupancy growth between
+  sizing and copying. These reduce temporary buffer capacity without changing
+  preallocated live metadata, sampling defaults or allocation-provider dispatch.
 - Preserve alignment obligations in runtime option setter documentation;
   precise guarded placement can violate Rust allocation contracts.
 - Clarify that `MiMalloc::collect` and `Heap::collect` collect the caller's

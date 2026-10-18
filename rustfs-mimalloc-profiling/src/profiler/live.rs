@@ -302,7 +302,9 @@ pub(super) fn snapshot() -> Vec<LiveAllocationSample> {
     let Some(shards) = SHARDS.get() else {
         return Vec::new();
     };
-    let mut samples = Vec::new();
+    // Occupancy is only a sizing hint: workers can add/remove records while
+    // reporting. Stable empty/sparse heaps need no whole-shard reservation.
+    let mut samples = Vec::with_capacity(sample_count());
     for shard in shards {
         // Allocate the output storage before taking a shard lock. Samples are
         // copied under the lock, with aggregation/symbolization done afterward.
@@ -314,8 +316,7 @@ pub(super) fn snapshot() -> Vec<LiveAllocationSample> {
             )
         };
         let mut replacement = rebuild.then(|| HashMap::with_capacity(capacity));
-        samples.reserve(capacity);
-        let mut entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
+        let mut entries = lock_snapshot_entries(shard, &mut samples);
         let old = replacement.take().map(|mut replacement| {
             replacement.extend(
                 entries
@@ -332,6 +333,23 @@ pub(super) fn snapshot() -> Vec<LiveAllocationSample> {
         drop(old);
     }
     samples
+}
+
+fn lock_snapshot_entries<'a>(
+    shard: &'a LiveShard,
+    samples: &mut Vec<LiveAllocationSample>,
+) -> std::sync::MutexGuard<'a, LiveMap> {
+    let entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
+    if samples.capacity() - samples.len() >= entries.samples.len() {
+        return entries;
+    }
+    // Admissions outgrew the initial occupancy estimate. Reserve this shard's
+    // hard limit outside its lock, then reacquire it. All later admissions fit;
+    // copying under the lock cannot allocate or discard a retained sample.
+    let capacity = entries.capacity;
+    drop(entries);
+    samples.reserve(capacity);
+    shard.entries.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 pub(super) fn sample_count() -> usize {
@@ -352,4 +370,60 @@ pub(super) fn dropped_sample_count() -> u64 {
 
 pub(super) fn metadata_payload_bytes() -> usize {
     METADATA_PAYLOAD_BYTES.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_reserves_for_admissions_after_its_initial_estimate() {
+        let sample = LiveAllocationSample {
+            stack: StackKey {
+                frames: [42; super::super::MAX_CAPTURE_DEPTH],
+                depth: 1,
+            },
+            weighted_objects: 1.0,
+            weighted_bytes: 1024.0,
+        };
+        let shard = LiveShard {
+            entries: Mutex::new(LiveMap {
+                samples: (0..8)
+                    .map(|pointer| {
+                        (
+                            pointer,
+                            LiveEntry {
+                                sample,
+                                reallocating: pointer == 0,
+                            },
+                        )
+                    })
+                    .collect(),
+                capacity: 8,
+                membership_counts: [0; 64],
+            }),
+            count: AtomicUsize::new(8),
+            membership: AtomicU64::new(0),
+        };
+        let mut samples = Vec::with_capacity(1);
+        samples.push(sample);
+        let entries = lock_snapshot_entries(&shard, &mut samples);
+        assert!(samples.capacity() - samples.len() >= entries.samples.len());
+        let capacity = samples.capacity();
+        samples.extend(entries.samples.values().map(|entry| entry.sample));
+        assert_eq!(
+            samples.len(),
+            9,
+            "retain the prefix and every new admission"
+        );
+        assert_eq!(
+            samples.capacity(),
+            capacity,
+            "copying must not grow storage"
+        );
+        assert!(
+            entries.samples[&0].reallocating,
+            "keep pending realloc state"
+        );
+    }
 }
