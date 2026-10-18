@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.0"
+rustfs-mimalloc = "0.7.1"
 ```
 
 ```rust
@@ -50,7 +50,7 @@ APIs, while deallocation uses the general `mi_free` path.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30504 = V3.5.4 interim source line
+let version = MiMalloc::version();       // 30600 = V3.6.0 development source line
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -72,7 +72,13 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **post-v3.5.4 interim (`6f45cc52`)**.
+The submodule is pinned to upstream **V3.6.0 development (`1d03ecbd`)**.
+The numeric C version is 30600. QSBR's experimental constructor is raw sys FFI
+and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
+no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has
+the same ID and retains the old Rust variant. Preserve alignment requirements.
+Reclaim-on-free options now affect heaps created after configuration; use the
+environment before startup to affect the main heap's policy.
 Allocation helpers match this snapshot. `MiMalloc::expand` can reuse a
 block's existing capacity without moving it; padding-enabled builds can reject
 the request. `MiMalloc::rezalloc{,_aligned}`, `Heap::rezalloc{,_aligned}` and
@@ -137,7 +143,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.0", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.1", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
@@ -186,7 +192,7 @@ heap. This API does not change `GlobalAlloc` or global page-retention settings.
 ## Rust Toolchain Compatibility
 
 Cargo manifests intentionally omit `rust-version`. CI checks stable Rust and
-Rust 1.96.0 compatibility; no minimum Rust version is declared by these crates.
+Rust 1.95.0 compatibility; no minimum Rust version is declared by these crates.
 
 ## License
 

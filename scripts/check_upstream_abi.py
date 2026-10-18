@@ -69,7 +69,7 @@ def generate(bindings):
             raise ValueError(f"unsupported ABI alias: {name}; expected {expected}")
     lines = [
         '#include "mimalloc.h"', '#include "mimalloc-profile.h"',
-        '#include "mimalloc-stats.h"', "#include <stddef.h>",
+        '#include "mimalloc-stats.h"', '#include "mimalloc/qsbr.h"', "#include <stddef.h>",
         '_Static_assert(sizeof(unsigned long long) == sizeof(uint64_t), "heartbeat width");',
         '_Static_assert(_Alignof(unsigned long long) == _Alignof(uint64_t), "heartbeat alignment");',
     ]

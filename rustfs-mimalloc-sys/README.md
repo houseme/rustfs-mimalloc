@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to commit `6f45cc52` after v3.5.4 interim.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `1d03ecbd`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.7.0"
+rustfs-mimalloc-sys = "0.7.1"
 ```
 
 ```rust
@@ -91,13 +91,13 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The source pin follows the **interim** tag and includes fixes from upstream
+The V3.6.0 development pin retains fixes from upstream
 PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
-through 2026-10-16. New public APIs include `mi_arenas_purge` and two options
+through the 2026-10-19 review. Available APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
-The 31 commits after `4e64fce6` add `mi_thread_id_of`,
+The previously added `mi_thread_id_of`,
 `mi_heap_set_debug_fill_preserve`, `mi_theap_delete` and
-`mi_theap_quiescent_abandon`; all four have raw bindings. Context deletion
+`mi_theap_quiescent_abandon` all retain raw bindings. Context deletion
 invalidates cached aliases. Foreign-context abandonment requires a quiescent
 owner outside mimalloc and no concurrent heap/context deletion. No option IDs
 or profiler ABI fields change. This release also exposes existing `mi_expand`, zero-initialized
@@ -108,6 +108,15 @@ The complementary `scripts/check_upstream_abi.py` uses the host GCC/Clang C
 compiler to check extern signatures, callback compatibility, and size/alignment/
 offsets of the exposed heap-area and profiler layouts. This C projection check
 does not replace runtime linking or target-specific validation.
+
+V3.6.0 adds experimental `mi_heap_new_qsbr` in `mimalloc/qsbr.h`. The default
+build has no QSBR adapter and returns null/ENOSYS. Host callbacks and embedded C
+metadata are application-defined, not allocator exports or Rust-managed reader
+state. Protected heaps cannot use normal `mi_heap_delete`; destroy only after
+all readers and mutators stop. This remains raw FFI without a Cargo QSBR feature.
+The new `mi_option_unsafe_guarded_precise` associated constant retains ID 31 and
+the old Rust variant. Precise placement must preserve the caller's alignment
+contract. Reclaim-on-free policy is captured at heap creation in this pin.
 
 Upstream custom tracking requires `MI_TRACK_CUSTOM` at C compile time and two
 application-defined C symbols. See the wrapper's `custom_tracking` example;
@@ -126,7 +135,7 @@ also link `execinfo` and `util`.
 ## Rust Toolchain Compatibility
 
 Cargo manifests intentionally omit `rust-version`. CI checks stable Rust and
-Rust 1.96.0 compatibility; no minimum Rust version is declared by these crates.
+Rust 1.95.0 compatibility; no minimum Rust version is declared by these crates.
 
 ## License
 

@@ -31,6 +31,30 @@ def option_ids(header):
     return values
 
 
+def validate_options(headers, bindings):
+    c_options = option_ids(headers)
+    rust_enum = re.search(r"pub enum mi_option_t\s*\{(.*?)\}", bindings, re.DOTALL)[1]
+    rust_options = {name: int(value) for name, value in re.findall(r"(mi_option_\w+)\s*=\s*(\d+)", rust_enum)}
+    aliases = dict(re.findall(r"pub const (mi_option_\w+): Self = Self::(mi_option_\w+);", bindings))
+    for alias, target in aliases.items():
+        if target not in rust_options:
+            raise SystemExit(f"unknown option alias target: {alias} -> {target}")
+        if alias in c_options and c_options[alias] != rust_options[target]:
+            raise SystemExit(f"option alias ID drift: {alias}")
+    for name, value in rust_options.items():
+        if name in c_options and c_options[name] != value:
+            raise SystemExit(f"option ID drift: {name}: Rust={value}, C={c_options[name]}")
+        candidates = [name] + [alias for alias, target in aliases.items() if target == name]
+        if not any(c_options.get(candidate) == value for candidate in candidates):
+            raise SystemExit(f"option ID drift: {name}: Rust={value}, C={c_options.get(name)}")
+    active = {name for name in c_options if name.startswith("mi_option_") and "deprecated" not in name}
+    unbound = sorted(name for name in active - rust_options.keys() - aliases.keys()
+                     if c_options[name] not in rust_options.values())
+    if unbound:
+        raise SystemExit("unbound active options: " + ", ".join(unbound))
+    return rust_options
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, help="save the API inventory")
@@ -38,7 +62,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     include = root / "rustfs-mimalloc-sys/c_src/mimalloc/include"
     headers = uncomment("\n".join((include / name).read_text(encoding="utf-8") for name in [
-        "mimalloc.h", "mimalloc-profile.h", "mimalloc-stats.h",
+        "mimalloc.h", "mimalloc-profile.h", "mimalloc-stats.h", "mimalloc/qsbr.h",
     ]))
     bindings = uncomment((root / "rustfs-mimalloc-sys/src/lib.rs").read_text(encoding="utf-8"))
     bound = set(re.findall(r"pub (?:unsafe )?(?:const )?fn (mi_\w+)\(", bindings))
@@ -47,21 +71,7 @@ def main():
     if missing:
         raise SystemExit("bindings absent from public headers: " + ", ".join(missing))
 
-    c_options = option_ids(headers)
-    rust_enum = re.search(r"pub enum mi_option_t\s*\{(.*?)\}", bindings, re.DOTALL)[1]
-    rust_options = {name: int(value) for name, value in re.findall(r"(mi_option_\w+)\s*=\s*(\d+)", rust_enum)}
-    for name, value in rust_options.items():
-        if c_options.get(name) != value:
-            raise SystemExit(f"option ID drift: {name}: Rust={value}, C={c_options.get(name)}")
-    active = {name for name in c_options if name.startswith("mi_option_")
-              and "deprecated" not in name}
-    # Upstream's aliases already resolve to bound variants. The Rust-only
-    # collect_merges_stats alias preserves the former binding spelling.
-    aliases = set(re.findall(r"pub const (mi_option_\w+): Self", bindings))
-    unbound_options = sorted(name for name in active - rust_options.keys() - aliases
-                             if c_options[name] not in rust_options.values())
-    if unbound_options:
-        raise SystemExit("unbound active options: " + ", ".join(unbound_options))
+    rust_options = validate_options(headers, bindings)
 
     exported = set()
     for declaration in re.findall(r"\bmi_decl_export\b([^;{}]+);", headers):

@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream commit 6f45cc52 (post-v3.5.4 interim).
+//! Pinned to upstream V3.6.0 development commit 1d03ecbd.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -85,6 +85,7 @@ pub enum mi_option_t {
     mi_option_retry_on_oom = 27,
     mi_option_guarded_min = 29,
     mi_option_guarded_max = 30,
+    /// Legacy spelling; disregards minimal alignment and can violate Rust allocation contracts.
     mi_option_guarded_precise = 31,
     mi_option_guarded_sample_rate = 32,
     mi_option_guarded_sample_seed = 33,
@@ -111,6 +112,11 @@ pub enum mi_option_t {
 }
 
 impl mi_option_t {
+    /// Upstream V3.6 spelling of [`Self::mi_option_guarded_precise`].
+    /// The old enum variant remains available, including through glob imports.
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_unsafe_guarded_precise: Self = Self::mi_option_guarded_precise;
+
     /// Deprecated upstream alias for [`Self::mi_option_arena_purge_min_size`].
     #[allow(non_upper_case_globals)]
     pub const mi_option_minimal_purge_size: Self = Self::mi_option_arena_purge_min_size;
@@ -378,8 +384,18 @@ unsafe extern "C" {
 
 unsafe extern "C" {
     pub fn mi_heap_new() -> *mut mi_heap_t;
+    /// Experimental QSBR constructor from `mimalloc/qsbr.h`.
+    ///
+    /// Ordinary builds have no QSBR runtime adapter: this reports ENOSYS and
+    /// returns null. Enabling QSBR requires host-defined C metadata and hooks
+    /// embedded in the single-source build. It delays page release, not block
+    /// reuse, and does not make freed Rust objects readable. Protected heaps
+    /// reject `mi_heap_delete`; destroy them only after every reader and mutator
+    /// has stopped. There is deliberately no owning `Heap` wrapper for them.
+    pub fn mi_heap_new_qsbr() -> *mut mi_heap_t;
     pub fn mi_heap_delete(heap: *mut mi_heap_t);
     pub fn mi_heap_destroy(heap: *mut mi_heap_t);
+    /// Collects this heap's context on the caller, not all of its worker contexts.
     pub fn mi_heap_collect(heap: *mut mi_heap_t, force: bool);
     pub fn mi_heap_main() -> *mut mi_heap_t;
     pub fn mi_heap_of(p: *const c_void) -> *mut mi_heap_t;

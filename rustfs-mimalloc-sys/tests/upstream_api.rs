@@ -144,6 +144,25 @@ fn header_and_runtime_versions_agree() {
     );
 }
 
+fn qsbr_constructor_is_linked_but_requires_a_runtime_adapter() {
+    use mi_option_t::*;
+    // This crate's ordinary C build has MI_QSBR=0. The constructor is exported,
+    // but reports ENOSYS instead of pretending to provide reader reclamation.
+    unsafe {
+        ALLOCATOR_ERRORS.store(0, Ordering::Relaxed);
+        mi_register_error(Some(count_allocator_error), std::ptr::null_mut());
+        let heap = mi_heap_new_qsbr();
+        mi_register_error(None, std::ptr::null_mut());
+        assert!(heap.is_null());
+        assert_eq!(ALLOCATOR_ERRORS.load(Ordering::Relaxed), 1);
+        assert_eq!(mi_option_t::mi_option_unsafe_guarded_precise as i32, 31);
+        assert_eq!(
+            mi_option_guarded_precise,
+            mi_option_t::mi_option_unsafe_guarded_precise
+        );
+    }
+}
+
 fn deleted_context_preserves_blocks_and_resets_the_default() {
     unsafe {
         let heap = mi_heap_new();
@@ -513,6 +532,7 @@ fn main() {
         no_profile_ignores_automatic_profile_startup();
     }
     header_and_runtime_versions_agree();
+    qsbr_constructor_is_linked_but_requires_a_runtime_adapter();
     deleted_context_preserves_blocks_and_resets_the_default();
     foreign_abandon_requires_a_quiescent_owner();
     heap_lifecycle_includes_direct_os_pages();

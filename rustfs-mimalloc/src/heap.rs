@@ -409,7 +409,11 @@ impl Heap {
         core::mem::forget(self);
     }
 
-    /// Force garbage collection on this heap.
+    /// Collect this heap's allocation context for the calling thread.
+    ///
+    /// Upstream resolves the caller's thread-local context; it does not visit
+    /// every worker using this heap. Arrange collection on each owning worker
+    /// when reclaiming an idle thread pool's pages.
     pub fn collect(&self, force: bool) {
         unsafe { rustfs_mimalloc_sys::mi_heap_collect(self.ptr.as_ptr(), force) }
     }
@@ -560,6 +564,113 @@ mod tests {
     fn heap_create_delete() {
         let heap = Heap::new().expect("heap::new failed");
         heap.delete();
+    }
+
+    #[test]
+    fn contended_cross_thread_frees_preserve_data_and_allow_reuse() {
+        let heap = Heap::new().unwrap();
+        for size in [64, 4096, 65536] {
+            let addresses: Vec<_> = (0..128)
+                .map(|_| unsafe {
+                    let ptr = heap.malloc_aligned(size, 64);
+                    assert!(!ptr.is_null());
+                    assert_eq!(ptr as usize % 64, 0);
+                    ptr.write_bytes(0x5A, size);
+                    ptr as usize
+                })
+                .collect();
+            let barrier = std::sync::Barrier::new(8);
+            std::thread::scope(|scope| {
+                for chunk in addresses.chunks(16) {
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        for &address in chunk {
+                            // Each worker receives distinct blocks; the parent
+                            // heap stays alive until all workers have joined.
+                            unsafe {
+                                let ptr = address as *mut u8;
+                                assert_eq!(*ptr, 0x5A);
+                                assert_eq!(*ptr.add(size - 1), 0x5A);
+                                rustfs_mimalloc_sys::mi_free(ptr.cast());
+                            }
+                        }
+                    });
+                }
+            });
+            heap.collect(true);
+            unsafe {
+                let ptr = heap.zalloc_aligned(size, 64);
+                assert!(!ptr.is_null());
+                assert!((0..size).all(|i| *ptr.add(i) == 0));
+                rustfs_mimalloc_sys::mi_free(ptr.cast());
+            }
+        }
+    }
+
+    #[test]
+    fn allocation_reuse_overlaps_remote_free_and_owner_exit() {
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc::sync_channel,
+        };
+        let heap = Arc::new(Heap::new().unwrap());
+        let (send, receive) = sync_channel::<Vec<(usize, usize)>>(4);
+        let receive = Arc::new(Mutex::new(receive));
+        let freed = AtomicUsize::new(0);
+        let data_intact = AtomicBool::new(true);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let receive = receive.clone();
+                let freed = &freed;
+                let data_intact = &data_intact;
+                scope.spawn(move || {
+                    loop {
+                        let batch = receive.lock().unwrap().recv();
+                        let Ok(batch) = batch else { break };
+                        for (address, size) in batch {
+                            // Ownership travels one way through the channel. Freeing
+                            // overlaps more allocation and producer context teardown;
+                            // the parent heap stays alive outside this entire scope.
+                            unsafe {
+                                let ptr = address as *mut u8;
+                                if *ptr != 0xA5 || *ptr.add(size - 1) != 0xA5 {
+                                    // Report after draining, so a failed assertion
+                                    // cannot strand producers on the bounded queue.
+                                    data_intact.store(false, Ordering::Relaxed);
+                                }
+                                rustfs_mimalloc_sys::mi_free(ptr.cast());
+                            }
+                            freed.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+            for _ in 0..2 {
+                let send = send.clone();
+                let heap = heap.clone();
+                scope.spawn(move || {
+                    let local = heap.thread_local().unwrap();
+                    for size in [64, 4096, 65536] {
+                        for _ in 0..8 {
+                            let batch = (0..32)
+                                .map(|_| unsafe {
+                                    let ptr = local.malloc(size);
+                                    assert!(!ptr.is_null());
+                                    ptr.write_bytes(0xA5, size);
+                                    (ptr as usize, size)
+                                })
+                                .collect();
+                            send.send(batch).unwrap();
+                        }
+                    }
+                });
+            }
+            drop(send);
+        });
+        assert!(data_intact.load(Ordering::Relaxed));
+        assert_eq!(freed.load(Ordering::Relaxed), 2 * 3 * 8 * 32);
     }
 
     #[test]

@@ -3,7 +3,8 @@
 
 import unittest
 
-from check_upstream_abi import BINDINGS, compile_probe, generate
+from check_upstream_abi import BINDINGS, INCLUDE, compile_probe, generate
+from check_upstream_api import uncomment, validate_options
 
 
 class AbiControls(unittest.TestCase):
@@ -44,6 +45,15 @@ class AbiControls(unittest.TestCase):
     def test_changed_size_alias_is_not_silently_projected_as_size_t(self):
         with self.assertRaisesRegex(ValueError, "unsupported ABI alias: size_t"):
             generate(self.bindings.replace("pub type size_t = usize;", "pub type size_t = u32;", 1))
+
+    def test_renamed_option_preserves_the_legacy_variant(self):
+        options = validate_options(uncomment((INCLUDE / "mimalloc.h").read_text()), uncomment(self.bindings))
+        self.assertEqual(options["mi_option_guarded_precise"], 31)
+
+    def test_renamed_option_alias_cannot_hide_numeric_drift(self):
+        wrong = self.bindings.replace("mi_option_guarded_precise = 31", "mi_option_guarded_precise = 32", 1)
+        with self.assertRaisesRegex(SystemExit, "option alias ID drift"):
+            validate_options(uncomment((INCLUDE / "mimalloc.h").read_text()), uncomment(wrong))
 
 
 if __name__ == "__main__":

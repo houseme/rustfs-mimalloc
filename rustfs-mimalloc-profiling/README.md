@@ -16,7 +16,7 @@ For the upstream `mimalloc` provider:
 
 ```toml
 [dependencies]
-rustfs-mimalloc-profiling = { version = "0.7.0", default-features = false }
+rustfs-mimalloc-profiling = { version = "0.7.1", default-features = false }
 mimalloc = "0.1.52"
 ```
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-To use the RustFS provider directly, depend on `rustfs-mimalloc = "0.7.0"`
+To use the RustFS provider directly, depend on `rustfs-mimalloc = "0.7.1"`
 and substitute `rustfs_mimalloc::MiMalloc` for the provider above.
 
 ### Migration from 0.6
@@ -50,7 +50,7 @@ The old convenience name and zero-argument constructor remain available with an
 explicit feature:
 
 ```toml
-rustfs-mimalloc-profiling = { version = "0.7.0", features = ["rustfs-allocator"] }
+rustfs-mimalloc-profiling = { version = "0.7.1", features = ["rustfs-allocator"] }
 ```
 
 ```rust
@@ -96,7 +96,7 @@ Applications schedule reports and provide their own storage or uploader.
 Only Rust allocations through `SamplingAllocator` after initialization are
 observed. Installing a bare provider alone does not enable this profiler;
 direct C allocations are outside its coverage. The Rust wrapper is independent
-of the experimental native mimalloc profiler. The 0.6 allocator's `no_profile`
+of the experimental native mimalloc profiler. The allocator's `no_profile`
 feature disables native sampling, but does not disable this wrapper.
 
 Allocation event buffers and the live table are bounded. Registry/queue

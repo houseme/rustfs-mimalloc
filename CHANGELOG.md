@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [0.7.1] - 2026-10-19
+
+### Changed
+
+- Synchronize all three crate versions and internal requirements at 0.7.1.
+- Advance the mimalloc source pin to V3.6.0 development commit `1d03ecbd`,
+  15 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
+  published release remains v3.5.3.
+- Inherit hashed small-page cache offsets, the owned-page release-CAS fast path,
+  and the statistics-merge regression fix. Acquisition/release ordering is
+  retained when a cross-thread free claims page ownership.
+- Expose upstream's `mi_option_unsafe_guarded_precise` name as an associated
+  constant at ID 31, retaining the old Rust enum variant and glob imports.
+  Native guarded-sampling byte units and profile default comments are
+  clarified; these comment corrections do not themselves change sampling.
+- `mi_option_page_reclaim_on_free` is captured when a heap is created. Later
+  option changes affect new heaps, not existing heaps or their future contexts.
+
+### Added
+
+- Raw experimental `mi_heap_new_qsbr` FFI from `mimalloc/qsbr.h`. Default builds
+  return null with ENOSYS. Enabled builds require runtime-owned metadata,
+  reader/grace-period hooks and a custom C integration; no general Rust QSBR
+  algorithm or owning `Heap` wrapper is implied.
+- API and ABI audits include the QSBR header and validate renamed option aliases:
+  131 Rust function names, 45 option IDs, 122 extern signatures, nine callbacks
+  and three exposed C layouts.
+- Concurrent remote-free/content/reuse regression tests across small, medium
+  and 64 KiB blocks. Add upstream's enabled-QSBR fake-runtime test to native CI.
+
+### Fixed
+
+- Preserve alignment obligations in runtime option setter documentation;
+  precise guarded placement can violate Rust allocation contracts.
+- Clarify that `MiMalloc::collect` and `Heap::collect` collect the caller's
+  context; coordinator calls do not reclaim every worker's owned pages.
+- Inherit the reclaim-eligibility fallthrough fix and QSBR-delayed page lifecycle
+  handling. Ordinary builds retain QSBR-disabled allocation layouts and paths.
+
 ## [0.7.0] - 2026-10-17
 
 ### Changed

@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.5.4 interim, commit `6f45cc52`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `1d03ecbd`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,7 +27,7 @@ Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.0"
+rustfs-mimalloc = "0.7.1"
 ```
 
 ```rust
@@ -85,7 +85,7 @@ Implements `GlobalAlloc` with aligned allocation/reallocation and general
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30504 = V3.5.4
+// Version: 30600 = V3.6.0 development
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -151,15 +151,14 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 6f45cc52](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a),
-after the v3.5.4 interim tag. The source version remains 30504. This pin
-includes upstream fixes through 2026-10-16, plus new statistics-merge and
-arena-purge controls.
+The submodule pins [upstream commit 1d03ecbd](https://github.com/microsoft/mimalloc/commit/1d03ecbd19a07d8cbef4b93b4d08746f397bb59e),
+on the V3.6.0 development line. The source version is 30600; this is a fixed
+development snapshot, not an upstream v3.6.0 release.
 
-The 31 commits after the previous `4e64fce6` pin add four public C APIs,
-custom tracking hooks, quiescent fork cleanup, natural-alignment improvements
-and allocation cache offsets. The source is a development snapshot, not a new
-upstream release. The immediate-purge threshold for large ranges is 32 MiB.
+The 15 commits after `6f45cc52` add experimental QSBR primitives, a QSBR heap
+constructor, hashed small-page cache offsets and a lighter remote-free CAS
+when the page is already owned. Statistics merging skips zero current/peak
+updates. The immediate-purge threshold for large ranges remains 32 MiB.
 See [the upstream and performance review](UPSTREAM_REVIEW.md) for the PR audit,
 verification results, and remaining optimization opportunities.
 
@@ -175,6 +174,21 @@ verification results, and remaining optimization opportunities.
 Audit the binding names and option IDs against the pinned C headers with
 `python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`.
 The inventory records unbound C exports; name parity does not verify the ABI.
+
+V3.6 migration also exposes `mi_option_t::mi_option_unsafe_guarded_precise`
+while preserving `mi_option_guarded_precise`, including existing glob imports.
+Do not enable precise guarded placement for Rust allocations requiring alignment.
+`mi_option_page_reclaim_on_free` now initializes each heap's policy; configure it
+before creating a heap. Use the environment before process startup to affect the
+main heap, which can exist before Rust `main` runs.
+
+Raw `mi_heap_new_qsbr` is declared in `mimalloc/qsbr.h`. It returns null/ENOSYS in
+ordinary builds. Enabled single-source builds require custom host C metadata and
+four runtime-provided reclamation hooks; the crate supplies no reader protocol
+or Cargo QSBR feature. Protected heaps reject ordinary `mi_heap_delete` and need
+terminal destruction only after all readers and mutators have stopped. There is
+no owning Rust `Heap` constructor for this experimental mode. QSBR delays page
+release; it does not make reading freed Rust objects or arbitrary block reuse safe.
 
 `python3 scripts/check_upstream_abi.py` also compiles C projections of the
 Rust extern signatures, callbacks and three exposed `repr(C)` layouts against
@@ -235,7 +249,7 @@ To collect a built-in heap profile, start the application with
 `MIMALLOC_PROFILE=/path/to/profile` (protobuf), or a name ending in `.heap`
 (text). Sampling is inactive unless enabled.
 
-**Interim limitation:** the pinned upstream code copies `profile_disabled=true`
+**Native profiler limitation:** the pinned upstream code copies `profile_disabled=true`
 into new thread heaps without clearing it. Dedicated-heap and worker-thread
 profiling may therefore remain inactive. The integration test verifies actual
 samples on the main heap in a single-threaded process; it does not establish
@@ -303,7 +317,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (post-v3.5.4 interim, commit `6f45cc52`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.0 development, commit `1d03ecbd`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
@@ -363,7 +377,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.0", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.1", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
