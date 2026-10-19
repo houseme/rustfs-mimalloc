@@ -13,8 +13,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 ### Changed
 
 - Synchronize all three crate versions and internal requirements at 0.7.1.
-- Advance the mimalloc source pin to V3.6.0 development commit `b4f183bb`,
-  17 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
+- Advance the mimalloc source pin to V3.6.0 development commit `0ded0864`,
+  21 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
   published release remains v3.5.3.
 - Inherit hashed small-page cache offsets, the owned-page release-CAS fast path,
   and the statistics-merge regression fix. Acquisition/release ordering is
@@ -28,10 +28,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Native environment options use an internal integer parser instead of CRT
   `strtol`/`errno`. Hexadecimal values are accepted; zero-padded decimal numbers
   are rejected and retain the option default. Public headers/ABI are unchanged
-  by these last two upstream commits; `_mi_strtol` remains an internal function.
-- Include upstream's attempted oversized-page THP detection, with its unresolved
-  512-byte `/proc/meminfo` read and hugetlb/THP distinction documented. This does
-  not establish that oversized-PMD RSS is fixed; upstream PR #1431 remains open.
+  by the latest native changes; the length-bounded `_mi_strntol` is internal.
+- Read Linux PMD size from sysfs instead of the truncated `/proc/meminfo` input.
+  For eligible mappings with detected pages above 8 MiB, explicitly request
+  `MADV_NOHUGEPAGE`; keep positive advice for supported smaller-page policies.
+  These changes reference open PR #1431; the PR itself is not marked merged.
 
 ### Added
 
@@ -47,9 +48,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Twenty-one independent-process native option tests cover signed/hexadecimal
   integers, native-long limits, malformed/overflowing input and byte/KiB storage
   with MiB suffixes. Process environments are installed before allocator startup.
+- Host C probes cover non-NUL parser inputs ending at a protected page, PMD-size
+  detection/fallback, the 8 MiB boundary and THP advice with/without `no_thp` or
+  `MADV_NOHUGEPAGE`. Include a negative compile control and source-drift rejection.
 
 ### Fixed
 
+- Preserve Linux/Android `no_thp` builds at the latest upstream pin by removing
+  its dangling conditional `else` from an OUT_DIR compatibility copy. Keep
+  `MI_NO_THP` and oversized-page negative advice active; the submodule is pristine.
+  Package the helper and fixtures, and add a musl `secure,no_thp` CI build.
 - `rustfs-mimalloc-profiling`: size the temporary live-snapshot vector from
   retained occupancy instead of reserving configured shard capacity on every
   report. Stable empty snapshots reserve no vector storage. If concurrent

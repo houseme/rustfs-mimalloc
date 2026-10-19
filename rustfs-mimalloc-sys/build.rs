@@ -5,6 +5,7 @@
 
 use std::{env, fs, path::PathBuf};
 
+mod unix_compat;
 mod windows_static_crt;
 
 struct TargetCfg {
@@ -71,6 +72,7 @@ fn main() {
     // Tell Cargo to re-run if features change
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=windows_static_crt.rs");
+    println!("cargo:rerun-if-changed=unix_compat.rs");
     // static.c includes these files; cc cannot discover that dependency tree.
     println!("cargo:rerun-if-changed=c_src/mimalloc/include");
     println!("cargo:rerun-if-changed=c_src/mimalloc/src");
@@ -94,6 +96,10 @@ fn main() {
     }
     let static_source = if target.is_windows() {
         windows_source(static_crt)
+    } else if matches!(target.os.as_str(), "linux" | "android")
+        && env::var_os("CARGO_FEATURE_NO_THP").is_some()
+    {
+        unix_no_thp_source()
     } else {
         PathBuf::from("c_src/mimalloc/src/static.c")
     };
@@ -224,6 +230,47 @@ fn main() {
     assert_eq!(version / 10000, 3, "only mimalloc V3 is supported");
     println!("cargo:version={version}");
     println!("cargo:rustc-env=MIMALLOC_VERSION={version}");
+}
+
+/// Keep MI_NO_THP builds valid at this pin without editing the submodule.
+fn unix_no_thp_source() -> PathBuf {
+    let source_dir = PathBuf::from("c_src/mimalloc/src");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
+    let unix = fs::read_to_string(source_dir.join("prim/unix/prim.c"))
+        .expect("failed to read upstream Unix prim.c")
+        .replace("\r\n", "\n");
+    fs::write(
+        out_dir.join("mimalloc-no-thp-unix.c"),
+        format!(
+            "#if !defined(MI_NO_THP)\n#error no_thp compatibility requires MI_NO_THP\n#endif\n{}",
+            unix_compat::patch_no_thp(&unix)
+        ),
+    )
+    .expect("failed to write no_thp Unix compatibility source");
+    let prim = fs::read_to_string(source_dir.join("prim/prim.c"))
+        .expect("failed to read upstream primitive selector");
+    fs::write(
+        out_dir.join("mimalloc-no-thp-prim.c"),
+        unix_compat::replace_once(
+            &prim,
+            "#include \"unix/prim.c\"",
+            "#include \"mimalloc-no-thp-unix.c\"",
+        ),
+    )
+    .expect("failed to write no_thp primitive selector");
+    let source = fs::read_to_string(source_dir.join("static.c"))
+        .expect("failed to read upstream static aggregator");
+    let output = out_dir.join("mimalloc-no-thp-static.c");
+    fs::write(
+        &output,
+        unix_compat::replace_once(
+            &source,
+            "#include \"prim/prim.c\"",
+            "#include \"mimalloc-no-thp-prim.c\"",
+        ),
+    )
+    .expect("failed to write no_thp static aggregator");
+    output
 }
 
 /// Correct the linker-owned image-base declaration in Windows C builds.

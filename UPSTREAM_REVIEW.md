@@ -3,7 +3,7 @@
 ## Result and version provenance
 
 The latest `git pull --ff-only` reported the clean repository current at
-`16c5f34`, the preceding 0.7.1 update. All three crates and internal requirements
+`d81c626`, the preceding 0.7.1 update. All three crates and internal requirements
 remain at **0.7.1**. The single 0.7.1 changelog section is
 dated 2026-10-19, with no separate Unreleased content. The tagged 0.7.0 and
 older release notes are preserved. This delivery commits/pushes code only;
@@ -11,26 +11,24 @@ no tag or publication is requested.
 
 Mimalloc advances from
 [`6f45cc52`](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a)
-to [`b4f183bb`](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8),
-**17 commits** later. This renewed pass finds no further commits after the
-already-vendored `b4f183bb`; no source-pointer or public-API delta is invented. The source
+to [`0ded0864`](https://github.com/microsoft/mimalloc/commit/0ded0864e097d4e647e70fd57f227ab823d6168a),
+**21 commits** later, including four new commits after `b4f183bb`. The source
 still identifies itself as **V3.6.0 / 30600**.
 This is a fixed development commit, not a published v3.6.0 release: the latest
 GitHub release is still [v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3),
 and the live tag-prefix query returns no v3.6 tags. The parent revision's
-[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39159669704).
+[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39160640653).
 New-commit CI is checked separately after push.
 
 ## Upstream changes and PR status
 
-The live merged-PR search since October 16 returns no new PRs. The QSBR branch
+The refreshed merged-PR search since October 18 returns no new PRs. The QSBR branch
 merge below is a Git commit, not a GitHub PR merge. Earlier PRs #1396, #1428
 and #1429 are already present in the starting pin; their evidence is retained
 in the historical reviews. [PR #1431](https://github.com/microsoft/mimalloc/pull/1431)
-is open and unmerged. The latest native commit references it but implements a
-different approach; neither that reference nor its newer unmerged patch counts
-as a merged PR. The live PR discussion also documents the detector limitation
-reproduced below.
+is still open and unmerged. The maintainer's discussion says the changes will be
+integrated manually, and the latest native commits reference the PR. Their
+source changes are included, while the GitHub PR is not counted as merged.
 
 | Commit / area | Actual change and relevance |
 | --- | --- |
@@ -41,7 +39,11 @@ reproduced below.
 | [4f3151bb](https://github.com/microsoft/mimalloc/commit/4f3151bb7b5e44c117fc3ab5108c30365c522ac2) | Adds prefetch macro definitions. No call sites exist in this pin, so this is not an enabled runtime-prefetch optimization. |
 | [21d7e2ef](https://github.com/microsoft/mimalloc/commit/21d7e2ef7ae24cc40a799324b38fa25617b2832f) | Adds an initial `contrib/rust` crate with allocator, heap and sys APIs. It is distinct from the registry `mimalloc` 0.1.52 provider tested by this project. This update vendors C changes and retains the existing stable `GlobalAlloc` API/provider model; it does not substitute that new crate or add nightly allocator features. |
 | [55fbfeb0](https://github.com/microsoft/mimalloc/commit/55fbfeb0896bec480997e4b86c8315710d809efa) | Replaces CRT `strtol`/`errno` in environment option initialization with internal `_mi_strtol`. This reduces CRT dependencies at startup, accepts hexadecimal and rejects zero-padded decimal numbers. It does not change a per-allocation algorithm or add public FFI. |
-| [b4f183bb](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8) | Attempts to detect large OS pages from `/proc/meminfo` and disable THP advice above 8 MiB. The fixed read commonly misses the field, which also describes hugetlb rather than PMD THP size. No RSS improvement is established. |
+| [b4f183bb](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8) | Earlier meminfo-based detector; the read/PMD distinction issue reproduced in the preceding review is superseded by the new sysfs implementation. |
+| [9da67f5d](https://github.com/microsoft/mimalloc/commit/9da67f5de7116f8e48499cc8fcd815813a3770d2) | Reads `/sys/kernel/mm/transparent_hugepage/hpage_pmd_size` in bytes instead of the truncated meminfo field. Positive sizes use the detected value; missing/invalid input retains the 2 MiB fallback. |
+| [cb4d1a0b](https://github.com/microsoft/mimalloc/commit/cb4d1a0bc29dca988a8eac40f67050618163f171) | Replaces internal `_mi_strtol` with `_mi_strntol(max_len)`. It accepts bounded non-NUL input and adds explicit read limits; no public header or FFI change. |
+| [a355bf56](https://github.com/microsoft/mimalloc/commit/a355bf56ed2a3af49317eac7b3b46bc9f101de56) | Reduces allocation sizes in the separate upstream `contrib/rust` tests. It does not change allocator behavior or this project's provider selection. |
+| [0ded0864](https://github.com/microsoft/mimalloc/commit/0ded0864e097d4e647e70fd57f227ab823d6168a) | Eligible ordinary mappings with PMD size above 8 MiB receive explicit `MADV_NOHUGEPAGE`, including when large pages were not requested. Introduces a `MI_NO_THP` dangling-else compile regression handled by the integration below. |
 
 ## Profiling report buffer improvement
 
@@ -79,25 +81,50 @@ concurrent reporting/cross-thread free and explicit pressure tests cover the
 full public path. The live table's initialization footprint remains unchanged;
 this change does not implement stack interning or alter its metadata counter.
 
-## Follow-up findings and startup compatibility
+## Native THP correction and build compatibility
 
-**[src/prim/unix/prim.c:177] Large-page detection misses normal meminfo input.**
-Severity: Major. The complete detector reads at most 512 bytes, then requires a
-strictly shorter read before looking for `Hugepagesize`. A longer input always
-keeps the 2 MiB fallback, leaving the new oversized-page guard inactive. An
-exact-source C probe with fake file I/O returns 512 MiB for a short size-field
-fixture but 2 MiB when the same field follows 1,024 bytes. The live PR author
-reports the corresponding behavior on a 64 KiB-page Linux machine. Moreover,
-the field is the hugetlb default, not THP's PMD size. The appropriate follow-up
-is bounded parsing of the PMD sysfs value with explicit failure handling and
-validation on the affected kernel. This update preserves upstream source;
-it does not backport the still-open PR or claim to repair its detector.
+The preceding review's meminfo finding is resolved in the new source: PMD size
+comes from sysfs, and eligible ordinary mappings with pages above **8 MiB**
+receive explicit negative advice. The latest code also terminates bounded sysfs
+reads and uses the length-bounded integer parser. This removes the earlier
+512-byte meminfo-read limitation and hugetlb/THP-field confusion.
 
-Until then, affected applications can evaluate existing `no_thp` builds or
-`MIMALLOC_ALLOW_THP=0` before startup. Verify RSS and latency on the deployment
-kernel. Disabling allocator advice alone does not disable kernel `THP=always`;
-the existing allow-THP opt-out also attempts Linux process-level `prctl`.
-The synthetic probe validates parsing/fallback only, not a physical PMD or RSS.
+**[src/prim/unix/prim.c:494] `MI_NO_THP` leaves a dangling `else`.**
+Severity: Major, fixed in this integration. Read the complete `unix_mmap` path:
+when `MADV_NOHUGEPAGE` exists, its oversized-page `if` is followed by `else`, but
+`MI_NO_THP` removes the positive-advice statement that would follow it. A C
+syntax probe reproduces the error. The crate's Linux `no_thp` feature defines
+that macro, so the unmodified new pin breaks a supported build configuration.
+
+`unix_compat.rs` removes only that `else` in an OUT_DIR source copy for
+Linux/Android `no_thp` builds. Exact replacement counts reject source drift.
+Default Unix builds keep upstream source; Windows compatibility is unchanged.
+`MI_NO_THP` and `MI_DEFAULT_ALLOW_THP=0` remain enabled, and oversized-page
+`MADV_NOHUGEPAGE` remains present. The submodule is pristine. The helper and
+native test fixture are included in the normalized sys archive. CI also adds
+an explicit musl `secure,no_thp` cross-build alongside existing GNU coverage.
+
+Host C controls extract the actual vendored parser, PMD detector and `unix_mmap`
+function, applying the same Rust compatibility helper for `no_thp` variants:
+
+- Non-NUL integer inputs end at a protected memory page, covering zero-length,
+  signs, hexadecimal prefixes, LONG_MIN/MAX and overflow. Crossing the explicit
+  bound faults the probe instead of silently passing in a large backing buffer.
+- PMD fixtures cover 2/8/32/512 MiB and missing, empty, invalid, zero or negative
+  values. No probe reads the host's actual Linux sysfs state.
+- Four macro combinations cover THP enabled/disabled and presence/absence of
+  `MADV_NOHUGEPAGE`. Advice checks cover the 8 MiB boundary, oversized mappings,
+  caller opt-out, disabled runtime options, failed mappings and ineligible ranges.
+- The patched combinations compile/run. The unpatched `MI_NO_THP` plus negative
+  advice combination is a failing compile control; changed patch anchors fail.
+
+These controlled host tests verify bounded parsing and advice decisions. They
+do not measure real Linux PMD allocation, successful kernel advice, Android
+execution or RSS reduction. The native condition still requires an eligible
+mapping; invalid/missing size data retains the 2 MiB fallback. Validate RSS,
+faults and latency on the deployment kernel, particularly with THP=always.
+
+## Remaining startup configuration finding
 
 **[src/util/options.c:709] Native K/KiB suffix omits scaling.**
 Severity: Minor. This pre-existing parser branch advances past `K` without
@@ -106,17 +133,17 @@ multiplying the value. Independent child processes show
 `MIMALLOC_ARENA_PURGE_MIN_SIZE=32KiB` produces 1,024 bytes after native KiB
 rounding. Both should describe 32,768 bytes under the header's documented
 units. This issue already existed at `1d03ecbd`; it is not introduced by the
-new integer parser. Use an unsuffixed byte count or `M`/`MiB` until corrected
+new integer parser; the same K branch remains at this pin. Use an unsuffixed byte count or `M`/`MiB` until corrected
 upstream. Numeric Rust option setters are separate APIs and retain their
 native option-specific units. README guidance now makes the limitation explicit.
 
-The new `options_env` executable installs each environment before native startup
+The existing `options_env` executable installs each environment before native startup
 and checks 21 independent processes. Coverage includes signed/hexadecimal values,
 native-long MIN/MAX on LP64 and LLP64 targets, overflow, malformed input,
 zero-padded decimal rejection, MiB units and byte-to-KiB rounding. No test mutates
 the running process's environment after allocator initialization. The new parser
-and THP helper are internal; public headers, option IDs, callbacks and layouts
-are unchanged by these last two commits. Previously exposed QSBR and renamed
+and THP helpers are internal; public headers, option IDs, callbacks and layouts
+are unchanged by these latest commits. Previously exposed QSBR and renamed
 option APIs remain available.
 
 ## Public API and configuration audit
@@ -202,8 +229,8 @@ Rust 1.99.1 compiler, locked dependencies and default features. Each A1/B1/B2/A2
 round runs in a new process with 50 samples, one-second warm-up, two-second
 measurement and one Rayon analysis thread. No task-owned build or benchmark
 runs concurrently. The shared macOS arm64 host is **not resource-isolated**.
-These retained numbers do not measure the subsequent `b4f183bb` Linux startup
-change and must not be relabelled as benchmarks of the latest pin.
+These retained numbers do not measure the subsequent Unix startup/THP changes
+through `0ded0864` and must not be relabelled as benchmarks of the latest pin.
 
 | Case | A1 | B1 | B2 | A2 | Unit | A / B drift | Conclusion |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -246,8 +273,8 @@ Raw diagnostics and history are in `target/review-071-profiling/`.
 
 Prioritize further work in this order:
 
-1. Correct PMD-size detection and validate THP/RSS on 16/64 KiB-page Linux
-   systems before relying on the latest upstream guard. Audit deployed size
+1. Validate the new PMD detection and negative advice on 16/64 KiB-page Linux
+   systems, including THP=always and kernel advice failures. Audit deployed size
    environment values for the KiB suffix issue and zero-padded decimals.
 2. Recheck the 64 KiB allocation point estimates on isolated Linux/macOS resources,
    then measure cache-sensitive payloads, RSS, faults and tail latency. Cache
@@ -264,10 +291,10 @@ Prioritize further work in this order:
 
 ## Validation and boundaries
 
-Stable Rust 1.99.1 / macOS arm64 local evidence at `b4f183bb`:
+Stable Rust 1.99.1 / macOS arm64 local evidence at `0ded0864`:
 
-- Default and all-feature workspace combinations pass for this change; the
-  native feature matrix also passed the preceding commit's CI. The unchanged
+- Default, secure/debug/no-profile, no_thp/local-dynamic-TLS and all-feature
+  workspace combinations pass. The unchanged
   allocator suite has 44 cases. The profiler now has 71 unit cases, shared behavior contracts,
   missing-allocator rejection, stateful-provider and compatibility API tests.
 - Both normally ignored pressure tests are explicitly executed for this
@@ -277,20 +304,18 @@ Stable Rust 1.99.1 / macOS arm64 local evidence at `b4f183bb`:
   their worker threads.
 - Formatting, all-target/all-feature Clippy with warnings denied,
   rustdoc with warnings denied, API/ABI parity and seven controls pass.
-- The profiling package is rebuilt and its normalized archive passes tests with
-  local allocator/sys patches and both provider graphs. The unchanged sys and
-  allocator packages passed the preceding native pass. This does not claim that
+- All three packages are rebuilt, including normalized profiling archive tests
+  with local allocator/sys patches and both provider graphs. This does not claim that
   matching 0.7.1 registry packages were published.
-- The unchanged upstream source passed Debug/C `test-api`, `test-api-fill`,
-  `test-arena`, `test-bitmap`, `test-fork` and enabled `test-qsbr` 6/6 in the
-  preceding pass; those targets remain in CI.
+- Updated upstream Debug/C `test-api`, `test-api-fill`, `test-arena`,
+  `test-bitmap`, `test-fork` and enabled `test-qsbr` pass 6/6.
 - Default and secure/debug/no-profile custom-tracking examples passed with actual
   hooks active in the preceding pass; the current pin is checked in CI.
   Runtime metadata and numeric version agree at 30600.
-- Native option parsing passes all 21 child processes in every local feature
-  configuration checked by the preceding native pass. Default/all-feature
-  workspace checks repeat them here. The preceding exact-source THP probe and
-  diagnostic child processes reproduce the documented THP/KiB issues.
+- Native option parsing passes all 21 child processes in each local feature
+  configuration. Three Unix compatibility tests cover exact source edits,
+  fail-on-drift behavior and four host-C probe variants with a negative control.
+  The earlier KiB diagnostic remains applicable to the unchanged suffix branch.
 - Python 3.12 runs the provider/archive tools (which require 3.11+). No historical
   toolchain was installed for upstream's new Rust crate. Rust 1.95 compatibility,
   Linux/musl and Windows execution at this pin are checked by the matching CI.

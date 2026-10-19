@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `b4f183bb`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `0ded0864`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -118,13 +118,15 @@ The new `mi_option_unsafe_guarded_precise` associated constant retains ID 31 and
 the old Rust variant. Precise placement must preserve the caller's alignment
 contract. Reclaim-on-free policy is captured at heap creation in this pin.
 
-The last two native commits add an internal integer parser and an attempted
-oversized-page THP check; no public API or ABI changes. Environment integers
+The latest native changes add a bounded internal integer parser and correct
+oversized-page THP detection/advice; no public API or ABI changes. Environment integers
 accept hexadecimal and reject zero-padded decimal input. Use unsuffixed byte
 counts or `M`/`MiB` for size options because `K`/`KiB` currently omits scaling.
-The THP detector's 512-byte meminfo read can miss the size field, which also
-describes hugetlb rather than PMD THP size. See the root upstream review and
-open upstream PR #1431 before relying on this change for RSS reduction.
+PMD size is read from sysfs with a 2 MiB fallback. Eligible mappings above the
+8 MiB page threshold receive `MADV_NOHUGEPAGE`. A guarded build-time source copy
+keeps Linux/Android `no_thp` valid despite the pin's dangling conditional `else`;
+the submodule stays pristine. Native probes validate bounded reads and advice
+decisions; deployment RSS still requires measurement on the target kernel.
 
 Upstream custom tracking requires `MI_TRACK_CUSTOM` at C compile time and two
 application-defined C symbols. See the wrapper's `custom_tracking` example;
