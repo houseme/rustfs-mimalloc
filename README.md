@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `0ded0864`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `e34c9d38`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -151,11 +151,11 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 0ded0864](https://github.com/microsoft/mimalloc/commit/0ded0864e097d4e647e70fd57f227ab823d6168a),
+The submodule pins [upstream commit e34c9d38](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3),
 on the V3.6.0 development line. The source version is 30600; this is a fixed
 development snapshot, not an upstream v3.6.0 release.
 
-The 21 commits after `6f45cc52` add experimental QSBR primitives, a QSBR heap
+The 23 commits after `6f45cc52` add experimental QSBR primitives, a QSBR heap
 constructor, hashed small-page cache offsets and a lighter remote-free CAS
 when the page is already owned. Statistics merging skips zero current/peak
 updates. The immediate-purge threshold for large ranges remains 32 MiB.
@@ -189,6 +189,11 @@ or Cargo QSBR feature. Protected heaps reject ordinary `mi_heap_delete` and need
 terminal destruction only after all readers and mutators have stopped. There is
 no owning Rust `Heap` constructor for this experimental mode. QSBR delays page
 release; it does not make reading freed Rust objects or arbitrary block reuse safe.
+Protected full pages now follow `mi_option_page_full_retain`. The last free of
+a delayed abandoned page can initialize a receiving context for the same heap,
+even with nonempty reclaim disabled. Runtime adapters must exclude late TLS
+destructor frees after mimalloc shutdown. Fresh allocation retries if reclaim
+releases an empty page; these are native lifecycle changes, not new public APIs.
 
 Native environment options now accept hexadecimal integers (`0x2A`) and reject
 zero-padded decimal integers (`042`), retaining their default on invalid input.
@@ -333,7 +338,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.0 development, commit `0ded0864`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.0 development, commit `e34c9d38`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

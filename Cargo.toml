@@ -18,7 +18,7 @@ rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.7.1" }
 rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.7.1" }
 
 backtrace = "0.3"
-cc = "1.8.0"
+cc = "1.9.0"
 criterion = "0.8.2"
 findshlibs = "0.10"
 libc = "0.2"

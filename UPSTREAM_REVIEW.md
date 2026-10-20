@@ -1,28 +1,32 @@
-# 0.7.1 upstream, API and performance review — 2026-10-19
+# 0.7.1 upstream, API and performance review — 2026-10-21
 
 ## Result and version provenance
 
-The latest `git pull --ff-only` reported the clean repository current at
-`d81c626`, the preceding 0.7.1 update. All three crates and internal requirements
+The latest `git pull --ff-only` reported the repository current at
+`39d9285`, the preceding 0.7.1 update. All three crates and internal requirements
 remain at **0.7.1**. The single 0.7.1 changelog section is
-dated 2026-10-19, with no separate Unreleased content. The tagged 0.7.0 and
+dated 2026-10-21, with no separate Unreleased content. The tagged 0.7.0 and
 older release notes are preserved. This delivery commits/pushes code only;
 no tag or publication is requested.
 
+The delivery includes `cc` 1.9.0 / `find-msvc-tools` 0.1.15. A separate source
+snapshot first passed workspace checks with the earlier locked 1.8.0/0.1.14
+resolution; final validation uses the updated workspace and lockfile.
+
 Mimalloc advances from
 [`6f45cc52`](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a)
-to [`0ded0864`](https://github.com/microsoft/mimalloc/commit/0ded0864e097d4e647e70fd57f227ab823d6168a),
-**21 commits** later, including four new commits after `b4f183bb`. The source
+to [`e34c9d38`](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3),
+**23 commits** later, including two new commits after `0ded0864`. The source
 still identifies itself as **V3.6.0 / 30600**.
 This is a fixed development commit, not a published v3.6.0 release: the latest
 GitHub release is still [v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3),
 and the live tag-prefix query returns no v3.6 tags. The parent revision's
-[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39160640653).
+[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39182989417).
 New-commit CI is checked separately after push.
 
 ## Upstream changes and PR status
 
-The refreshed merged-PR search since October 18 returns no new PRs. The QSBR branch
+The refreshed merged-PR search since October 19 returns no new PRs. The QSBR branch
 merge below is a Git commit, not a GitHub PR merge. Earlier PRs #1396, #1428
 and #1429 are already present in the starting pin; their evidence is retained
 in the historical reviews. [PR #1431](https://github.com/microsoft/mimalloc/pull/1431)
@@ -44,6 +48,64 @@ source changes are included, while the GitHub PR is not counted as merged.
 | [cb4d1a0b](https://github.com/microsoft/mimalloc/commit/cb4d1a0bc29dca988a8eac40f67050618163f171) | Replaces internal `_mi_strtol` with `_mi_strntol(max_len)`. It accepts bounded non-NUL input and adds explicit read limits; no public header or FFI change. |
 | [a355bf56](https://github.com/microsoft/mimalloc/commit/a355bf56ed2a3af49317eac7b3b46bc9f101de56) | Reduces allocation sizes in the separate upstream `contrib/rust` tests. It does not change allocator behavior or this project's provider selection. |
 | [0ded0864](https://github.com/microsoft/mimalloc/commit/0ded0864e097d4e647e70fd57f227ab823d6168a) | Eligible ordinary mappings with PMD size above 8 MiB receive explicit `MADV_NOHUGEPAGE`, including when large pages were not requested. Introduces a `MI_NO_THP` dangling-else compile regression handled by the integration below. |
+| [2f754692](https://github.com/microsoft/mimalloc/commit/2f754692508e70bb19b81cbc36a417c7764b7eca) | Allows protected full pages to follow the configured abandonment policy. Delayed empty abandoned pages obtain a receiving same-heap context; empty reclaim may release the page, so allocation callers retry instead of using that page again. |
+| [e34c9d38](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3) | Expands enabled fake-runtime tests for abandoned full pages, delayed arena/OS singletons, last-free thread initialization and allocation retries. Updates the runtime integration contract. |
+
+## QSBR reclaim and abandonment review
+
+The two new commits change internal lifecycle behavior, not public declarations:
+
+- Protected heaps now use `mi_option_page_full_retain` like ordinary heaps:
+  nonnegative values allow full-page abandonment; negative values retain the
+  full queue. QSBR no longer forces full-queue retention.
+- When the last free makes an abandoned protected page empty and its grace
+  period is unfinished, free-side collection obtains `mi_heap_theap` for the
+  same heap. It can initialize the receiving thread and context, reset the
+  retirement countdown and attach the page to that context's delayed queue.
+  This empty-page progress path bypasses nonempty reclaim limits, including -1.
+- `_mi_theap_page_reclaim` now returns whether it released an empty page.
+  `_mi_page_fresh_alloc` retries when it returns true, so it never returns that
+  freed page to the allocation path. Both free-side callers consume the page
+  and do not access it afterward; the nonempty reclaim caller only increments
+  a receiving-context counter after the call.
+- The ordinary build keeps `MI_QSBR=0`, so its delay predicate remains false
+  and the new protected-page TLS-initialization branch is inactive. The shared
+  empty-page reclaim/retry logic is still compiled into ordinary builds and is
+  covered by allocation, remote-free and owner-exit regressions.
+
+Expanded Rustdoc/README guidance excludes late TLS-destructor frees of QSBR
+allocations after mimalloc thread shutdown. A stable runtime domain, stopped
+readers/mutators before terminal destruction, and protection against block reuse
+remain host responsibilities. The constructor stays raw FFI and returns
+null/ENOSYS in ordinary builds; no Cargo feature or owning safe heap is added.
+The private changed helper is not exposed as a Rust API.
+
+Upstream's enabled C suite runs **28 named contracts**, including new tests for
+full-page abandonment, delayed empty arena/OS pages with reclaim disabled,
+singleton pages, fresh thread initialization and retries after releasing ready
+pages. All six focused native test executables pass locally. This validates a
+fake runtime and allocator lifecycle, not a production Rust reader protocol or
+weak-memory proof. FIFO delayed queues can still retain ready pages behind an
+unfinished head; inactive contexts still need a runtime-owned progress policy.
+
+## C build dependency review
+
+[cc 1.9.0](https://github.com/rust-lang/cc-rs/releases/tag/cc-v1.9.0) includes
+compiler-flag ordering and disabled linker-plugin-LTO fixes, compiler environment
+rebuild tracking and MSVC object/archive path changes. These affect native build
+integration, not the Rust allocation algorithm. The existing clang-cl/static-CRT,
+musl, custom-tracking and feature-matrix jobs exercise relevant build paths.
+Its sanitizer forwarding is an upstream capability; this pass does not claim
+an AddressSanitizer run or add a Cargo sanitizer feature.
+
+[find-msvc-tools 0.1.15](https://github.com/rust-lang/cc-rs/releases/tag/find-msvc-tools-v0.1.15)
+refreshes Windows bindings. Both dependency manifests declare Rust 1.65.0,
+which does not replace the project's executed Rust 1.95 compatibility check or
+introduce a workspace MSRV declaration. The final lockfile also resolves
+`crc32fast` 1.5.3 through the profiling crate's `libflate` dev-dependency;
+`cargo tree -i` verifies this is test-only. Workspace/default and all-feature
+tests and Clippy are repeated with that final resolution. Cargo.lock changes
+only these three external packages; workspace crate versions remain 0.7.1.
 
 ## Profiling report buffer improvement
 
@@ -143,16 +205,16 @@ native-long MIN/MAX on LP64 and LLP64 targets, overflow, malformed input,
 zero-padded decimal rejection, MiB units and byte-to-KiB rounding. No test mutates
 the running process's environment after allocator initialization. The new parser
 and THP helpers are internal; public headers, option IDs, callbacks and layouts
-are unchanged by these latest commits. Previously exposed QSBR and renamed
+are unchanged by the preceding THP commits and the latest QSBR commits. Previously exposed QSBR and renamed
 option APIs remain available.
 
 ## Public API and configuration audit
 
-`mimalloc-profile.h` and `mimalloc-stats.h` are unchanged; MI_STAT_VERSION is
-still 6. The profiler callback table, public heap-area layout and option IDs
-remain unchanged. The root `mimalloc.h` changes the numeric version and renames
-one option. The new experimental factory is in **`mimalloc/qsbr.h`**, which is
-now included in both API and ABI audits.
+The latest two commits change only a private header's reclaim return type;
+all audited public headers, option IDs, callbacks and layouts are unchanged.
+MI_STAT_VERSION remains 6. Over the full 0.7.1 update, root `mimalloc.h` changed
+the numeric version and renamed one option, and the experimental factory in
+**`mimalloc/qsbr.h`** was added to both API and ABI audits.
 
 | Surface | Exposure and constraints |
 | --- | --- |
@@ -193,6 +255,7 @@ platform execution or the host runtime's safety proof.
 | Heap/context safety | Ordinary owned/borrowed heap lifetime behavior, !Send/!Sync cached views, aligned allocation, cross-thread free, context deletion and direct-OS-page tests remain enabled. QSBR handles stay raw because normal owning Drop would use the rejected delete operation. |
 | Unsafe options | Setter docs explicitly require values to preserve active allocation contracts, in addition to excluding concurrent access to upstream non-atomic options. Precise guarded placement disables normal minimal rounding; ordinary aligned dispatch and defaults remain unchanged. |
 | Native profiling | Empty native thread contexts still inherit `profile_disabled=true`. Main-heap callback tests pass; no claim of reliable worker/dedicated-heap native sampling is made. The independent Rust profiler does not use that activation path. |
+| QSBR page progress | Read every internal reclaim caller after its return type changed. Allocation retries released empty pages; free-side callers do not dereference consumed pages afterward. The new host-runtime late-TLS restriction is documented; ordinary builds keep the delay/TLS path disabled. |
 
 ## Profiling provider review
 
@@ -230,7 +293,7 @@ round runs in a new process with 50 samples, one-second warm-up, two-second
 measurement and one Rayon analysis thread. No task-owned build or benchmark
 runs concurrently. The shared macOS arm64 host is **not resource-isolated**.
 These retained numbers do not measure the subsequent Unix startup/THP changes
-through `0ded0864` and must not be relabelled as benchmarks of the latest pin.
+through `e34c9d38` and must not be relabelled as benchmarks of the latest pin.
 
 | Case | A1 | B1 | B2 | A2 | Unit | A / B drift | Conclusion |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -247,29 +310,35 @@ allocation case has higher point estimates at the new pin and deserves focused
 controlled investigation. These loops do not measure multi-object payload
 cache behavior, RSS or application throughput. Neither a production speedup nor
 a regression attribution is established; no favorable retry replaces the data.
-Raw logs, intervals and frozen-build provenance remain in `target/upstream-abba-071/`.
+The earlier run wrote raw logs, intervals and frozen-build provenance to
+`target/upstream-abba-071/`. That generated directory is absent in this checkout
+on October 21; the table is retained historical evidence, not a new run.
 Repeat on isolated resources with a same-binary control before candidate
 attribution. Cache-sensitive 64 KiB traversal and allocator-only latency should
 be measured separately.
 
 ## Profiling quality diagnostics and optimization priorities
 
-The preceding pin's supplied strict report-classifier controls pass. Its
-one-second-per-row RustFS-provider diagnostic uses `1d03ecbd`. As in current CI,
-quality enforcement is disabled for the real pressure run; rows retain explicit
-PASS/LOSSY classification rather than treating dropped work as low overhead.
+The strict report-classifier controls pass again. A fresh October 21 diagnostic
+uses `e34c9d38`, `cc` 1.9.0 and the RustFS provider with Portable capture, one
+worker and one second per row. No task-owned build/benchmark runs concurrently;
+the shared host is not resource-isolated. As in current CI, quality enforcement
+is disabled for the real pressure run, while rows retain PASS/LOSSY labels.
 
 | Steady 1 MiB-interval scenario | Drained records | Record drops | Pending | Live drops | Periodic reports | Max report time |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Allocation | 84,551 | 0.047286% | 0 | 0 | 16 | 1,125 us |
-| Live heap | 83,028 | 0.014451% | 0 | 0 | 17 | 1,082 us |
+| Allocation | 78,796 | 0.072286% | 0 | 0 | 18 | 1,088 us |
+| Live heap | 79,198 | 0.012625% | 0 | 0 | 18 | 1,012 us |
 
 These observed steady rows pass the quality classifier; the allocation row
 still raises the configured overhead warning. Small-recorder post-workload
 rows are lossy and are not sustainable-overhead evidence. Live-table payload
 is 15,826,944 bytes (about 15.1 MiB), excluding control bytes and headers.
 No short-run overhead ratio is promoted to a release or production guarantee.
-Raw diagnostics and history are in `target/review-071-profiling/`.
+Current raw outputs/history are in `target/review-071-oct21-profiling/`.
+The earlier `target/review-071-profiling/` directory is absent in this checkout.
+The current raw rows also show 5,959/6,000 ns allocation p99 estimates. They
+are short quality diagnostics, not a causal comparison with the older pin.
 
 Prioritize further work in this order:
 
@@ -281,7 +350,9 @@ Prioritize further work in this order:
    spreading can target payload conflicts while changing allocation-only costs.
 3. Arrange collection/abandonment on the appropriate worker contexts before
    tuning retention, THP and purge policy for burst/idle services. Account for
-   heap-creation-time reclaim defaults and measure OS-call/RSS tradeoffs.
+   heap-creation-time reclaim defaults and measure OS-call/RSS tradeoffs. QSBR
+   runtimes also need delayed-queue progress and protection against late TLS
+   frees; the new reclaim behavior does not turn collection into a global sweep.
 4. Profile Portable versus Native capture on supported Linux GNU systems and
    tune sample interval/depth against accuracy and p99 budgets. Keep both
    dropped-record and live-drop counters in every cost comparison.
@@ -291,14 +362,14 @@ Prioritize further work in this order:
 
 ## Validation and boundaries
 
-Stable Rust 1.99.1 / macOS arm64 local evidence at `0ded0864`:
+Stable Rust 1.99.1 / macOS arm64 local evidence at `e34c9d38`:
 
 - Default, secure/debug/no-profile, no_thp/local-dynamic-TLS and all-feature
   workspace combinations pass. The unchanged
   allocator suite has 44 cases. The profiler now has 71 unit cases, shared behavior contracts,
   missing-allocator rejection, stateful-provider and compatibility API tests.
 - Both normally ignored pressure tests are explicitly executed for this
-  report-buffer change. Both isolated
+  native/build update. Both isolated
   provider graphs pass behavior and optimized profile checks. Test-case
   serialization is not cited as race coverage: the contracts explicitly spawn
   their worker threads.
@@ -308,9 +379,10 @@ Stable Rust 1.99.1 / macOS arm64 local evidence at `0ded0864`:
   with local allocator/sys patches and both provider graphs. This does not claim that
   matching 0.7.1 registry packages were published.
 - Updated upstream Debug/C `test-api`, `test-api-fill`, `test-arena`,
-  `test-bitmap`, `test-fork` and enabled `test-qsbr` pass 6/6.
-- Default and secure/debug/no-profile custom-tracking examples passed with actual
-  hooks active in the preceding pass; the current pin is checked in CI.
+  `test-bitmap`, `test-fork` and enabled `test-qsbr` pass 6/6, including all
+  28 named fake-runtime QSBR contracts.
+- Default and secure/debug/no-profile custom-tracking examples pass again with
+  actual hooks active in release builds using the final C build dependencies.
   Runtime metadata and numeric version agree at 30600.
 - Native option parsing passes all 21 child processes in each local feature
   configuration. Three Unix compatibility tests cover exact source edits,
@@ -321,7 +393,7 @@ Stable Rust 1.99.1 / macOS arm64 local evidence at `0ded0864`:
   Linux/musl and Windows execution at this pin are checked by the matching CI.
 
 All three Cargo versions and internal requirements match 0.7.1. This follow-up
-changes neither the manifests' version requirements nor Cargo.lock. New-commit
+updates the confirmed C build dependency and its lock resolution. New-commit
 CI results are reported after push. No release workflow
 or package publication is requested.
 

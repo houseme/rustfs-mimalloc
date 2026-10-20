@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream V3.6.0 development commit 0ded0864.
+//! Pinned to upstream V3.6.0 development commit e34c9d38.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -391,7 +391,10 @@ unsafe extern "C" {
     /// embedded in the single-source build. It delays page release, not block
     /// reuse, and does not make freed Rust objects readable. Protected heaps
     /// reject `mi_heap_delete`; destroy them only after every reader and mutator
-    /// has stopped. There is deliberately no owning `Heap` wrapper for them.
+    /// has stopped. The last free on a delayed abandoned page can initialize
+    /// the receiving thread's context; do not free these allocations from late
+    /// TLS destructors after mimalloc thread shutdown. There is deliberately
+    /// no owning `Heap` wrapper for them.
     pub fn mi_heap_new_qsbr() -> *mut mi_heap_t;
     pub fn mi_heap_delete(heap: *mut mi_heap_t);
     pub fn mi_heap_destroy(heap: *mut mi_heap_t);

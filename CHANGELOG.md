@@ -8,13 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.1] - 2026-10-19
+## [0.7.1] - 2026-10-21
 
 ### Changed
 
 - Synchronize all three crate versions and internal requirements at 0.7.1.
-- Advance the mimalloc source pin to V3.6.0 development commit `0ded0864`,
-  21 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
+- Update the C build dependency requirement to `cc` 1.9.0 and its locked
+  `find-msvc-tools` dependency to 0.1.15; keep requirements centralized in the
+  workspace. Validate the final combination across native feature modes and CI.
+- Refresh the test-only `crc32fast` lock resolution to 1.5.3 through `libflate`;
+  the profiling core's runtime dependency/provider graph is unchanged.
+- Advance the mimalloc source pin to V3.6.0 development commit `e34c9d38`,
+  23 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
   published release remains v3.5.3.
 - Inherit hashed small-page cache offsets, the owned-page release-CAS fast path,
   and the statistics-merge regression fix. Acquisition/release ordering is
@@ -33,6 +38,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   For eligible mappings with detected pages above 8 MiB, explicitly request
   `MADV_NOHUGEPAGE`; keep positive advice for supported smaller-page policies.
   These changes reference open PR #1431; the PR itself is not marked merged.
+- Inherit QSBR full-page abandonment governed by `mi_option_page_full_retain`,
+  same-heap reclaim of delayed empty pages on the last remote free, and allocation
+  retry when reclaim releases an empty page. Nonempty reclaim limits remain
+  distinct. Default builds keep QSBR disabled; no public API/ABI is added.
 
 ### Added
 
@@ -51,6 +60,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Host C probes cover non-NUL parser inputs ending at a protected page, PMD-size
   detection/fallback, the 8 MiB boundary and THP advice with/without `no_thp` or
   `MADV_NOHUGEPAGE`. Include a negative compile control and source-drift rejection.
+- Expand the enabled upstream fake-runtime QSBR suite to 28 named contracts,
+  including abandoned full pages, delayed arena/OS singleton reclaim and
+  ready-page allocation retries. Clarify that QSBR's last free may initialize a
+  receiving thread, so runtimes must avoid frees after mimalloc TLS shutdown.
 
 ### Fixed
 

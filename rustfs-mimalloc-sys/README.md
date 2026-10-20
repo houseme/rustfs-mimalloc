@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `0ded0864`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `e34c9d38`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -93,7 +93,7 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
 
 The V3.6.0 development pin retains fixes from upstream
 PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
-through the 2026-10-19 review. Available APIs include `mi_arenas_purge` and two options
+through the 2026-10-21 review. Available APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
 The previously added `mi_thread_id_of`,
 `mi_heap_set_debug_fill_preserve`, `mi_theap_delete` and
@@ -114,6 +114,11 @@ build has no QSBR adapter and returns null/ENOSYS. Host callbacks and embedded C
 metadata are application-defined, not allocator exports or Rust-managed reader
 state. Protected heaps cannot use normal `mi_heap_delete`; destroy only after
 all readers and mutators stop. This remains raw FFI without a Cargo QSBR feature.
+Protected full pages follow the configured retention policy. The last free of
+a delayed abandoned page can create a same-heap context and initialize its
+receiving thread, independently of nonempty reclaim limits. Exclude late TLS
+destructor frees after mimalloc shutdown. Allocation retries when an empty
+reclaimed page was released; the changed helper is internal, not new raw FFI.
 The new `mi_option_unsafe_guarded_precise` associated constant retains ID 31 and
 the old Rust variant. Precise placement must preserve the caller's alignment
 contract. Reclaim-on-free policy is captured at heap creation in this pin.
