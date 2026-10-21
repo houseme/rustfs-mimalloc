@@ -65,13 +65,12 @@ fn pinned_startup_sources_accept_patch_and_preserve_thread_cleanup() {
 }
 
 #[test]
-fn dynamic_crt_patch_changes_only_the_image_base_declaration() {
+fn upstream_image_base_is_external_without_a_local_patch() {
     let source = include_str!("../c_src/mimalloc/src/prim/windows/prim.c").replace("\r\n", "\n");
-    let patched = startup::patch_image_base(&source);
-    assert!(patched.contains("extern IMAGE_DOS_HEADER __ImageBase;"));
-    assert!(!patched.contains("mi_decl_externc IMAGE_DOS_HEADER __ImageBase;"));
-    assert!(patched.contains(".CRT$XIB"));
-    assert!(patched.contains(
+    assert!(source.contains("extern IMAGE_DOS_HEADER __ImageBase;"));
+    assert!(!source.contains("mi_decl_externc IMAGE_DOS_HEADER __ImageBase;"));
+    assert!(source.contains(".CRT$XIB"));
+    assert!(source.contains(
         "// tls process attach is always called before crt init\n      mi_win_main(module, reason, reserved);"
     ));
 }

@@ -85,14 +85,14 @@ static void check_parser(const char* input, bool valid, long expected) {
   assert(munmap(mapping, page * 2) == 0);
 }
 
-static void check_advice(size_t page_size, bool allow, bool valid_mapping, bool valid_range, int expected) {
+static void check_advice(size_t page_size, size_t mapping_size, bool allow, bool valid_mapping, bool valid_range, int expected) {
   detected_size = page_size;
   thp_available = page_size <= MI_UNIX_MAX_THP_PAGE_SIZE;
   allocation_succeeds = valid_mapping;
   eligible = valid_range;
   advice = 0;
   bool is_large = true;
-  void* p = unix_mmap(NULL, MI_MiB, MI_MiB, PROT_READ | PROT_WRITE, false, allow, &is_large);
+  void* p = unix_mmap(NULL, mapping_size, MI_MiB, PROT_READ | PROT_WRITE, false, allow, &is_large);
   assert((p != NULL) == valid_mapping);
   assert(!is_large);
   assert(advice == expected);
@@ -133,15 +133,17 @@ int main(void) {
   #else
   const int negative = 0;
   #endif
-  check_advice(2*MI_MiB, true, true, true, positive);
-  check_advice(8*MI_MiB, true, true, true, positive);
-  check_advice(32*MI_MiB, true, true, true, negative);
-  check_advice(512*MI_MiB, true, true, true, negative);
-  check_advice(512*MI_MiB, false, true, true, negative);
-  check_advice(512*MI_MiB, true, false, true, 0);
-  check_advice(512*MI_MiB, true, true, false, 0);
+  check_advice(2*MI_MiB, 2*MI_MiB, true, true, true, positive);
+  check_advice(8*MI_MiB, 8*MI_MiB, true, true, true, positive);
+  check_advice(32*MI_MiB, 32*MI_MiB, true, true, true, negative);
+  check_advice(512*MI_MiB, 512*MI_MiB, true, true, true, negative);
+  check_advice(512*MI_MiB, 512*MI_MiB, false, true, true, negative);
+  check_advice(512*MI_MiB, 512*MI_MiB, true, false, true, 0);
+  check_advice(512*MI_MiB, 512*MI_MiB, true, true, false, negative);
+  check_advice(512*MI_MiB, 512*MI_MiB-1, true, true, true, 0);
+  check_advice(512*MI_MiB, MI_MiB, true, true, true, 0);
   option_enabled = false;
-  check_advice(2*MI_MiB, true, true, true, 0);
-  check_advice(512*MI_MiB, true, true, true, negative);
+  check_advice(2*MI_MiB, 2*MI_MiB, true, true, true, 0);
+  check_advice(512*MI_MiB, 512*MI_MiB, true, true, true, negative);
   puts("bounded parser, PMD size/fallback and THP advice controls passed");
 }

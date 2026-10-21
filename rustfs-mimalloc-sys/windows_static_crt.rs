@@ -43,7 +43,6 @@ pub fn patch_theap(source: &str) -> String {
 }
 
 pub fn patch_prim(source: &str) -> String {
-    let source = patch_image_base(source);
     // `.CRT$XCT` runs after CRT initialization and before normal C++ initializers.
     // Restrict the startup edits to CRT_TLS; other strategies stay unchanged.
     let (prefix, rest) = source
@@ -77,16 +76,5 @@ pub fn patch_prim(source: &str) -> String {
     let crt_tls = crt_tls.replace(".CRT$XIB", ".CRT$XCT");
     format!(
         "#define MI_STATIC_CRT_STARTUP_COMPAT 1\n#if defined(_MSC_VER) && defined(_DLL)\n#error Windows static CRT compatibility requires /MT, not /MD\n#endif\n{prefix}#if defined(MI_WIN_INIT_USE_CRT_TLS)\n{crt_tls}#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)\n{suffix}"
-    )
-}
-
-pub fn patch_image_base(source: &str) -> String {
-    // mi_decl_externc is empty in C, so the upstream line is a tentative
-    // definition. It shadows link.exe's special image-base symbol with BSS.
-    // UCRT then computes RVA-based function table addresses from that BSS slot.
-    replace_once(
-        source,
-        "  mi_decl_externc IMAGE_DOS_HEADER __ImageBase;   // supplied by the linker",
-        "  #ifdef __cplusplus\n  extern \"C\" {\n  #endif\n  extern IMAGE_DOS_HEADER __ImageBase;  // declaration only: supplied by the linker\n  #ifdef __cplusplus\n  }\n  #endif",
     )
 }

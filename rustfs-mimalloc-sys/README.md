@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `e34c9d38`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `b5d94fe8`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -125,10 +125,10 @@ contract. Reclaim-on-free policy is captured at heap creation in this pin.
 
 The latest native changes add a bounded internal integer parser and correct
 oversized-page THP detection/advice; no public API or ABI changes. Environment integers
-accept hexadecimal and reject zero-padded decimal input. Use unsuffixed byte
-counts or `M`/`MiB` for size options because `K`/`KiB` currently omits scaling.
-PMD size is read from sysfs with a 2 MiB fallback. Eligible mappings above the
-8 MiB page threshold receive `MADV_NOHUGEPAGE`. A guarded build-time source copy
+accept hexadecimal and reject zero-padded decimal input. K/KiB suffixes now scale
+correctly; native profiling defaults are 512 KiB samples and 1 GiB snapshots.
+PMD size is read from sysfs with a 2 MiB fallback. Mappings at least as large as
+detected PMD pages above 8 MiB receive `MADV_NOHUGEPAGE`. A guarded build-time source copy
 keeps Linux/Android `no_thp` valid despite the pin's dangling conditional `else`;
 the submodule stays pristine. Native probes validate bounded reads and advice
 decisions; deployment RSS still requires measurement on the target kernel.
@@ -138,11 +138,17 @@ application-defined C symbols. See the wrapper's `custom_tracking` example;
 hooks must never allocate or unwind, and must tolerate concurrent/startup calls.
 These are application symbols, not mimalloc exports or registration functions.
 
-The inherited `profile_disabled` flag
-can prevent sampling in new thread heaps; dedicated-heap and worker-thread
-profiling are not reliable at this pin. Profiling callbacks must not unwind;
+Dedicated heaps and worker contexts can sample after lazy activation by native
+generic-allocation maintenance. The caller/worker callback tests exercise that
+activation and nested `on_alloc` suppression. Profiling callbacks must not unwind;
 stop and detach a profiler, free sampled allocations, and quiesce callbacks
 before deleting it. `mi_profiler_start`/`stop` return the previous running state.
+
+Upstream compile-time opt-ins `MI_NO_CXX_NEW_HANDLER` (omit the weak C++ new-handler
+symbol) and `MI_NO_ALIGN_FALLBACK_WARNING` (omit the benign fallback warning) can
+be passed through target-specific `CFLAGS`. Neither is enabled by default or
+exposed as a redundant Cargo feature. Disabling the handler changes the raw
+`mi_*new` out-of-memory path; these controls are for embedding requirements.
 On musl, backtrace capture needs an externally configured unwinder. GNU Linux
 and macOS use `execinfo`, Windows uses `CaptureStackBackTrace`; FreeBSD/DragonFly
 also link `execinfo` and `util`.

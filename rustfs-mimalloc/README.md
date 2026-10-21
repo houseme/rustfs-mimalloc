@@ -72,7 +72,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.0 development (`e34c9d38`)**.
+The submodule is pinned to upstream **V3.6.0 development (`b5d94fe8`)**.
 The numeric C version is 30600. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has

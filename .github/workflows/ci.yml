@@ -194,11 +194,19 @@ jobs:
         with:
           submodules: recursive
       - name: Configure upstream debug C build
-        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-cmake -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=OFF -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-cmake -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=OFF -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON
       - name: Build focused upstream tests
-        run: cmake --build target/upstream-cmake --target mimalloc-test-api mimalloc-test-api-fill mimalloc-test-arena mimalloc-test-bitmap mimalloc-test-fork mimalloc-test-qsbr --parallel 2
-      - name: Check allocation, fill, arena, bitmap, fork and QSBR contracts
-        run: ctest --test-dir target/upstream-cmake --output-on-failure --timeout 120 -R '^(test-api|test-api-fill|test-arena|test-bitmap|test-fork|test-qsbr)$'
+        run: cmake --build target/upstream-cmake --target mimalloc-test-api mimalloc-test-api-fill mimalloc-test-arena mimalloc-test-bitmap mimalloc-test-fork mimalloc-test-qsbr mimalloc-test-profile mimalloc-test-pprof --parallel 2
+      - name: Check allocation, fork, QSBR and native profiling contracts
+        run: ctest --test-dir target/upstream-cmake --output-on-failure --timeout 120 -R '^(test-api|test-api-fill|test-arena|test-bitmap|test-fork|test-qsbr|test-profile|test-pprof)$'
+      - name: Configure Linux profiling with malloc override
+        if: runner.os == 'Linux'
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-profile-override -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=ON -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON
+      - name: Check override backtrace reentrancy and OOM recovery
+        if: runner.os == 'Linux'
+        run: |
+          cmake --build target/upstream-profile-override --target mimalloc-test-pprof --parallel 2
+          ctest --test-dir target/upstream-profile-override --output-on-failure --timeout 120 -R '^test-pprof$'
 
   # ── Cross-compilation (musl) ───────────────────────────────────────────────
 

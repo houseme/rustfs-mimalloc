@@ -12,81 +12,65 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
-- Synchronize all three crate versions and internal requirements at 0.7.1.
-- Update the C build dependency requirement to `cc` 1.9.0 and its locked
-  `find-msvc-tools` dependency to 0.1.15; keep requirements centralized in the
-  workspace. Validate the final combination across native feature modes and CI.
-- Refresh the test-only `crc32fast` lock resolution to 1.5.3 through `libflate`;
-  the profiling core's runtime dependency/provider graph is unchanged.
-- Advance the mimalloc source pin to V3.6.0 development commit `e34c9d38`,
-  23 commits after `6f45cc52`. The C version is now `30600`; upstream's latest
-  published release remains v3.5.3.
-- Inherit hashed small-page cache offsets, the owned-page release-CAS fast path,
-  and the statistics-merge regression fix. Acquisition/release ordering is
-  retained when a cross-thread free claims page ownership.
-- Expose upstream's `mi_option_unsafe_guarded_precise` name as an associated
-  constant at ID 31, retaining the old Rust enum variant and glob imports.
-  Native guarded-sampling byte units and profile default comments are
-  clarified; these comment corrections do not themselves change sampling.
-- `mi_option_page_reclaim_on_free` is captured when a heap is created. Later
-  option changes affect new heaps, not existing heaps or their future contexts.
-- Native environment options use an internal integer parser instead of CRT
-  `strtol`/`errno`. Hexadecimal values are accepted; zero-padded decimal numbers
-  are rejected and retain the option default. Public headers/ABI are unchanged
-  by the latest native changes; the length-bounded `_mi_strntol` is internal.
-- Read Linux PMD size from sysfs instead of the truncated `/proc/meminfo` input.
-  For eligible mappings with detected pages above 8 MiB, explicitly request
-  `MADV_NOHUGEPAGE`; keep positive advice for supported smaller-page policies.
-  These changes reference open PR #1431; the PR itself is not marked merged.
-- Inherit QSBR full-page abandonment governed by `mi_option_page_full_retain`,
-  same-heap reclaim of delayed empty pages on the last remote free, and allocation
-  retry when reclaim releases an empty page. Nonempty reclaim limits remain
-  distinct. Default builds keep QSBR disabled; no public API/ABI is added.
+- Keep all three crate versions and internal requirements synchronized at 0.7.1;
+  consolidate pending notes into this section. Build dependencies use `cc` 1.9.0
+  and `find-msvc-tools` 0.1.15; the test-only `crc32fast` lock entry is 1.5.3.
+- Advance mimalloc to V3.6.0 development commit `b5d94fe8`, 54 commits after
+  `6f45cc52`. The numeric version remains 30600; the latest published upstream
+  release remains v3.5.3. This pass includes nine merged PRs, detailed in
+  `UPSTREAM_REVIEW.md`.
+- Restore a single weak acquire-release CAS in remote free, replacing the
+  earlier owned-page release-only branch. Inherit the private arm64 page-layout
+  change, hashed small-page offsets and statistics-merge fixes.
+- Correct native environment `K`/`KiB` scaling. Native profiling defaults are
+  now actually 512 KiB per sample and 1 GiB per allocation snapshot interval;
+  these are runtime-value fixes, not just comment corrections. Option IDs stay
+  unchanged; hexadecimal integers work and zero-padded decimals remain invalid.
+- Read Linux PMD size from sysfs. Mappings at least as large as detected pages
+  above 8 MiB receive `MADV_NOHUGEPAGE`, independent of positive-advice alignment
+  eligibility. Shorter mappings do not receive that negative advice.
+- QSBR full pages follow `mi_option_page_full_retain`; delayed empty abandoned
+  pages remain discoverable and can join a receiving same-heap context. Fresh
+  allocation retries when reclaim releases an empty page. Reclaim-on-free policy
+  is captured at heap creation; late TLS frees require runtime exclusion.
 
 ### Added
 
-- Raw experimental `mi_heap_new_qsbr` FFI from `mimalloc/qsbr.h`. Default builds
-  return null with ENOSYS. Enabled builds require runtime-owned metadata,
-  reader/grace-period hooks and a custom C integration; no general Rust QSBR
-  algorithm or owning `Heap` wrapper is implied.
-- API and ABI audits include the QSBR header and validate renamed option aliases:
-  131 Rust function names, 45 option IDs, 122 extern signatures, nine callbacks
-  and three exposed C layouts.
-- Concurrent remote-free/content/reuse regression tests across small, medium
-  and 64 KiB blocks. Add upstream's enabled-QSBR fake-runtime test to native CI.
-- Twenty-one independent-process native option tests cover signed/hexadecimal
-  integers, native-long limits, malformed/overflowing input and byte/KiB storage
-  with MiB suffixes. Process environments are installed before allocator startup.
-- Host C probes cover non-NUL parser inputs ending at a protected page, PMD-size
-  detection/fallback, the 8 MiB boundary and THP advice with/without `no_thp` or
-  `MADV_NOHUGEPAGE`. Include a negative compile control and source-drift rejection.
-- Expand the enabled upstream fake-runtime QSBR suite to 28 named contracts,
-  including abandoned full pages, delayed arena/OS singleton reclaim and
-  ready-page allocation retries. Clarify that QSBR's last free may initialize a
-  receiving thread, so runtimes must avoid frees after mimalloc TLS shutdown.
+- Raw experimental `mi_heap_new_qsbr` FFI. Ordinary builds return null/ENOSYS;
+  enabled builds need host C metadata and reader/grace-period hooks. There is no
+  Cargo QSBR feature or owning safe Rust heap for this mode.
+- `mi_option_unsafe_guarded_precise` at ID 31 while retaining the old Rust enum
+  variant and glob imports. API/ABI gates cover 131 Rust function names, 45 option
+  IDs, 122 extern signatures, nine callbacks and three public C layouts.
+- Independent-process option coverage grows to 28 cases, including KiB suffixes
+  and real native profiling defaults. Native callback tests reach dedicated heaps
+  on the caller and a worker after lazy activation and exclude a nested callback
+  allocation from sampling, including `no_profile` checks.
+- Native C profiling/pprof tests join the focused CI suite. Linux also runs pprof
+  with malloc override, including deterministic snapshot OOM and recovery tests.
+- Document upstream `MI_NO_CXX_NEW_HANDLER` and `MI_NO_ALIGN_FALLBACK_WARNING`
+  compile-time controls through target CFLAGS; default behavior is preserved.
 
 ### Fixed
 
-- Preserve Linux/Android `no_thp` builds at the latest upstream pin by removing
-  its dangling conditional `else` from an OUT_DIR compatibility copy. Keep
-  `MI_NO_THP` and oversized-page negative advice active; the submodule is pristine.
-  Package the helper and fixtures, and add a musl `secure,no_thp` CI build.
-- `rustfs-mimalloc-profiling`: size the temporary live-snapshot vector from
-  retained occupancy instead of reserving configured shard capacity on every
-  report. Stable empty snapshots reserve no vector storage. If concurrent
-  admissions outgrow the estimate, reserve the shard limit outside its lock
-  before copying; retain every entry and pending realloc state.
-- Add regressions for empty/sparse snapshot storage and occupancy growth between
-  sizing and copying. These reduce temporary buffer capacity without changing
-  preallocated live metadata, sampling defaults or allocation-provider dispatch.
-- Preserve alignment obligations in runtime option setter documentation;
-  precise guarded placement can violate Rust allocation contracts.
-- Clarify that `MiMalloc::collect` and `Heap::collect` collect the caller's
-  context; coordinator calls do not reclaim every worker's owned pages.
-- Inherit the reclaim-eligibility fallthrough fix and QSBR-delayed page lifecycle
-  handling. Ordinary builds retain QSBR-disabled allocation layouts and paths.
-- Document the existing native `K`/`KiB` environment-suffix scaling issue. Use
-  unsuffixed byte counts or `M`/`MiB` suffixes for size options in this snapshot.
+- Inherit native pprof allocation-failure handling: abort an OOM snapshot before
+  writing its output and release failed profiler/location allocations. Guard
+  recursive allocation sampling during `on_alloc`, preserve sampling state on
+  no-sample paths and avoid an oversized shift in exponential sampling.
+- Native dedicated heaps/worker contexts are no longer permanently excluded from
+  sampling. Activation is still lazy; the Rust sampling wrapper is independent.
+- Remove the local Windows ImageBase patch now fixed by upstream PR #1443;
+  dynamic CRT builds use upstream source. Retain static CRT bootstrap fixes and
+  Linux/Android `no_thp` conditional compatibility, guarded against source drift.
+- Inherit QSBR abandoned-page mapping, guarded sized-free, MSan syscall annotation,
+  Emscripten builtin allocator, WASI preprocessing and relative-header fixes.
+- Size the Rust profiler's temporary live-copy vector from retained occupancy.
+  Stable empty snapshots reserve no vector storage; concurrent growth reserves
+  outside the shard lock before copying. Retain realloc reservations and all
+  sampled records without changing preallocated metadata or sampling defaults.
+- Cover concurrent remote-free/content/reuse across 64 B, 4 KiB and 64 KiB blocks,
+  and bounded native parser/PMD/advice controls. Clarify alignment obligations for
+  unsafe option setters and caller-context scope for collection APIs.
 
 ## [0.7.0] - 2026-10-17
 

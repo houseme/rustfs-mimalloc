@@ -1,5 +1,5 @@
 use rustfs_mimalloc_sys::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[repr(C)]
 struct Profiler {
@@ -7,6 +7,8 @@ struct Profiler {
     allocations: AtomicUsize,
     frees: AtomicUsize,
     snapshots: AtomicUsize,
+    nested_once: AtomicBool,
+    nested_completed: AtomicUsize,
 }
 
 unsafe extern "C" fn allocated(
@@ -16,11 +18,21 @@ unsafe extern "C" fn allocated(
     _: usize,
     _: usize,
     _: u64,
-    _: *mut mi_heap_t,
+    heap: *mut mi_heap_t,
 ) -> usize {
-    unsafe { &*profiler.cast::<Profiler>() }
-        .allocations
-        .fetch_add(1, Ordering::Relaxed);
+    let profiler = unsafe { &*profiler.cast::<Profiler>() };
+    profiler.allocations.fetch_add(1, Ordering::Relaxed);
+    if profiler.nested_once.swap(false, Ordering::Relaxed) {
+        // A bounded nested allocation detects reentrancy without an unbounded
+        // recursion failure. It must not produce another profiler callback.
+        unsafe {
+            let nested = mi_heap_malloc(heap, 64 * 1024);
+            if !nested.is_null() {
+                profiler.nested_completed.fetch_add(1, Ordering::Relaxed);
+                mi_free(nested);
+            }
+        }
+    }
     1
 }
 unsafe extern "C" fn freed(
@@ -39,8 +51,8 @@ unsafe extern "C" fn snapshot(profiler: *mut mi_profiler_t) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
-fn profiler_callbacks_match_upstream_abi() {
-    let mut profiler = Profiler {
+fn test_profiler() -> Profiler {
+    Profiler {
         hooks: mi_profiler_t {
             reserved: std::ptr::null_mut(),
             sample_data_size: 8,
@@ -53,7 +65,13 @@ fn profiler_callbacks_match_upstream_abi() {
         allocations: AtomicUsize::new(0),
         frees: AtomicUsize::new(0),
         snapshots: AtomicUsize::new(0),
-    };
+        nested_once: AtomicBool::new(false),
+        nested_completed: AtomicUsize::new(0),
+    }
+}
+
+fn profiler_callbacks_match_upstream_abi() {
+    let mut profiler = test_profiler();
     unsafe {
         let heap = mi_heap_main();
         assert!(!heap.is_null());
@@ -85,6 +103,62 @@ fn profiler_callbacks_match_upstream_abi() {
         profiler.allocations.load(Ordering::Relaxed)
     );
     assert_eq!(profiler.snapshots.load(Ordering::Relaxed), 1);
+}
+
+fn profiler_reaches_new_heaps_and_workers_without_recursive_samples() {
+    for worker in [false, true] {
+        let mut profiler = test_profiler();
+        let before;
+        unsafe {
+            let heap = mi_heap_new();
+            assert!(!heap.is_null());
+            assert!(mi_heap_profile(heap, &mut profiler.hooks));
+            mi_profiler_start(&mut profiler.hooks);
+            // Each context is created after attachment. Native activation is
+            // lazy: advance its 1000-generic-allocation maintenance threshold.
+            let address = heap as usize;
+            let allocations = &profiler.allocations;
+            let nested_once = &profiler.nested_once;
+            let allocate = move || {
+                let heap = address as *mut mi_heap_t;
+                for _ in 0..2048 {
+                    let pointer = mi_heap_malloc(heap, 64 * 1024);
+                    assert!(!pointer.is_null());
+                    mi_free(pointer);
+                }
+                let before = allocations.load(Ordering::Relaxed);
+                nested_once.store(true, Ordering::Relaxed);
+                for _ in 0..64 {
+                    let pointer = mi_heap_malloc(heap, 64 * 1024);
+                    assert!(!pointer.is_null());
+                    mi_free(pointer);
+                }
+                before
+            };
+            before = if worker {
+                std::thread::scope(|scope| scope.spawn(allocate).join().unwrap())
+            } else {
+                allocate()
+            };
+            mi_profiler_stop(&mut profiler.hooks);
+            assert!(mi_heap_profile(heap, std::ptr::null_mut()));
+            mi_heap_delete(heap);
+        }
+        let expected = if MI_PROFILE_ENABLED { 64 } else { 0 };
+        assert_eq!(
+            profiler.allocations.load(Ordering::Relaxed) - before,
+            expected,
+            "worker={worker}"
+        );
+        assert_eq!(
+            profiler.frees.load(Ordering::Relaxed),
+            profiler.allocations.load(Ordering::Relaxed)
+        );
+        assert_eq!(
+            profiler.nested_completed.load(Ordering::Relaxed),
+            usize::from(MI_PROFILE_ENABLED)
+        );
+    }
 }
 
 fn pprof_snapshot_matches_build_sampling_mode() {
@@ -550,6 +624,7 @@ fn main() {
     #[cfg(all(feature = "override", not(target_os = "windows")))]
     override_routes_system_allocations_to_mimalloc();
     profiler_callbacks_match_upstream_abi();
+    profiler_reaches_new_heaps_and_workers_without_recursive_samples();
     pprof_snapshot_matches_build_sampling_mode();
     println!("upstream API integration checks passed");
 }

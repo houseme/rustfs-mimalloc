@@ -4,6 +4,28 @@ use rustfs_mimalloc_sys::{c_long, mi_option_get, mi_option_get_size, mi_option_t
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--profile-defaults") {
+        // The environment is cleared by the parent before native startup.
+        unsafe {
+            assert_eq!(
+                mi_option_get(mi_option_t::mi_option_profile_sample_rate),
+                512 * 1024
+            );
+            assert_eq!(
+                mi_option_get_size(mi_option_t::mi_option_profile_sample_rate),
+                512 * 1024
+            );
+            assert_eq!(
+                mi_option_get(mi_option_t::mi_option_profile_alloc_interval),
+                1024 * 1024 * 1024
+            );
+            assert_eq!(
+                mi_option_get_size(mi_option_t::mi_option_profile_alloc_interval),
+                1024 * 1024 * 1024
+            );
+        }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--child") {
         let expected: i64 = args[3].parse().unwrap();
         let actual = unsafe {
@@ -52,6 +74,12 @@ fn main() {
         ("bytes", "2mb".to_owned(), 2 * 1024 * 1024),
         ("kib", "0x2MiB".to_owned(), 2 * 1024 * 1024),
         ("kib", "1025".to_owned(), 2 * 1024),
+        ("bytes", "32KiB".to_owned(), 32 * 1024),
+        ("bytes", "2kb".to_owned(), 2 * 1024),
+        ("bytes", "0x20KiB".to_owned(), 32 * 1024),
+        ("kib", "32KiB".to_owned(), 32 * 1024),
+        ("kib", "2kb".to_owned(), 2 * 1024),
+        ("kib", "0x20KiB".to_owned(), 32 * 1024),
     ];
     let executable = std::env::current_exe().unwrap();
     for (kind, value, expected) in &cases {
@@ -83,8 +111,23 @@ fn main() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    let mut defaults = std::process::Command::new(&executable);
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_str()
+            .is_some_and(|name| name.to_ascii_uppercase().starts_with("MIMALLOC_PROFILE"))
+        {
+            defaults.env_remove(name);
+        }
+    }
+    let output = defaults.arg("--profile-defaults").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     println!(
         "native environment parsing passed {} isolated cases",
-        cases.len()
+        cases.len() + 1
     );
 }

@@ -2,58 +2,99 @@
 
 ## Result and version provenance
 
-The latest `git pull --ff-only` reported the repository current at
-`39d9285`, the preceding 0.7.1 update. All three crates and internal requirements
-remain at **0.7.1**. The single 0.7.1 changelog section is
-dated 2026-10-21, with no separate Unreleased content. The tagged 0.7.0 and
-older release notes are preserved. This delivery commits/pushes code only;
-no tag or publication is requested.
-
-The delivery includes `cc` 1.9.0 / `find-msvc-tools` 0.1.15. A separate source
-snapshot first passed workspace checks with the earlier locked 1.8.0/0.1.14
-resolution; final validation uses the updated workspace and lockfile.
+`git pull --ff-only` reported the clean repository current at `bde12c6`.
+All three crates and internal requirements remain **0.7.1**. Pending notes are
+consolidated into the single 0.7.1 changelog section dated 2026-10-21. No tag or
+package publication is requested. The parent revision's
+[48 CI jobs passed](https://github.com/houseme/rustfs-mimalloc/actions/runs/39459111633).
+New-commit CI is checked after push.
 
 Mimalloc advances from
-[`6f45cc52`](https://github.com/microsoft/mimalloc/commit/6f45cc52f01413f2d86fe3c7c3ed6c6a86bdd13a)
-to [`e34c9d38`](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3),
-**23 commits** later, including two new commits after `0ded0864`. The source
-still identifies itself as **V3.6.0 / 30600**.
-This is a fixed development commit, not a published v3.6.0 release: the latest
-GitHub release is still [v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3),
-and the live tag-prefix query returns no v3.6 tags. The parent revision's
-[CI passed all 48 jobs](https://github.com/houseme/rustfs-mimalloc/actions/runs/39182989417).
-New-commit CI is checked separately after push.
+[`e34c9d38`](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3)
+to [`b5d94fe8`](https://github.com/microsoft/mimalloc/commit/b5d94fe81c3b710499aaed3956b02fb1a8febb94),
+**31 commits** later, including merge commits and whitespace cleanup. The full
+0.7.1 update is 54 commits beyond `6f45cc52`. Source version **30600** still
+identifies a V3.6.0 development snapshot. The latest published release remains
+[v3.5.3](https://github.com/microsoft/mimalloc/releases/tag/v3.5.3); the refreshed
+v3.6 tag-prefix query is empty. No unrelated dependency update is included.
 
-## Upstream changes and PR status
+## Merged PR and direct-commit audit
 
-The refreshed merged-PR search since October 19 returns no new PRs. The QSBR branch
-merge below is a Git commit, not a GitHub PR merge. Earlier PRs #1396, #1428
-and #1429 are already present in the starting pin; their evidence is retained
-in the historical reviews. [PR #1431](https://github.com/microsoft/mimalloc/pull/1431)
-is still open and unmerged. The maintainer's discussion says the changes will be
-integrated manually, and the latest native commits reference the PR. Their
-source changes are included, while the GitHub PR is not counted as merged.
+Nine PRs have merged into `dev3` since the previous pin; direct REST reads
+confirm each merged state, base branch and merge commit, and each is reachable
+from the selected source. [#1431](https://github.com/microsoft/mimalloc/pull/1431)
+is now **closed without a GitHub merge**; its THP work landed via direct commits.
+A commit mentioning a PR is not counted as another PR merge.
 
-| Commit / area | Actual change and relevance |
+| Merged PR | Change and scope |
 | --- | --- |
-| [a7cc8442](https://github.com/microsoft/mimalloc/commit/a7cc8442b3757825e609f054333a5bd5bae9c7cc) | Hashes each small page's first-block offset to spread allocations across cache sets. Alignment tests remain important; payload traversal and allocation-only latency measure different effects. |
-| [bd99378d](https://github.com/microsoft/mimalloc/commit/bd99378d8f389c93aeba7a1c329868e701ed1cfa), `c4a9f1ad`, [92984051](https://github.com/microsoft/mimalloc/commit/929840510ff880e4076cd5a5807c4c0cf2f2a9a7) | Introduce and merge runtime-oriented QSBR page-release primitives, with ordinary builds disabled by default. Fix 32-bit test support in `6a5e50bb`. |
-| [e83c5605](https://github.com/microsoft/mimalloc/commit/e83c560535a32e2323f9f7bee2fb643bdd2ed1fe) | Reduces statistics merging work when source current/peak values are zero. Total counters still merge; the change is not removal of statistics. |
-| [12e775db](https://github.com/microsoft/mimalloc/commit/12e775dbf7914929aa26aa2e5c08fff7a1cb2a56), [1d03ecbd](https://github.com/microsoft/mimalloc/commit/1d03ecbd19a07d8cbef4b93b4d08746f397bb59e) | Remote-free CAS uses release ordering while page ownership is already held; ownership transitions retain acquire-release. The explicit branch selects ordering from the observed ownership bit on every retry. |
-| [4f3151bb](https://github.com/microsoft/mimalloc/commit/4f3151bb7b5e44c117fc3ab5108c30365c522ac2) | Adds prefetch macro definitions. No call sites exist in this pin, so this is not an enabled runtime-prefetch optimization. |
-| [21d7e2ef](https://github.com/microsoft/mimalloc/commit/21d7e2ef7ae24cc40a799324b38fa25617b2832f) | Adds an initial `contrib/rust` crate with allocator, heap and sys APIs. It is distinct from the registry `mimalloc` 0.1.52 provider tested by this project. This update vendors C changes and retains the existing stable `GlobalAlloc` API/provider model; it does not substitute that new crate or add nightly allocator features. |
-| [55fbfeb0](https://github.com/microsoft/mimalloc/commit/55fbfeb0896bec480997e4b86c8315710d809efa) | Replaces CRT `strtol`/`errno` in environment option initialization with internal `_mi_strtol`. This reduces CRT dependencies at startup, accepts hexadecimal and rejects zero-padded decimal numbers. It does not change a per-allocation algorithm or add public FFI. |
-| [b4f183bb](https://github.com/microsoft/mimalloc/commit/b4f183bb1bbcccfade6f98fba30ef276cf1eb5b8) | Earlier meminfo-based detector; the read/PMD distinction issue reproduced in the preceding review is superseded by the new sysfs implementation. |
-| [9da67f5d](https://github.com/microsoft/mimalloc/commit/9da67f5de7116f8e48499cc8fcd815813a3770d2) | Reads `/sys/kernel/mm/transparent_hugepage/hpage_pmd_size` in bytes instead of the truncated meminfo field. Positive sizes use the detected value; missing/invalid input retains the 2 MiB fallback. |
-| [cb4d1a0b](https://github.com/microsoft/mimalloc/commit/cb4d1a0bc29dca988a8eac40f67050618163f171) | Replaces internal `_mi_strtol` with `_mi_strntol(max_len)`. It accepts bounded non-NUL input and adds explicit read limits; no public header or FFI change. |
-| [a355bf56](https://github.com/microsoft/mimalloc/commit/a355bf56ed2a3af49317eac7b3b46bc9f101de56) | Reduces allocation sizes in the separate upstream `contrib/rust` tests. It does not change allocator behavior or this project's provider selection. |
-| [0ded0864](https://github.com/microsoft/mimalloc/commit/0ded0864e097d4e647e70fd57f227ab823d6168a) | Eligible ordinary mappings with PMD size above 8 MiB receive explicit `MADV_NOHUGEPAGE`, including when large pages were not requested. Introduces a `MI_NO_THP` dangling-else compile regression handled by the integration below. |
-| [2f754692](https://github.com/microsoft/mimalloc/commit/2f754692508e70bb19b81cbc36a417c7764b7eca) | Allows protected full pages to follow the configured abandonment policy. Delayed empty abandoned pages obtain a receiving same-heap context; empty reclaim may release the page, so allocation callers retry instead of using that page again. |
-| [e34c9d38](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3) | Expands enabled fake-runtime tests for abandoned full pages, delayed arena/OS singletons, last-free thread initialization and allocation retries. Updates the runtime integration contract. |
+| [#1432](https://github.com/microsoft/mimalloc/pull/1432) | Native pprof allocation failures abort snapshot construction before file output; clean up failed objects/locations and guard backtrace-triggered recursive sampling. Register Linux pprof coverage and deterministic OOM recovery. |
+| [#1435](https://github.com/microsoft/mimalloc/pull/1435) | Emscripten uses the always-available builtin allocator entry points instead of requiring emmalloc linkage. Target execution is not claimed here. |
+| [#1436](https://github.com/microsoft/mimalloc/pull/1436) | Put force-inline qualifiers before the return type to satisfy GCC declaration diagnostics. |
+| [#1437](https://github.com/microsoft/mimalloc/pull/1437) | Mark buffers actually written by raw read/getrandom syscalls initialized for MSan. Normal builds compile the annotation away; this pass does not claim an MSan run. |
+| [#1438](https://github.com/microsoft/mimalloc/pull/1438) | Optional `MI_NO_CXX_NEW_HANDLER` omits the weak C++ handler symbol for C-only embeddings. Default behavior stays intact. |
+| [#1439](https://github.com/microsoft/mimalloc/pull/1439) | Quote relative public-header includes for vendoring; no function or layout change. |
+| [#1440](https://github.com/microsoft/mimalloc/pull/1440) | Avoid a non-constant PAGE_SIZE preprocessor expression in secure WASI builds. No WASI execution is claimed. |
+| [#1442](https://github.com/microsoft/mimalloc/pull/1442) | Optional `MI_NO_ALIGN_FALLBACK_WARNING` suppresses the benign over-allocation fallback diagnostic. |
+| [#1443](https://github.com/microsoft/mimalloc/pull/1443) | Declare linker-owned `__ImageBase` extern in C. Remove the now-redundant local ImageBase patch; retain the separate static-CRT bootstrap compatibility. |
 
-## QSBR reclaim and abandonment review
+Additional direct changes matter to this wrapper:
 
-The two new commits change internal lifecycle behavior, not public declarations:
+- `c1747f56` clears the inherited permanent profiling exclusion on ordinary new
+  thread heaps. Sampling activation still waits for generic-allocation maintenance.
+- `e7de0f26` guards `on_alloc` allocations per thread; `70640995` preserves
+  sampling state through no-sample generic allocation rather than temporarily
+  resetting/restoring a stale sample rate.
+- `76de0410` fixes K/KiB scaling and native byte-valued profiling defaults.
+- `f8a38c68`/`5966193f` refine negative THP advice: the mapping must be at least
+  the detected PMD size above 8 MiB; positive-advice alignment eligibility is
+  checked separately. Negative advice does not depend on an allow-large request.
+- `97178171` reorders private page fields to avoid arm64 paired accesses;
+  `b5d94fe8` replaces the earlier owned-page release-only branch with a single
+  weak acquire-release CAS. No Rust atomic ordering was weakened. Older results
+  from the now-reverted CAS implementation are not performance evidence for this pin.
+- `f142a26d` keeps empty QSBR pages in the abandoned mapped state so allocation
+  can find/reclaim them. The existing lifecycle contracts remain covered.
+
+## Native profiling and configuration verification
+
+The earlier e34 review's statements that profiling defaults only changed in
+comments, and that K suffixes were still unusable, are superseded by this source.
+The old implementation stored byte-valued defaults as 512 and 1,048,576; this
+update actually sets **524,288 bytes per sample** and **1,073,741,824 bytes per
+automatic allocation snapshot**. No automatic profiler starts without enabling
+it. Public option IDs and explicit callback sample-rate units remain unchanged.
+
+`options_env` now runs 28 independent startup processes. New cases verify K/KiB
+and hexadecimal suffixes for byte- and KiB-stored options, plus both raw and
+size getters for the real default values. This includes `no_profile` builds;
+removing native sampling does not remove the options API.
+
+New callback integration tests attach a profiler before creating a dedicated
+context on the caller and on a worker. The test advances 2,048 generic allocations
+through native lazy activation, then checks 64 sampled allocations. One callback
+makes a bounded nested allocation: it completes but generates no additional
+sample, and frees remain balanced. With `no_profile`, all callback counters stay
+zero. This establishes eventual dedicated-context activation, not immediate or
+universal worker sample coverage. Profiler ownership/callback lifetime constraints
+still require raw FFI; no safe RAII profiler is added.
+
+The native pprof writer now builds best-effort output, unwinds failed allocations
+and skips file creation on construction OOM. Linux CI executes its deterministic
+OOM/no-file/recovery case with malloc override enabled, where backtrace recursion
+matters. I/O errors are not transactional file replacement, and these native fixes
+do not make Rust `Vec`/pprof allocation fallible. The independent Rust profiler
+keeps its existing bounded-record/drop behavior.
+
+Both new build controls can be passed through target-specific CFLAGS. Host release
+archive probes verify that the default build retains the weak new-handler symbol
+and alignment-warning text, while explicit opt-ins omit them. Disabling the
+handler changes the raw `mi_*new` OOM path; neither macro is enabled by default
+or expanded into another Cargo feature.
+
+## QSBR lifecycle retained from earlier 0.7.1 work
+
+The earlier reclaim commits changed internal lifecycle behavior, not public declarations:
 
 - Protected heaps now use `mi_option_page_full_retain` like ordinary heaps:
   nonnegative values allow full-page abandonment; negative values retain the
@@ -80,7 +121,7 @@ remain host responsibilities. The constructor stays raw FFI and returns
 null/ENOSYS in ordinary builds; no Cargo feature or owning safe heap is added.
 The private changed helper is not exposed as a Rust API.
 
-Upstream's enabled C suite runs **28 named contracts**, including new tests for
+Upstream's enabled C suite now runs **29 named contracts**, including tests for
 full-page abandonment, delayed empty arena/OS pages with reclaim disabled,
 singleton pages, fresh thread initialization and retries after releasing ready
 pages. All six focused native test executables pass locally. This validates a
@@ -146,12 +187,13 @@ this change does not implement stack interning or alter its metadata counter.
 ## Native THP correction and build compatibility
 
 The preceding review's meminfo finding is resolved in the new source: PMD size
-comes from sysfs, and eligible ordinary mappings with pages above **8 MiB**
-receive explicit negative advice. The latest code also terminates bounded sysfs
+comes from sysfs. Ordinary mappings at least as large as a detected PMD above
+**8 MiB** receive negative advice, separately from positive-advice eligibility.
+The latest code also terminates bounded sysfs
 reads and uses the length-bounded integer parser. This removes the earlier
 512-byte meminfo-read limitation and hugetlb/THP-field confusion.
 
-**[src/prim/unix/prim.c:494] `MI_NO_THP` leaves a dangling `else`.**
+**`MI_NO_THP` leaves a dangling `else` in the native Unix mapping path.**
 Severity: Major, fixed in this integration. Read the complete `unix_mmap` path:
 when `MADV_NOHUGEPAGE` exists, its oversized-page `if` is followed by `else`, but
 `MI_NO_THP` removes the positive-advice statement that would follow it. A C
@@ -160,7 +202,8 @@ that macro, so the unmodified new pin breaks a supported build configuration.
 
 `unix_compat.rs` removes only that `else` in an OUT_DIR source copy for
 Linux/Android `no_thp` builds. Exact replacement counts reject source drift.
-Default Unix builds keep upstream source; Windows compatibility is unchanged.
+Default Unix builds keep upstream source. Windows dynamic CRT now uses the
+upstream ImageBase declaration; static CRT keeps its separate bootstrap edits.
 `MI_NO_THP` and `MI_DEFAULT_ALLOW_THP=0` remain enabled, and oversized-page
 `MADV_NOHUGEPAGE` remains present. The submodule is pristine. The helper and
 native test fixture are included in the normalized sys archive. CI also adds
@@ -176,42 +219,21 @@ function, applying the same Rust compatibility helper for `no_thp` variants:
   values. No probe reads the host's actual Linux sysfs state.
 - Four macro combinations cover THP enabled/disabled and presence/absence of
   `MADV_NOHUGEPAGE`. Advice checks cover the 8 MiB boundary, oversized mappings,
-  caller opt-out, disabled runtime options, failed mappings and ineligible ranges.
+  caller opt-out, disabled runtime options, failed mappings, sub-PMD ranges and
+  negative advice independent of positive-advice alignment eligibility.
 - The patched combinations compile/run. The unpatched `MI_NO_THP` plus negative
   advice combination is a failing compile control; changed patch anchors fail.
 
 These controlled host tests verify bounded parsing and advice decisions. They
 do not measure real Linux PMD allocation, successful kernel advice, Android
-execution or RSS reduction. The native condition still requires an eligible
-mapping; invalid/missing size data retains the 2 MiB fallback. Validate RSS,
+execution or RSS reduction. Invalid/missing size data retains the 2 MiB fallback. Validate RSS,
 faults and latency on the deployment kernel, particularly with THP=always.
-
-## Remaining startup configuration finding
-
-**[src/util/options.c:709] Native K/KiB suffix omits scaling.**
-Severity: Minor. This pre-existing parser branch advances past `K` without
-multiplying the value. Independent child processes show
-`MIMALLOC_STATS_MERGE_THRESHOLD=32KiB` produces 32 bytes and
-`MIMALLOC_ARENA_PURGE_MIN_SIZE=32KiB` produces 1,024 bytes after native KiB
-rounding. Both should describe 32,768 bytes under the header's documented
-units. This issue already existed at `1d03ecbd`; it is not introduced by the
-new integer parser; the same K branch remains at this pin. Use an unsuffixed byte count or `M`/`MiB` until corrected
-upstream. Numeric Rust option setters are separate APIs and retain their
-native option-specific units. README guidance now makes the limitation explicit.
-
-The existing `options_env` executable installs each environment before native startup
-and checks 21 independent processes. Coverage includes signed/hexadecimal values,
-native-long MIN/MAX on LP64 and LLP64 targets, overflow, malformed input,
-zero-padded decimal rejection, MiB units and byte-to-KiB rounding. No test mutates
-the running process's environment after allocator initialization. The new parser
-and THP helpers are internal; public headers, option IDs, callbacks and layouts
-are unchanged by the preceding THP commits and the latest QSBR commits. Previously exposed QSBR and renamed
-option APIs remain available.
 
 ## Public API and configuration audit
 
-The latest two commits change only a private header's reclaim return type;
-all audited public headers, option IDs, callbacks and layouts are unchanged.
+The latest public-header edits are includes/comments; no new public function,
+option ID or callback layout requires a Rust binding. Private page/tld layouts
+changed and remain opaque to Rust. All audited signatures/layouts still match.
 MI_STAT_VERSION remains 6. Over the full 0.7.1 update, root `mimalloc.h` changed
 the numeric version and renamed one option, and the experimental factory in
 **`mimalloc/qsbr.h`** was added to both API and ABI audits.
@@ -222,7 +244,7 @@ the numeric version and renamed one option, and the experimental factory in
 | Four QSBR runtime hooks | `mi_heap_qsbr_init`, `mi_page_qsbr_clear`, `mi_page_qsbr_is_clear`, `mi_page_qsbr_should_delay` are supplied by a host runtime. They are not allocator-exported functions to declare or call as ordinary Rust FFI. |
 | `mi_option_unsafe_guarded_precise` | New associated constant at ID 31. The old `mi_option_guarded_precise` enum variant is retained, so qualified references and existing glob imports still compile. Audit validation follows the alias to the C name and rejects numeric drift. |
 | `mi_option_page_reclaim_on_free` | Now copied into a heap during creation. Later option writes affect newly created heaps, not existing heaps or their future thread contexts. The main heap may be created before Rust main, so use the environment before process startup to configure its creation policy. |
-| Guarded/profile documentation | Header comments clarify guarded sampling as requested bytes and native profile defaults. Corresponding option implementations already used these units/defaults at the old pin; this is not a new sampling algorithm in this interval. |
+| Guarded/profile configuration | Guarded sampling remains byte-based. Native profile defaults and K suffix scaling are actually corrected at this pin; prior comments-only interpretation is withdrawn. Explicit raw option units remain option-specific. |
 
 The factory is deliberately not a safe `Heap` constructor. Enabled QSBR builds
 need host-defined, zero-initialization-compatible C metadata embedded in the
@@ -249,12 +271,12 @@ platform execution or the host runtime's safety proof.
 
 | Area | Finding / disposition |
 | --- | --- |
-| Remote-free ordering | Read the complete modified CAS loop and its ownership transition. Release publishes the freed block's list link; acquire-release remains when ownership changes. No Rust recorder atomics or general free routing were weakened. This is source reasoning plus regression coverage, not a formal weak-memory proof. |
+| Remote-free ordering | Read the restored weak acquire-release CAS loop and ownership transition. Every successful remote-free CAS has acquire-release ordering. The prior release-only branch is gone; Rust recorder atomics and general free routing are unchanged. This is source reasoning plus regression coverage, not a formal weak-memory proof. |
 | Contended free/reuse | Added eight-consumer free batches for 64 B, 4 KiB and 64 KiB blocks, checking payload and subsequent zero allocation. An additional two-producer/four-consumer test overlaps allocation, remote frees and owner-thread exit, drains 1,536 blocks and retains the parent heap throughout. It records corruption until after draining to avoid stranding producers on a failed data assertion. |
 | Collection scope | `mi_heap_collect` in `src/heap/theap.c` resolves the calling thread's context; it does not walk every worker. Rust documentation now makes that scope explicit for both collect APIs. Calling collect on a coordinator is not a complete idle-worker/RSS reclamation policy. |
 | Heap/context safety | Ordinary owned/borrowed heap lifetime behavior, !Send/!Sync cached views, aligned allocation, cross-thread free, context deletion and direct-OS-page tests remain enabled. QSBR handles stay raw because normal owning Drop would use the rejected delete operation. |
 | Unsafe options | Setter docs explicitly require values to preserve active allocation contracts, in addition to excluding concurrent access to upstream non-atomic options. Precise guarded placement disables normal minimal rounding; ordinary aligned dispatch and defaults remain unchanged. |
-| Native profiling | Empty native thread contexts still inherit `profile_disabled=true`. Main-heap callback tests pass; no claim of reliable worker/dedicated-heap native sampling is made. The independent Rust profiler does not use that activation path. |
+| Native profiling | Ordinary contexts clear permanent profiling exclusion. Caller/worker dedicated heaps produce samples after lazy activation, and bounded nested on_alloc allocations produce no recursive samples. OOM behavior is best effort. The independent Rust profiler does not use native activation. |
 | QSBR page progress | Read every internal reclaim caller after its return type changed. Allocation retries released empty pages; free-side callers do not dereference consumed pages afterward. The new host-runtime late-TLS restriction is documented; ordinary builds keep the delay/TLS path disabled. |
 
 ## Profiling provider review
@@ -293,7 +315,7 @@ round runs in a new process with 50 samples, one-second warm-up, two-second
 measurement and one Rayon analysis thread. No task-owned build or benchmark
 runs concurrently. The shared macOS arm64 host is **not resource-isolated**.
 These retained numbers do not measure the subsequent Unix startup/THP changes
-through `e34c9d38` and must not be relabelled as benchmarks of the latest pin.
+through `b5d94fe8` and must not be relabelled as benchmarks of the latest pin.
 
 | Case | A1 | B1 | B2 | A2 | Unit | A / B drift | Conclusion |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -306,7 +328,7 @@ through `e34c9d38` and must not be relabelled as benchmarks of the latest pin.
 
 All six cases meet the 5% repeatability screen, but the resource-isolation gate
 is not met. Every attribution/improvement field remains false/null. The 64 KiB
-allocation case has higher point estimates at the new pin and deserves focused
+allocation case had higher point estimates at `1d03ecbd` and deserves focused
 controlled investigation. These loops do not measure multi-object payload
 cache behavior, RSS or application throughput. Neither a production speedup nor
 a regression attribution is established; no favorable retry replaces the data.
@@ -320,31 +342,32 @@ be measured separately.
 ## Profiling quality diagnostics and optimization priorities
 
 The strict report-classifier controls pass again. A fresh October 21 diagnostic
-uses `e34c9d38`, `cc` 1.9.0 and the RustFS provider with Portable capture, one
+uses `b5d94fe8`, `cc` 1.9.0 and the RustFS provider with Portable capture, one
 worker and one second per row. No task-owned build/benchmark runs concurrently;
 the shared host is not resource-isolated. As in current CI, quality enforcement
 is disabled for the real pressure run, while rows retain PASS/LOSSY labels.
 
 | Steady 1 MiB-interval scenario | Drained records | Record drops | Pending | Live drops | Periodic reports | Max report time |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Allocation | 78,796 | 0.072286% | 0 | 0 | 18 | 1,088 us |
-| Live heap | 79,198 | 0.012625% | 0 | 0 | 18 | 1,012 us |
+| Allocation | 79,235 | 0.073146% | 0 | 0 | 18 | 952 us |
+| Live heap | 84,398 | 0.017770% | 0 | 0 | 18 | 968 us |
 
 These observed steady rows pass the quality classifier; the allocation row
 still raises the configured overhead warning. Small-recorder post-workload
 rows are lossy and are not sustainable-overhead evidence. Live-table payload
 is 15,826,944 bytes (about 15.1 MiB), excluding control bytes and headers.
 No short-run overhead ratio is promoted to a release or production guarantee.
-Current raw outputs/history are in `target/review-071-oct21-profiling/`.
+Current raw outputs/history are in `target/review-071-latest-profiling/`.
 The earlier `target/review-071-profiling/` directory is absent in this checkout.
-The current raw rows also show 5,959/6,000 ns allocation p99 estimates. They
+The current raw rows also show 5,584/5,583 ns allocation p99 estimates. They
 are short quality diagnostics, not a causal comparison with the older pin.
 
 Prioritize further work in this order:
 
 1. Validate the new PMD detection and negative advice on 16/64 KiB-page Linux
    systems, including THP=always and kernel advice failures. Audit deployed size
-   environment values for the KiB suffix issue and zero-padded decimals.
+   environment values that compensated for the corrected KiB scaling/defaults,
+   and retain tests for invalid zero-padded decimals.
 2. Recheck the 64 KiB allocation point estimates on isolated Linux/macOS resources,
    then measure cache-sensitive payloads, RSS, faults and tail latency. Cache
    spreading can target payload conflicts while changing allocation-only costs.
@@ -362,7 +385,7 @@ Prioritize further work in this order:
 
 ## Validation and boundaries
 
-Stable Rust 1.99.1 / macOS arm64 local evidence at `e34c9d38`:
+Stable Rust 1.99.1 / macOS arm64 local evidence at `b5d94fe8`:
 
 - Default, secure/debug/no-profile, no_thp/local-dynamic-TLS and all-feature
   workspace combinations pass. The unchanged
@@ -379,21 +402,22 @@ Stable Rust 1.99.1 / macOS arm64 local evidence at `e34c9d38`:
   with local allocator/sys patches and both provider graphs. This does not claim that
   matching 0.7.1 registry packages were published.
 - Updated upstream Debug/C `test-api`, `test-api-fill`, `test-arena`,
-  `test-bitmap`, `test-fork` and enabled `test-qsbr` pass 6/6, including all
-  28 named fake-runtime QSBR contracts.
+  `test-bitmap`, `test-fork`, `test-qsbr`, `test-profile` and `test-pprof` pass
+  8/8. Linux override-mode pprof/OOM execution is separately required in CI.
 - Default and secure/debug/no-profile custom-tracking examples pass again with
   actual hooks active in release builds using the final C build dependencies.
   Runtime metadata and numeric version agree at 30600.
-- Native option parsing passes all 21 child processes in each local feature
+- Native option parsing passes all 28 child processes in each local feature
   configuration. Three Unix compatibility tests cover exact source edits,
   fail-on-drift behavior and four host-C probe variants with a negative control.
-  The earlier KiB diagnostic remains applicable to the unchanged suffix branch.
+  New dedicated-context/reentrant callback cases pass with and without native
+  sampling. Host archive controls verify the two C build opt-ins.
 - Python 3.12 runs the provider/archive tools (which require 3.11+). No historical
   toolchain was installed for upstream's new Rust crate. Rust 1.95 compatibility,
   Linux/musl and Windows execution at this pin are checked by the matching CI.
 
-All three Cargo versions and internal requirements match 0.7.1. This follow-up
-updates the confirmed C build dependency and its lock resolution. New-commit
+All three Cargo versions and internal requirements match 0.7.1. Dependencies
+and Cargo.lock are unchanged in this pass. New-commit
 CI results are reported after push. No release workflow
 or package publication is requested.
 

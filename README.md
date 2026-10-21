@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `e34c9d38`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `b5d94fe8`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -151,14 +151,15 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit e34c9d38](https://github.com/microsoft/mimalloc/commit/e34c9d383fcdc876739a2e15dbc3f3aad211ace3),
+The submodule pins [upstream commit b5d94fe8](https://github.com/microsoft/mimalloc/commit/b5d94fe81c3b710499aaed3956b02fb1a8febb94),
 on the V3.6.0 development line. The source version is 30600; this is a fixed
 development snapshot, not an upstream v3.6.0 release.
 
-The 23 commits after `6f45cc52` add experimental QSBR primitives, a QSBR heap
-constructor, hashed small-page cache offsets and a lighter remote-free CAS
-when the page is already owned. Statistics merging skips zero current/peak
-updates. The immediate-purge threshold for large ranges remains 32 MiB.
+The 54 commits after `6f45cc52` add experimental QSBR primitives, native pprof
+OOM/reentrancy fixes and hashed small-page offsets. Remote free now uses one
+weak acquire-release CAS; the earlier release-only branch was rolled back.
+Statistics merging skips zero current/peak updates. The immediate-purge
+threshold for large ranges remains 32 MiB.
 See [the upstream and performance review](UPSTREAM_REVIEW.md) for the PR audit,
 verification results, and remaining optimization opportunities.
 
@@ -197,16 +198,17 @@ releases an empty page; these are native lifecycle changes, not new public APIs.
 
 Native environment options now accept hexadecimal integers (`0x2A`) and reject
 zero-padded decimal integers (`042`), retaining their default on invalid input.
-For size options, use an unsuffixed byte count or `M`/`MiB`: the current native
-`K`/`KiB` path omits the multiplier (for example, `32KiB` can mean 32 bytes).
-The new integer parser is internal and adds no public Rust API.
+Size suffixes now scale correctly: `32KiB` means 32,768 bytes. Recheck values
+that compensated for the previous K-suffix bug. Native profiling now actually
+defaults to 512 KiB samples and a 1 GiB automatic snapshot interval when enabled.
+The bounded integer parser is internal and adds no public Rust API.
 
 The latest upstream THP changes read PMD size from
-`/sys/kernel/mm/transparent_hugepage/hpage_pmd_size`. Eligible ordinary mappings
-with detected pages above 8 MiB receive `MADV_NOHUGEPAGE`, including when large
-pages were not requested. Missing or invalid PMD data falls back to 2 MiB.
-[PR #1431](https://github.com/microsoft/mimalloc/pull/1431) remains open; related
-changes landed as direct commits. RSS and latency still need deployment-kernel
+`/sys/kernel/mm/transparent_hugepage/hpage_pmd_size`. Ordinary mappings at least
+as large as detected PMD pages above 8 MiB receive `MADV_NOHUGEPAGE`, independent
+of positive-advice alignment checks. Missing/invalid PMD data falls back to 2 MiB.
+[PR #1431](https://github.com/microsoft/mimalloc/pull/1431) was closed without a
+GitHub merge; related changes landed as direct commits. RSS and latency need deployment-kernel
 validation. Linux/Android `no_thp` builds use a guarded OUT_DIR source copy to
 remove the upstream conditional's dangling `else`, retaining both compile-time
 THP suppression and oversized-page negative advice. The submodule is unchanged.
@@ -270,10 +272,10 @@ To collect a built-in heap profile, start the application with
 `MIMALLOC_PROFILE=/path/to/profile` (protobuf), or a name ending in `.heap`
 (text). Sampling is inactive unless enabled.
 
-**Native profiler limitation:** the pinned upstream code copies `profile_disabled=true`
-into new thread heaps without clearing it. Dedicated-heap and worker-thread
-profiling may therefore remain inactive. The integration test verifies actual
-samples on the main heap in a single-threaded process; it does not establish
+**Native profiling activation:** dedicated heaps and worker contexts can now
+sample after their generic-allocation maintenance cycle observes an enabled
+profiler. The integration test checks caller/worker dedicated heaps and nested
+`on_alloc` suppression after that lazy activation. This does not establish
 complete multi-thread profiling coverage. Custom profilers must remain alive
 until sampling is stopped, the profiler is detached, all sampled allocations
 are freed, and callbacks have finished. There is deliberately no safe RAII
@@ -338,7 +340,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.0 development, commit `e34c9d38`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.0 development, commit `b5d94fe8`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
