@@ -46,6 +46,11 @@ immediately; visibility/network retries remain bounded at 40 attempts.
 Registry verification is read-only. These commands never upload a package,
 create a tag or dispatch a workflow.
 
+Local archive, downloaded archive and frozen executable hashes are streamed
+through a 32 KiB payload buffer. HTTP/TLS transport buffers are additional.
+Network archives retain their 64 MiB limit and oversize failures are terminal;
+file hashing does not impose that download limit on benchmark executables.
+
 ## Benchmarks
 
     cargo xtask bench-heap-abba --offline --output target/heap-abba-run1

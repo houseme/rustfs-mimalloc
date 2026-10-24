@@ -2,6 +2,10 @@
 
 ## Result and scope
 
+The final main-based report-drain and streaming-hash refactor is documented in
+[the 2026-10-25 global review](REVIEW_0.7.2.md). The source/PR audit below
+retains its original review date and upstream pin.
+
 All three crates and internal requirements are **0.7.2**. The shared changelog
 has one 0.7.2 section and no Unreleased section. This update is for commit/push;
 no 0.7.2 tag or package publication is authorized.

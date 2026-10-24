@@ -8,10 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.2] - 2026-10-24
+## [0.7.2] - 2026-10-25
 
 ### Changed
 
+- Reuse one sample-output vector across global/TLS report drains and move its
+  capacity growth outside sample-source locks. Preserve limits, FIFO order,
+  source rotation, slot accounting and sampling defaults; zero TLS budget skips
+  registry access.
+- Hash release archives and frozen benchmark executables incrementally with a
+  32 KiB payload buffer. Keep official-index/local-archive checksum agreement
+  and the 64 MiB network archive bound; oversized archives fail without retries.
 - Replace all nine repository-owned maintenance scripts and inline release
   logic with an unpublished Rust xtask. Preserve API/ABI controls, isolated
   provider/archive tests, registry checksum verification and ABBA quality/drift

@@ -1,11 +1,10 @@
 use crate::{
-    api,
+    api, digest,
     util::{self, Args},
 };
 use anyhow::{Context, Result, bail, ensure};
 use regex::Regex;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -229,21 +228,7 @@ pub fn notes(args: &mut Args) -> Result<()> {
     Ok(())
 }
 
-pub fn checksum(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    Sha256::digest(bytes)
-        .iter()
-        .flat_map(|byte| {
-            [
-                HEX[(byte >> 4) as usize] as char,
-                HEX[(byte & 15) as usize] as char,
-            ]
-        })
-        .collect()
-}
-
-fn verify_checksum(bytes: &[u8], index: &str, expected: Option<&str>) -> Result<()> {
-    let actual = checksum(bytes);
+fn verify_checksum(actual: &str, index: &str, expected: Option<&str>) -> Result<()> {
     ensure!(
         actual == index && expected.is_none_or(|expected| actual == expected),
         "published archive checksum does not match"
@@ -274,6 +259,15 @@ fn download(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
         .read_to_vec()?)
 }
 
+fn download_checksum(agent: &ureq::Agent, url: &str) -> Result<String> {
+    let mut response = agent
+        .get(url)
+        .header("User-Agent", "rustfs-mimalloc-release-verification")
+        .header("Cache-Control", "no-cache")
+        .call()?;
+    digest::reader(response.body_mut().as_reader(), Some(64 * 1024 * 1024))
+}
+
 pub fn registry(args: &mut Args) -> Result<()> {
     let name = args.positional()?;
     let value = args.positional()?;
@@ -284,11 +278,7 @@ pub fn registry(args: &mut Args) -> Result<()> {
         "unknown release package: {name}"
     );
     version(&value)?;
-    let expected = archive
-        .as_deref()
-        .map(fs::read)
-        .transpose()?
-        .map(|data| checksum(&data));
+    let expected = archive.as_deref().map(digest::file).transpose()?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
@@ -299,13 +289,13 @@ pub fn registry(args: &mut Args) -> Result<()> {
             Ok(data) => {
                 let index = std::str::from_utf8(&data)?;
                 if let Some(record) = index_release(index, &value)? {
-                    match download(
+                    match download_checksum(
                         &agent,
                         &format!("https://static.crates.io/crates/{name}/{name}-{value}.crate"),
                     ) {
-                        Ok(data) => {
+                        Ok(actual) => {
                             verify_checksum(
-                                &data,
+                                &actual,
                                 record["cksum"]
                                     .as_str()
                                     .context("missing registry checksum")?,
@@ -316,6 +306,7 @@ pub fn registry(args: &mut Args) -> Result<()> {
                             );
                             return Ok(());
                         }
+                        Err(error) if error.is::<digest::InputTooLarge>() => return Err(error),
                         Err(error) => last_error = Some(error),
                     }
                 }
@@ -335,6 +326,7 @@ pub fn registry(args: &mut Args) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::digest::bytes as checksum;
     #[test]
     fn release_events_and_versions_reject_unsafe_input() {
         assert_eq!(resolved("push", "ignored", "v0.7.2").unwrap(), "0.7.2");
@@ -377,9 +369,23 @@ mod tests {
         assert!(index_release(index, "0.7.2")?.is_none());
         assert!(index_release(index, "0.7.1")?.is_some());
         assert!(index_release("invalid", "0.7.1").is_err());
-        assert!(verify_checksum(b"abc", &checksum(b"abc"), Some(&checksum(b"other"))).is_err());
-        assert!(verify_checksum(b"abc", &checksum(b"other"), None).is_err());
-        assert!(verify_checksum(b"abc", &checksum(b"abc"), Some(&checksum(b"abc"))).is_ok());
+        assert!(
+            verify_checksum(
+                &checksum(b"abc"),
+                &checksum(b"abc"),
+                Some(&checksum(b"other"))
+            )
+            .is_err()
+        );
+        assert!(verify_checksum(&checksum(b"abc"), &checksum(b"other"), None).is_err());
+        assert!(
+            verify_checksum(
+                &checksum(b"abc"),
+                &checksum(b"abc"),
+                Some(&checksum(b"abc"))
+            )
+            .is_ok()
+        );
         Ok(())
     }
     #[test]

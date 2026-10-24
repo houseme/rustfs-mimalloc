@@ -1101,9 +1101,12 @@ fn drain_registered_tls_samples_for_report(
     out: &mut Vec<RecordedAllocationSample>,
     limit: usize,
 ) -> usize {
+    if limit == 0 {
+        return 0;
+    }
     let mut drained = 0;
     let buffers = registered_tls_sample_buffers();
-    if buffers.is_empty() || limit == 0 {
+    if buffers.is_empty() {
         return 0;
     }
     let start = NEXT_TLS_DRAIN_BUFFER.fetch_add(1, Ordering::Relaxed) % buffers.len();
@@ -1112,7 +1115,14 @@ fn drain_registered_tls_samples_for_report(
             break;
         }
         let buffer = &buffers[(start + offset) % buffers.len()];
-        if let Ok(mut buffer) = buffer.lock() {
+        if let Ok(mut buffer) = lock_for_report_drain(
+            buffer,
+            out,
+            limit - drained,
+            TLS_SAMPLE_RING_CAPACITY,
+            TlsSampleBuffer::len,
+            Vec::reserve,
+        ) {
             let moved = buffer.drain_into(out, limit - drained);
             if moved > 0 {
                 FLUSH_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -1275,11 +1285,42 @@ fn prepare_sample_buffer(capacity: usize) {
     GLOBAL_BUFFERED_SAMPLE_COUNT.store(count_recorded_samples(), Ordering::Relaxed);
 }
 
-fn drain_recorded_samples(limit: usize) -> Vec<RecordedAllocationSample> {
-    let mut drained = Vec::new();
+/// Return a source lock only when copying its bounded batch cannot grow output.
+/// The reservation callback is monomorphized; tests use it to prove that source
+/// locks are released before allocator work and simulate admissions in that gap.
+fn lock_for_report_drain<'a, T>(
+    source: &'a Mutex<T>,
+    out: &mut Vec<RecordedAllocationSample>,
+    limit: usize,
+    capacity_bound: usize,
+    len: impl Fn(&T) -> usize,
+    mut reserve: impl FnMut(&mut Vec<RecordedAllocationSample>, usize),
+) -> std::sync::LockResult<std::sync::MutexGuard<'a, T>> {
+    let mut retried = false;
+    loop {
+        let source = source.lock()?;
+        let needed = len(&source).min(limit);
+        if out.capacity() - out.len() >= needed {
+            return Ok(source);
+        }
+        // Size stable sparse reports by actual occupancy. If producers outgrow
+        // that reservation, use the source's bounded capacity on the retry.
+        let additional = if retried {
+            capacity_bound.max(needed).min(limit)
+        } else {
+            needed
+        };
+        drop(source);
+        reserve(out, additional);
+        retried = true;
+    }
+}
+
+fn drain_recorded_samples_into(out: &mut Vec<RecordedAllocationSample>, limit: usize) -> usize {
+    let before = out.len();
     let mut remaining = limit;
     if remaining == 0 {
-        return drained;
+        return 0;
     }
 
     let start_shard =
@@ -1291,20 +1332,32 @@ fn drain_recorded_samples(limit: usize) -> Vec<RecordedAllocationSample> {
 
         let shard_index = (start_shard + offset) % RECORDED_SAMPLE_SHARD_COUNT;
         let shard = &RECORDED_SAMPLE_SHARDS[shard_index];
-        let Ok(mut samples) = shard.lock() else {
+        let Ok(mut samples) = lock_for_report_drain(
+            shard,
+            out,
+            remaining,
+            recorded_sample_shard_capacity(MAX_RECORDED_SAMPLES.load(Ordering::Relaxed)),
+            VecDeque::len,
+            Vec::reserve,
+        ) else {
             DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
             continue;
         };
         let drain_len = samples.len().min(remaining);
-        drained.extend(samples.drain(..drain_len));
+        out.extend(samples.drain(..drain_len));
         remaining -= drain_len;
     }
 
-    if !drained.is_empty() {
-        release_global_sample_slots(drained.len());
-    }
-
+    let drained = out.len() - before;
+    release_global_sample_slots(drained);
     drained
+}
+
+#[cfg(test)]
+fn drain_recorded_samples(limit: usize) -> Vec<RecordedAllocationSample> {
+    let mut out = Vec::new();
+    drain_recorded_samples_into(&mut out, limit);
+    out
 }
 
 fn drain_samples_for_report(limit: usize) -> Vec<RecordedAllocationSample> {
@@ -1315,10 +1368,15 @@ fn drain_samples_for_report(limit: usize) -> Vec<RecordedAllocationSample> {
     } else {
         limit / 2
     };
-    let mut recorded = drain_recorded_samples(global_budget);
+    let estimate = GLOBAL_BUFFERED_SAMPLE_COUNT
+        .load(Ordering::Relaxed)
+        .min(global_budget);
+    let mut recorded = Vec::with_capacity(estimate);
+    drain_recorded_samples_into(&mut recorded, global_budget);
     let remaining = limit - recorded.len();
     drain_registered_tls_samples_for_report(&mut recorded, remaining);
-    recorded.extend(drain_recorded_samples(limit - recorded.len()));
+    let remaining = limit - recorded.len();
+    drain_recorded_samples_into(&mut recorded, remaining);
     recorded
 }
 
@@ -2414,6 +2472,115 @@ mod tests {
         assert_eq!(realloc_recorded_size(old_ptr, old_ptr, 1536, 1024), 0);
         assert_eq!(realloc_recorded_size(old_ptr, new_ptr, 1024, 1536), 1536);
         assert_eq!(realloc_recorded_size(old_ptr, new_ptr, 1536, 1024), 1024);
+    }
+
+    #[test]
+    fn report_storage_growth_releases_source_lock_and_keeps_new_admissions() {
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        let source = Mutex::new(VecDeque::from([test_sample(stack)]));
+        let mut out = Vec::new();
+        let mut reservations = 0;
+        let mut locked =
+            lock_for_report_drain(&source, &mut out, 8, 8, VecDeque::len, |out, additional| {
+                let mut source = source
+                    .try_lock()
+                    .expect("reservation must run outside the source lock");
+                if reservations == 0 {
+                    source.extend(std::iter::repeat_n(test_sample(stack), 7));
+                }
+                drop(source);
+                out.reserve(additional);
+                reservations += 1;
+            })
+            .unwrap();
+        let capacity = out.capacity();
+        out.extend(locked.drain(..));
+        assert_eq!(out.len(), 8);
+        assert_eq!(
+            out.capacity(),
+            capacity,
+            "copying a locked batch must not grow output"
+        );
+        assert!(reservations > 0);
+    }
+
+    #[test]
+    fn sparse_report_storage_uses_occupancy_and_empty_sources_reserve_nothing() {
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        let source = Mutex::new(VecDeque::new());
+        let mut out = Vec::new();
+        drop(
+            lock_for_report_drain(
+                &source,
+                &mut out,
+                1_000_000,
+                1_000_000,
+                VecDeque::len,
+                |_, _| panic!("empty source must not reserve"),
+            )
+            .unwrap(),
+        );
+        assert_eq!(out.capacity(), 0);
+        source.lock().unwrap().push_back(test_sample(stack));
+        let mut locked = lock_for_report_drain(
+            &source,
+            &mut out,
+            1_000_000,
+            1_000_000,
+            VecDeque::len,
+            Vec::reserve,
+        )
+        .unwrap();
+        let capacity = out.capacity();
+        out.extend(locked.drain(..));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out.capacity(), capacity);
+        assert!(
+            capacity < 1_000_000,
+            "sparse source must not reserve the drain limit"
+        );
+    }
+
+    #[test]
+    fn zero_tls_drain_budget_does_not_wait_for_the_registry() {
+        let _guard = TEST_LOCK.lock().expect("lock test");
+        let registry = TLS_SAMPLE_BUFFER_REGISTRY.lock().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            send.send(drain_registered_tls_samples_for_report(&mut out, 0))
+                .unwrap();
+        });
+        let result = receive.recv_timeout(std::time::Duration::from_secs(2));
+        drop(registry);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn appending_global_samples_releases_only_the_moved_global_reservations() {
+        let _guard = TEST_LOCK.lock().expect("lock test");
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        clear_test_buffers();
+        push_global_test_samples([test_sample(stack); 3]);
+        let mut out = Vec::with_capacity(4);
+        out.push(test_sample(stack)); // a prefix from another report source
+        let pointer = out.as_ptr();
+        assert_eq!(drain_recorded_samples_into(&mut out, 2), 2);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out.as_ptr(), pointer);
+        assert_eq!(GLOBAL_BUFFERED_SAMPLE_COUNT.load(Ordering::Relaxed), 1);
+        assert_eq!(count_recorded_samples(), 1);
+        clear_test_buffers();
     }
 
     #[test]

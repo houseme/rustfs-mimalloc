@@ -1,6 +1,7 @@
 mod abi;
 mod api;
 mod bench;
+mod digest;
 mod providers;
 mod release;
 mod util;

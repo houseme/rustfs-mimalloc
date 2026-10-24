@@ -44,6 +44,15 @@ re-exported by adapters without duplicating state.
 
 ## Sampling and bounded recording
 
+Reports share one sample-output vector across both global-drain passes and TLS
+rings. A source lock is returned only when that batch fits the vector's spare
+capacity. Growth happens after unlocking, followed by a fresh length check;
+concurrent admissions are preserved. Sparse sources reserve for observed
+occupancy first, with a bounded-source reservation if arrivals outgrow it.
+No output-vector allocation or reallocation runs under a sample-source lock.
+Zero TLS budget returns before taking a registry snapshot. Registry snapshots
+and live tracking retain their separate ownership and locking rules.
+
 Allocation events and live objects share one inclusion-probability estimator:
 for requested size S and byte interval R, p = 1 - exp(-S/R), and an included
 sample represents 1/p objects and S/p bytes. This is the sampling correction

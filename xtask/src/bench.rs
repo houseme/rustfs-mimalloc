@@ -1,5 +1,5 @@
 use crate::{
-    release::checksum,
+    digest,
     util::{self, Args},
 };
 use anyhow::{Context, Result, ensure};
@@ -389,8 +389,8 @@ pub fn profiling(args: &mut Args) -> Result<()> {
     .map(|(k, v)| (k.into(), v))
     .collect();
     let mut report = json!({"affinity":affinity,"environment":base,"cases":{},"binaries":{
-        "A":{"path":baseline,"sha256":checksum(&fs::read(&baseline)?)},
-        "B":{"path":candidate,"sha256":checksum(&fs::read(&candidate)?)}
+        "A":{"path":baseline,"sha256":digest::file(&baseline)?},
+        "B":{"path":candidate,"sha256":digest::file(&candidate)?}
     }});
     let mut passed = true;
     for case in cases {
