@@ -23,6 +23,15 @@ pub fn path(value: impl AsRef<Path>) -> PathBuf {
     }
 }
 
+pub fn read_text(path: &Path) -> Result<String> {
+    // Git may check out CRLF on Windows. Source mutation controls use LF
+    // patterns, so normalize text before parsing and applying those controls.
+    Ok(fs::read_to_string(path)
+        .with_context(|| format!("read {}", path.display()))?
+        .replace("\r\n", "\n")
+        .replace('\r', "\n"))
+}
+
 pub struct Args(pub Vec<String>);
 
 impl Args {

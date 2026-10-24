@@ -41,6 +41,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Normalize checked-out binding text before source mutation controls, including
+  Windows CRLF, and require the layout mutation to match before rejecting it.
 - Inherit native pprof Unix-epoch nanosecond timestamps and elapsed duration,
   atomic pthread-key publication/teardown, arm64_32 thread-pointer access and
   pinned-page guard handling from upstream v3.6.0.

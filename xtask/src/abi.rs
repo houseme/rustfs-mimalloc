@@ -365,6 +365,26 @@ pub fn controls(args: &mut Args) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn crlf_checkout_preserves_multiline_mutation_controls() -> Result<()> {
+        let source = api::bindings()?;
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("bindings.rs");
+        for newline in ["\n", "\r\n"] {
+            fs::write(&file, source.replace('\n', newline))?;
+            let normalized = util::read_text(&file)?;
+            assert_eq!(normalized, source);
+            let changed = normalized.replacen(
+                "#[repr(C)]\npub struct mi_profiler_t",
+                "#[repr(Rust)]\npub struct mi_profiler_t",
+                1,
+            );
+            assert_ne!(changed, normalized, "layout mutation must actually match");
+            assert!(generate(&changed).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn abi_parser_rejects_unprojectable_signatures() -> Result<()> {
         let source = api::bindings()?;
         assert!(

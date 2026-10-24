@@ -30,9 +30,7 @@ pub fn headers() -> Result<String> {
 }
 
 pub fn bindings() -> Result<String> {
-    Ok(fs::read_to_string(
-        util::root().join("rustfs-mimalloc-sys/src/lib.rs"),
-    )?)
+    util::read_text(&util::root().join("rustfs-mimalloc-sys/src/lib.rs"))
 }
 
 fn integer(expr: &Expr) -> Result<i64> {
