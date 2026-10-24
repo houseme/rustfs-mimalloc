@@ -1,5 +1,6 @@
 [workspace]
-members = ["rustfs-mimalloc-sys", "rustfs-mimalloc", "rustfs-mimalloc-profiling"]
+members = ["rustfs-mimalloc-sys", "rustfs-mimalloc", "rustfs-mimalloc-profiling", "xtask"]
+default-members = ["rustfs-mimalloc-sys", "rustfs-mimalloc", "rustfs-mimalloc-profiling"]
 resolver = "3"
 
 [workspace.package]
@@ -28,3 +29,16 @@ mimalloc = "0.1.52"
 log = "0.4"
 object = { version = "0.40", default-features = false }
 prost = "0.14"
+
+# Development tooling only; these do not enter the published allocator graphs.
+anyhow = "1.0.104"
+flate2 = "1.1.10"
+regex = "1.13.1"
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+shlex = "2.0.1"
+syn = { version = "2.0.119", features = ["full"] }
+tar = "0.4.46"
+tempfile = "3.27.0"
+toml = "1.1.8"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }

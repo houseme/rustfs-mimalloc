@@ -98,9 +98,6 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.13"
       - name: Validate optimized profile quality and lifecycle
         env:
           CARGO_PROFILE_RELEASE_DEBUG: ${{ matrix.profile.debug }}
@@ -108,7 +105,7 @@ jobs:
           MIMALLOC_TEST_EXPECT_SOURCE: ${{ matrix.profile.source }}
         run: |
           cargo test --locked --release -p rustfs-mimalloc-profiling --test mimalloc_release
-          python3 scripts/test_profiling_providers.py --local-dependencies --release
+          cargo xtask test-providers --local-dependencies --release
 
   profiling-providers:
     name: Profiling providers (${{ matrix.os }}, ${{ matrix.toolchain }})
@@ -129,11 +126,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.13"
+      - name: Test Rust maintenance tool contracts
+        run: cargo test --locked -p xtask
       - name: Validate isolated allocator graphs and shared contracts
-        run: python3 scripts/test_profiling_providers.py --local-dependencies
+        run: cargo xtask test-providers --local-dependencies
       - name: Validate optional RustFS convenience API
         run: cargo test --locked -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
 
@@ -395,10 +391,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Public mimalloc API parity
-        run: python3 scripts/check_upstream_api.py
+        run: cargo xtask check-api
 
       - name: Public mimalloc ABI projection and negative controls
-        run: python3 scripts/check_upstream_abi.py && python3 scripts/test_upstream_abi.py
+        run: cargo xtask check-abi && cargo xtask test-abi
 
       - name: Clippy (all targets and features)
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

@@ -103,9 +103,9 @@ invalidates cached aliases. Foreign-context abandonment requires a quiescent
 owner outside mimalloc and no concurrent heap/context deletion. No option IDs
 or profiler ABI fields change. This release also exposes existing `mi_expand`, zero-initialized
 reallocation, checked heap array allocation, and heap small-allocation APIs.
-Run `python3 scripts/check_upstream_api.py` from the repository root to audit
+Run `cargo xtask check-api` from the repository root to audit
 binding names and option IDs; integration tests cover linkage and behavior.
-The complementary `scripts/check_upstream_abi.py` uses the host GCC/Clang C
+The complementary `cargo xtask check-abi` uses the host GCC/Clang C
 compiler to check extern signatures, callback compatibility, and size/alignment/
 offsets of the exposed heap-area and profiler layouts. This C projection check
 does not replace runtime linking or target-specific validation.

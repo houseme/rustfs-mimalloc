@@ -14,6 +14,9 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
+Repository maintenance and release validation use the unpublished Rust
+[xtask tool](xtask/README.md). Run cargo xtask help from the repository root.
+
 ### Why this crate?
 
 - **V3 only** — exclusively targets mimalloc V3, no multi-version complexity
@@ -182,7 +185,7 @@ frees process expired purges. It is disabled by default; measure RSS and tail
 latency before enabling it for a workload.
 
 Audit the binding names and option IDs against the pinned C headers with
-`python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`.
+`cargo xtask check-api --json target/upstream-api-audit.json`.
 The inventory records unbound C exports; name parity does not verify the ABI.
 
 V3.6 migration also exposes `mi_option_t::mi_option_unsafe_guarded_precise`
@@ -222,9 +225,9 @@ validation. Linux/Android `no_thp` builds now use upstream source directly: PR #
 fixes the dangling conditional `else`. Compile-time THP suppression and
 oversized-page negative advice remain covered by native probes.
 
-`python3 scripts/check_upstream_abi.py` also compiles C projections of the
+`cargo xtask check-abi` also compiles C projections of the
 Rust extern signatures, callbacks and three exposed `repr(C)` layouts against
-the pinned headers. `python3 scripts/test_upstream_abi.py` verifies that
+the pinned headers. `cargo xtask test-abi` verifies that
 intentional ABI mutations fail the gate. The GCC/Clang check uses the host C
 ABI and the bindings' supported C-compatible type subset; it does not check
 inline Rust helpers, link every symbol, or establish cross-target/runtime
@@ -430,7 +433,7 @@ feature changes sampling capability; it does not change page-retention, purging,
 NUMA or thread-local heap ownership policies.
 
 Reproduce default versus `no_profile` measurements with
-`python3 scripts/bench_profile_abba.py --offline --output target/profile-abba-run1`.
+`cargo xtask bench-profile-abba --offline --output target/profile-abba-run1`.
 The driver freezes both builds before measuring A1/B1/B2/A2 and records per-workload
 drift checks; omit `--offline` if dependencies are not cached.
 
@@ -464,7 +467,7 @@ The `heap_lookup` benchmark is a single-heap control; `heap_switching`
 alternates two heaps. Run reproducible comparisons with:
 
 ```sh
-python3 scripts/bench_heap_abba.py --output target/heap-abba-run1
+cargo xtask bench-heap-abba --output target/heap-abba-run1
 ```
 
 The script records A1/B1/B2/A2 in fresh processes and rejects speedup conclusions

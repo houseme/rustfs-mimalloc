@@ -108,32 +108,7 @@ features and platform conditions survive Cargo archive normalization.
 Use `cargo metadata`; grep-based checks are wrong for workspace-inherited versions.
 
 ```bash
-cargo metadata --no-deps --format-version 1 > /tmp/rustfs-mimalloc-metadata.json
-python3 - /tmp/rustfs-mimalloc-metadata.json <VERSION> <<'PY'
-import json
-import sys
-
-metadata_path, expected = sys.argv[1], sys.argv[2]
-with open(metadata_path, encoding="utf-8") as f:
-    metadata = json.load(f)
-
-versions = {
-    package["name"]: package["version"]
-    for package in metadata["packages"]
-    if package["name"] in {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}
-}
-
-missing = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"} - set(versions)
-if missing:
-    raise SystemExit(f"missing package metadata for: {', '.join(sorted(missing))}")
-
-mismatched = {name: version for name, version in versions.items() if version != expected}
-if mismatched:
-    details = ", ".join(f"{name}={version}" for name, version in sorted(mismatched.items()))
-    raise SystemExit(f"version mismatch; expected {expected}, got {details}")
-
-print(f"Version OK: {expected}")
-PY
+cargo xtask release-check <VERSION>
 ```
 
 ## Local Validation
@@ -149,9 +124,9 @@ cargo test --workspace --features no_profile
 cargo test --workspace --features secure,debug,no_profile
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo doc --workspace --no-deps
-python3 scripts/test_profiling_providers.py --local-dependencies
+cargo xtask test-providers --local-dependencies
 cargo test -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
-python3 scripts/verify_profiling_package.py --local-dependencies --allow-dirty
+cargo xtask verify-package --local-dependencies --allow-dirty
 cargo package -p rustfs-mimalloc-sys --allow-dirty
 cargo package -p rustfs-mimalloc --allow-dirty --config 'patch.crates-io.rustfs-mimalloc-sys.path="rustfs-mimalloc-sys"'
 ```
@@ -275,11 +250,11 @@ Delete or edit the GitHub Release manually if the release notes are wrong. Do no
 The profiling crate inherits `version.workspace = true` and its optional
 `rustfs-mimalloc` dependency from the workspace. The `rustfs-allocator` feature
 exposes the compatibility alias; defaults must remain allocator-neutral.
-Provider and archive verification scripts require Python 3.11+. Update its README and DESIGN plus the
+Provider and archive verification use the Rust xtask tool. Update its README and DESIGN plus the
 root CHANGELOG when release behavior changes. Do not use component-only release tags.
 
 Before publication,
-`python3 scripts/verify_profiling_package.py --local-dependencies` verifies the normalized archive using temporary local
+`cargo xtask verify-package --local-dependencies` verifies the normalized archive using temporary local
 patches for the matching allocator/sys. After publication, omit that flag to
 require the exact registry versions, with no path or Git override. Both modes
 verify the default core dependency graph and run behavior, compatibility API,

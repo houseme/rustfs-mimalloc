@@ -13,7 +13,21 @@ Rust runtime defect was established in the reviewed paths. The concrete binding
 gap, obsolete Unix patch and stale native-profiling documentation are addressed
 below. Performance candidates are separate from verified defect fixes.
 
+## Rust maintenance-tool migration
+
+Repository-owned maintenance and release logic now uses the unpublished Rust
+xtask crate. The nine retired scripts and the CI interpreter setup are removed;
+API inventories, C ABI mutation controls, provider isolation, archive extraction,
+registry checksums and A/B/B/A drift/loss gates remain enforced. Default workspace
+members remain the three published crates, so tool dependencies do not become
+allocator/profiler runtime dependencies. See [the tool guide](xtask/README.md).
+
+Historical command spellings below have been updated to the current Rust CLI.
+Earlier measurements and validation provenance remain tied to their original
+pins and logs; command migration does not revalidate those measurements.
+
 ## Upstream source and merged PR audit
+
 
 Move from `b5d94fe81c3b710499aaed3956b02fb1a8febb94` to the official
 [v3.6.0 release](https://github.com/microsoft/mimalloc/releases/tag/v3.6.0),
@@ -555,7 +569,7 @@ Stable Rust 1.99.1 / macOS arm64 local evidence at `b5d94fe8`:
   fail-on-drift behavior and four host-C probe variants with a negative control.
   New dedicated-context/reentrant callback cases pass with and without native
   sampling. Host archive controls verify the two C build opt-ins.
-- Python 3.12 runs the provider/archive tools (which require 3.11+). No historical
+- The archived 0.7.1 provider/archive checks used Python 3.12; those drivers\n  have since been retired in favor of Rust xtask. No historical
   toolchain was installed for upstream's new Rust crate. Rust 1.95 compatibility,
   Linux/musl and Windows execution at this pin are checked by the matching CI.
 
@@ -606,7 +620,7 @@ validation in this pass uses stable Rust 1.99.1.
 
 The existing inventory passes for **130 Rust function names and 45 option IDs**,
 but names and option values alone cannot detect signature/layout drift.
-`python3 scripts/check_upstream_abi.py` now compiles C projections of the Rust
+`cargo xtask check-abi` now compiles C projections of the Rust
 bindings against the pinned public headers, using strict compiler diagnostics:
 
 - All **121 extern functions** have compatible parameter and return types in
@@ -620,7 +634,7 @@ bindings against the pinned public headers, using strict compiler diagnostics:
 - Unsupported aliases/calling conventions and unparsed declarations fail
   rather than being silently skipped.
 
-`python3 scripts/test_upstream_abi.py` passes five controls: matching bindings
+`cargo xtask test-abi` passes five controls: matching bindings
 compile; a wrong return type, changed callback constness, reordered callback
 fields and a changed size alias are rejected. The C compilation uses temporary
 files and syntax checking only. CI runs both scripts; production allocator
@@ -783,7 +797,7 @@ its locks do not make concurrent owner allocation safe. The wrapper keeps
 unsafe conditions. `src/heap/heap.c:31` stores the debug setting atomically,
 which supports the safe setter on a borrowed live heap.
 
-`python3 scripts/check_upstream_api.py --json target/upstream-api-audit-20261016.json`
+`cargo xtask check-api --json target/upstream-api-audit-20261016.json`
 passes for **130 Rust function names and 45 option IDs**. All four newly declared
 C APIs have bindings. The inventory still records 98 header-declared functions
 outside the binding scope; name parity alone does not verify C ABI or linkage.
@@ -951,7 +965,7 @@ The audit found useful existing allocation capabilities missing from Rust:
 | `ThreadHeap::calloc`, `malloc_csize`, `zalloc_csize`, `realloc`, `rezalloc` | Extend existing cached worker contexts without repeated TLS lookup. Borrowed parent lifetime and thread affinity are retained; allocation methods remain unsafe. |
 | 13 raw C bindings | `mi_expand`, `mi_rezalloc`, `mi_recalloc`, `mi_rezalloc_aligned`, `mi_heap_mallocn`, `mi_heap_malloc_small`, `mi_heap_zalloc_small`, `mi_heap_reallocn`, `mi_heap_rezalloc`, `mi_heap_recalloc`, `mi_heap_calloc_aligned`, `mi_heap_rezalloc_aligned`, `mi_heap_recalloc_aligned`. |
 
-`python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`
+`cargo xtask check-api --json target/upstream-api-audit.json`
 checks **126 Rust function names and 45 numeric option IDs** against the pinned
 public headers. CI runs it on every change. The JSON inventory also lists
 98 C exports outside the current binding scope. This checks source parity;
@@ -1090,7 +1104,7 @@ still disables allocation sampling and automatic startup. No vendored source
 was modified. Tests exercise both sampling modes instead of simply skipping
 profiler coverage under the new feature.
 
-`python3 scripts/bench_profile_abba.py --offline --output target/profile-abba-run1`
+`cargo xtask bench-profile-abba --offline --output target/profile-abba-run1`
 builds and freezes two release executables before A1/B1/B2/A2 measurement. It
 uses 50 samples, 3 seconds warm-up, 5 seconds measurement, one statistical
 analysis thread and 5% baseline/candidate drift limits. Raw logs remain in
@@ -1160,7 +1174,7 @@ or the previous producer/consumer workload. Single-heap tests did not show a
 stable advantage; callers should cache views where multiple heaps are active.
 The default `GlobalAlloc` remains unchanged.
 
-Reproduce with `python3 scripts/bench_heap_abba.py --offline --output
+Reproduce with `cargo xtask bench-heap-abba --offline --output
 target/heap-abba-run1` after dependencies are cached. The script writes logs
 and JSON, preserves earlier output directories and rejects a speedup conclusion
 when either drift gate fails. Raw measurements for this run remain under the

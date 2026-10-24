@@ -60,53 +60,12 @@ jobs:
           RELEASE_REF: ${{ github.ref_name }}
           RELEASE_EVENT: ${{ github.event_name }}
           RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-        run: |
-          python3 <<'PYTHON'
-          import os
-          import re
-          version = os.environ["REQUESTED_VERSION"]
-          if os.environ["RELEASE_EVENT"] == "push":
-              ref = os.environ["RELEASE_REF"]
-              if not ref.startswith("v"):
-                  raise SystemExit("expected a v<VERSION> tag")
-              version = ref[1:]
-          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
-              raise SystemExit("expected a semantic version")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"version={version}\ntag=v{version}\nis_dry_run={os.environ['RELEASE_DRY_RUN']}\n")
-          print(f"Validated release version: {version}")
-          PYTHON
+        run: cargo xtask release-resolve
 
       - name: Verify version consistency
-        run: |
-          EXPECTED="${{ steps.version.outputs.version }}"
-          cargo metadata --locked --no-deps --format-version 1 > /tmp/metadata.json
-          python3 - "${EXPECTED}" <<'PYTHON'
-          import json
-          from pathlib import Path
-          import re
-          import sys
-
-          expected = sys.argv[1]
-          metadata = json.loads(Path("/tmp/metadata.json").read_text())
-          names = {"rustfs-mimalloc", "rustfs-mimalloc-sys", "rustfs-mimalloc-profiling"}
-          packages = {p["name"]: p for p in metadata["packages"] if p["name"] in names}
-          if set(packages) != names:
-              raise SystemExit(f"missing packages: {sorted(names - set(packages))}")
-          for name, package in packages.items():
-              if package["version"] != expected or package["edition"] != "2024":
-                  raise SystemExit(f"{name}: expected version {expected} and edition 2024")
-              for dependency in package["dependencies"]:
-                  if dependency["name"] in names and dependency["req"] != f"^{expected}":
-                      raise SystemExit(f"{name}: internal dependency version mismatch: {dependency}")
-          notes = re.search(
-              rf"^## \[{re.escape(expected)}\][^\n]*\n(.*?)(?=^## |\Z)",
-              Path("CHANGELOG.md").read_text(), re.MULTILINE | re.DOTALL,
-          )
-          if not notes or not notes.group(1).strip():
-              raise SystemExit(f"missing changelog entries for {expected}")
-          print(f"Version, edition, dependency requirements and changelog OK: {expected}")
-          PYTHON
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: cargo xtask release-check "$EXPECTED_VERSION"
 
   # ── Full test gate ─────────────────────────────────────────────────────────
 
@@ -132,9 +91,8 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.13"
+      - name: Test Rust maintenance tool contracts
+        run: cargo test --locked -p xtask
       - name: Build (default)
         run: cargo build --locked
 
@@ -160,7 +118,7 @@ jobs:
         run: cargo test --locked --workspace --features secure,debug,no_profile
 
       - name: Test isolated provider contracts
-        run: python3 scripts/test_profiling_providers.py --local-dependencies
+        run: cargo xtask test-providers --local-dependencies
       - name: Test optional RustFS convenience API
         run: cargo test --locked -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
 
@@ -169,7 +127,7 @@ jobs:
       - name: Verify allocator archive before sys publication
         run: cargo package --locked -p rustfs-mimalloc --config 'patch.crates-io.rustfs-mimalloc-sys.path="rustfs-mimalloc-sys"'
       - name: Test normalized profiling archive before dependency publication
-        run: python3 scripts/verify_profiling_package.py --local-dependencies
+        run: cargo xtask verify-package --local-dependencies
 
   # ── Lint gate ──────────────────────────────────────────────────────────────
 
@@ -189,6 +147,12 @@ jobs:
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
+
+      - name: Public API and ABI controls
+        run: |
+          cargo xtask check-api
+          cargo xtask check-abi
+          cargo xtask test-abi
 
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
@@ -225,10 +189,10 @@ jobs:
             if ! cargo publish --locked --registry crates-io --package "$package" --allow-dirty; then
               echo "Upload did not complete; checking for an identical published package."
             fi
-            python3 scripts/verify_registry.py "$package" "$RELEASE_VERSION" --archive "$archive"
+            cargo xtask verify-registry "$package" "$RELEASE_VERSION" --archive "$archive"
           done
       - name: Test normalized profiling archive with published dependencies
-        run: python3 scripts/verify_profiling_package.py --allow-dirty
+        run: cargo xtask verify-package --allow-dirty
 
   # ── GitHub Release ─────────────────────────────────────────────────────────
 
@@ -248,101 +212,14 @@ jobs:
           ref: ${{ needs.prepare.outputs.revision }}
           submodules: recursive
 
+      - uses: dtolnay/rust-toolchain@stable
       - name: Generate changelog
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          set -euo pipefail
-
-          python3 <<'PY'
-          import os
-          import re
-          import subprocess
-          from pathlib import Path
-
-          release_version = os.environ["RELEASE_VERSION"]
-          release_tag = os.environ["RELEASE_TAG"]
-          repository = os.environ["REPOSITORY"]
-
-          def git_output(*args: str) -> str:
-              result = subprocess.run(
-                  ["git", *args],
-                  check=False,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.DEVNULL,
-                  text=True,
-              )
-              return result.stdout.strip()
-
-          def previous_tag() -> str:
-              tag_parent = f"{release_tag}^"
-              tag_previous = git_output("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", tag_parent)
-              if tag_previous:
-                  return tag_previous
-              return git_output("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0", "HEAD^")
-
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          section_pattern = re.compile(
-              rf"^## \[{re.escape(release_version)}\][^\n]*\n"
-              rf"(?P<body>.*?)(?=^## \[|^\[[^\]]+\]:\s|\Z)",
-              re.MULTILINE | re.DOTALL,
-          )
-          section_match = section_pattern.search(changelog)
-          release_body = section_match.group("body").strip() if section_match else ""
-
-          prev_tag = previous_tag()
-          if not release_body:
-              if prev_tag:
-                  commits = git_output(
-                      "log",
-                      '--pretty=format:- %s (%h)',
-                      f"{prev_tag}..HEAD",
-                      "--no-merges",
-                  )
-                  release_body = "### Changes\n\n" + (commits or "- No user-facing changes recorded.")
-              else:
-                  if release_version != "0.1.0":
-                      raise SystemExit(
-                          "refusing to emit Initial release for a non-initial version; "
-                          "check checkout tag history and CHANGELOG.md"
-                      )
-                  release_body = "### Changes\n\nInitial release."
-
-          header = Path("rustfs-mimalloc-sys/c_src/mimalloc/include/mimalloc.h")
-          header_text = header.read_text(encoding="utf-8")
-          version_match = re.search(r"^\s*#define\s+MI_MALLOC_VERSION\s+(\d+)", header_text, re.MULTILINE)
-          if not version_match:
-              raise SystemExit(f"MI_MALLOC_VERSION not found in {header}")
-
-          mimalloc_number = int(version_match.group(1))
-          mimalloc_version = f"v{mimalloc_number // 10000}.{mimalloc_number // 100 % 100}.{mimalloc_number % 100}"
-
-          notes = [
-              f"## rustfs-mimalloc v{release_version}",
-              "",
-              f"mimalloc V3 ({mimalloc_version}) bindings for Rust.",
-              "",
-              release_body,
-              "",
-              "### Installation",
-              "",
-              "```toml",
-              "[dependencies]",
-              f'rustfs-mimalloc = "{release_version}"',
-              f'rustfs-mimalloc-profiling = {{ version = "{release_version}", features = ["rustfs-allocator"] }}',
-              "```",
-          ]
-
-          if prev_tag:
-              compare_url = f"https://github.com/{repository}/compare/{prev_tag}...{release_tag}"
-              notes.extend(["", f"**Full Changelog**: [{prev_tag}...{release_tag}]({compare_url})"])
-
-          Path("/tmp/release-notes.md").write_text("\n".join(notes).rstrip() + "\n", encoding="utf-8")
-          print(f"Release notes generated for {release_tag}; previous tag: {prev_tag or '<none>'}")
-          PY
-
+          cargo xtask release-notes "$RELEASE_VERSION" --output /tmp/release-notes.md
           cat /tmp/release-notes.md
 
       - name: Validate release notes

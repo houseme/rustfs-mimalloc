@@ -12,6 +12,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Replace all nine repository-owned maintenance scripts and inline release
+  logic with an unpublished Rust xtask. Preserve API/ABI controls, isolated
+  provider/archive tests, registry checksum verification and ABBA quality/drift
+  gates. Remove the unused actions/setup-python dependency from CI and releases.
+- Keep the three allocator/profiler crates as default workspace members;
+  maintenance dependencies are confined to xtask and stay outside published
+  runtime dependency graphs.
 - Synchronize all three crate versions, internal requirements and installation
   examples at 0.7.2; consolidate pending changes into this single section.
 - Pin mimalloc to the official v3.6.0 release, commit `b18ab4ee`, 16 commits

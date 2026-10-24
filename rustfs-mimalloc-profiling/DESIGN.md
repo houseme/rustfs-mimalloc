@@ -133,7 +133,7 @@ rejected. The final live case also exceeded candidate drift in its 8-second
 run; the longer 20-second retry passed. Rejected runs are retained but are not
 used for attribution.
 
-`scripts/bench_profiling_abba.py` reproduces the comparison from two frozen
+`cargo xtask bench-profiling-abba` reproduces the comparison from two frozen
 executables, retains raw outputs and hashes locally, and rejects unstable or
 lossy comparisons. Run the same executable for both arguments as a control
 before comparing different builds. Use `--case` to rerun a failed workload

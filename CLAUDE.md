@@ -16,6 +16,7 @@ Cargo.toml                      workspace root
 rustfs-mimalloc-sys/            FFI sys crate (C compilation + bindings)
 rustfs-mimalloc/                safe Rust wrapper (GlobalAlloc + stats/heap APIs)
 rustfs-mimalloc-profiling/      Allocator-neutral Rust heap profiler, versioned with the allocator
+xtask/                         Unpublished Rust maintenance, validation and release tools
 .agents/skills/release.md       release skill (/release)
 .github/workflows/ci.yml        CI
 .github/workflows/release.yml   three-crate release workflow
@@ -24,7 +25,8 @@ docs/release-checklist.md       release checklist (git ignored)
 
 ## Build & Test
 
-Provider/archive verification scripts require Python 3.11+ for TOML parsing.
+Maintenance and release tools use Rust: run cargo xtask help. The unpublished
+xtask crate is excluded from default members and allocator dependency graphs.
 
 ```bash
 cargo build
