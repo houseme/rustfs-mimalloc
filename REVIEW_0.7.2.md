@@ -36,6 +36,9 @@ The refactor has one owned sample-output Vec for the whole report drain:
   then reacquires and rechecks occupancy. Stable sparse sources reserve for
   observed occupancy; arrivals that outgrow that reservation cause a bounded
   retry. No retained record is discarded to fit a stale estimate.
+- The retry bound uses actual retained shard storage, clipped by the session's
+  global quota, and is evaluated lazily. Old, larger buffers therefore do not
+  invalidate the bound, and empty/stable drains avoid these quota reads.
 - Both global passes append directly to that Vec. Slot release counts only the
   global records appended in that call, excluding an existing TLS/global prefix.
 - A zero TLS budget returns before cloning the registry snapshot or taking its
@@ -99,7 +102,7 @@ diagnostics and historical figures do not establish causal performance gains.
 
 ## Verification and tag delivery
 
-Local validation passes: 75 profiler unit cases, 15 tool unit cases, all-target
+Local validation passes: 76 profiler unit cases, 15 tool unit cases, all-target
 checks, default/secure-debug/no-profile feature combinations, Clippy/rustdoc with
 warnings denied, API/ABI controls, both provider graphs, normalized archives and
 two explicit release-mode pressure contracts. Streaming verification against

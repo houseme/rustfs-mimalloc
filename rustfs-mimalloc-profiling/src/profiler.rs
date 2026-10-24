@@ -1119,7 +1119,7 @@ fn drain_registered_tls_samples_for_report(
             buffer,
             out,
             limit - drained,
-            TLS_SAMPLE_RING_CAPACITY,
+            |_| TLS_SAMPLE_RING_CAPACITY,
             TlsSampleBuffer::len,
             Vec::reserve,
         ) {
@@ -1292,7 +1292,7 @@ fn lock_for_report_drain<'a, T>(
     source: &'a Mutex<T>,
     out: &mut Vec<RecordedAllocationSample>,
     limit: usize,
-    capacity_bound: usize,
+    capacity_bound: impl Fn(&T) -> usize,
     len: impl Fn(&T) -> usize,
     mut reserve: impl FnMut(&mut Vec<RecordedAllocationSample>, usize),
 ) -> std::sync::LockResult<std::sync::MutexGuard<'a, T>> {
@@ -1306,7 +1306,7 @@ fn lock_for_report_drain<'a, T>(
         // Size stable sparse reports by actual occupancy. If producers outgrow
         // that reservation, use the source's bounded capacity on the retry.
         let additional = if retried {
-            capacity_bound.max(needed).min(limit)
+            capacity_bound(&source).max(needed).min(limit)
         } else {
             needed
         };
@@ -1336,7 +1336,13 @@ fn drain_recorded_samples_into(out: &mut Vec<RecordedAllocationSample>, limit: u
             shard,
             out,
             remaining,
-            recorded_sample_shard_capacity(MAX_RECORDED_SAMPLES.load(Ordering::Relaxed)),
+            // A shard may retain storage from a larger previous session.
+            // Only evaluate this bound after a raced reservation, not per lock.
+            |samples| {
+                samples
+                    .capacity()
+                    .min(MAX_RECORDED_SAMPLES.load(Ordering::Relaxed))
+            },
             VecDeque::len,
             Vec::reserve,
         ) else {
@@ -2483,8 +2489,13 @@ mod tests {
         let source = Mutex::new(VecDeque::from([test_sample(stack)]));
         let mut out = Vec::new();
         let mut reservations = 0;
-        let mut locked =
-            lock_for_report_drain(&source, &mut out, 8, 8, VecDeque::len, |out, additional| {
+        let mut locked = lock_for_report_drain(
+            &source,
+            &mut out,
+            8,
+            |_| 8,
+            VecDeque::len,
+            |out, additional| {
                 let mut source = source
                     .try_lock()
                     .expect("reservation must run outside the source lock");
@@ -2494,8 +2505,9 @@ mod tests {
                 drop(source);
                 out.reserve(additional);
                 reservations += 1;
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         let capacity = out.capacity();
         out.extend(locked.drain(..));
         assert_eq!(out.len(), 8);
@@ -2505,6 +2517,42 @@ mod tests {
             "copying a locked batch must not grow output"
         );
         assert!(reservations > 0);
+    }
+
+    #[test]
+    fn report_retry_clips_retained_shard_storage_to_the_session_quota() {
+        let stack = StackKey {
+            frames: [42; MAX_CAPTURE_DEPTH],
+            depth: 1,
+        };
+        let source = Mutex::new(VecDeque::with_capacity(128));
+        source.lock().unwrap().push_back(test_sample(stack));
+        let mut out = Vec::new();
+        let mut reservations = Vec::new();
+        let bound_reads = Cell::new(0);
+        let locked = lock_for_report_drain(
+            &source,
+            &mut out,
+            1024,
+            |source| {
+                bound_reads.set(bound_reads.get() + 1);
+                source.capacity().min(64)
+            },
+            VecDeque::len,
+            |out, additional| {
+                let mut source = source.try_lock().expect("reserve outside source lock");
+                if reservations.is_empty() {
+                    source.extend(std::iter::repeat_n(test_sample(stack), 7));
+                }
+                drop(source);
+                out.reserve_exact(additional);
+                reservations.push(additional);
+            },
+        )
+        .unwrap();
+        assert_eq!(locked.len(), 8);
+        assert_eq!(reservations, [1, 64]);
+        assert_eq!(bound_reads.get(), 1);
     }
 
     #[test]
@@ -2520,7 +2568,7 @@ mod tests {
                 &source,
                 &mut out,
                 1_000_000,
-                1_000_000,
+                |_| panic!("empty source must not read the retry bound"),
                 VecDeque::len,
                 |_, _| panic!("empty source must not reserve"),
             )
@@ -2532,7 +2580,7 @@ mod tests {
             &source,
             &mut out,
             1_000_000,
-            1_000_000,
+            |_| panic!("stable sparse source must not read the retry bound"),
             VecDeque::len,
             Vec::reserve,
         )
