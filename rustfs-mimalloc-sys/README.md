@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 development commit `b5d94fe8`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 release commit `b18ab4ee`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.7.1"
+rustfs-mimalloc-sys = "0.7.2"
 ```
 
 ```rust
@@ -85,15 +85,16 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   `mi_profiler_snapshot` and `mi_pprof_profiler_{new,delete}`. V3.5.4 adds
   `on_snapshot` to `mi_profiler_t` and changes callback heap pointers to mutable
 - `mi_free_small_local{,_nonnull}` for small pages still owned by the calling thread
+- `mi_arena_area` and `mi_arena_contains` query reserved regions and membership
 - Raw error, output and deferred-free callback registration APIs
 - `mi_arenas_purge`, `mi_option_stats_merge_threshold`, and
   `mi_option_arena_purge_immediate_size`, plus all `mi_option_profile_*`
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The V3.6.0 development pin retains fixes from upstream
+The V3.6.0 release pin retains fixes from upstream
 PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
-through the 2026-10-21 review. Available APIs include `mi_arenas_purge` and two options
+through the v3.6.0 release, reviewed on 2026-10-24. Available APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
 The previously added `mi_thread_id_of`,
 `mi_heap_set_debug_fill_preserve`, `mi_theap_delete` and
@@ -128,9 +129,8 @@ oversized-page THP detection/advice; no public API or ABI changes. Environment i
 accept hexadecimal and reject zero-padded decimal input. K/KiB suffixes now scale
 correctly; native profiling defaults are 512 KiB samples and 1 GiB snapshots.
 PMD size is read from sysfs with a 2 MiB fallback. Mappings at least as large as
-detected PMD pages above 8 MiB receive `MADV_NOHUGEPAGE`. A guarded build-time source copy
-keeps Linux/Android `no_thp` valid despite the pin's dangling conditional `else`;
-the submodule stays pristine. Native probes validate bounded reads and advice
+detected PMD pages above 8 MiB receive `MADV_NOHUGEPAGE`. Upstream PR #1445
+fixes Linux/Android `no_thp`, so no local source copy is needed. Native probes validate bounded reads and advice
 decisions; deployment RSS still requires measurement on the target kernel.
 
 Upstream custom tracking requires `MI_TRACK_CUSTOM` at C compile time and two
@@ -149,6 +149,9 @@ symbol) and `MI_NO_ALIGN_FALLBACK_WARNING` (omit the benign fallback warning) ca
 be passed through target-specific `CFLAGS`. Neither is enabled by default or
 exposed as a redundant Cargo feature. Disabling the handler changes the raw
 `mi_*new` out-of-memory path; these controls are for embedding requirements.
+`MI_ARENA_PURGE_ON_FREE=1` is a separate upstream CFLAGS opt-in to process
+expired purges on arena free; it remains disabled by default.
+
 On musl, backtrace capture needs an externally configured unwinder. GNU Linux
 and macOS use `execinfo`, Windows uses `CaptureStackBackTrace`; FreeBSD/DragonFly
 also link `execinfo` and `util`.

@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.1"
+rustfs-mimalloc = "0.7.2"
 ```
 
 ```rust
@@ -50,7 +50,7 @@ APIs, while deallocation uses the general `mi_free` path.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30600 = V3.6.0 development source line
+let version = MiMalloc::version();       // 30600 = V3.6.0 release source line
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -72,7 +72,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.0 development (`b5d94fe8`)**.
+The submodule is pinned to upstream **V3.6.0 release (`b18ab4ee`)**.
 The numeric C version is 30600. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has
@@ -111,10 +111,17 @@ large freed arena ranges without making all purges immediate; by default, the
 threshold is 32 MiB. `mi_option_stats_merge_threshold` tunes when thread-heap
 stats merge into the parent heap; its upstream default is 512 KiB.
 
-The new raw pprof APIs are experimental. The interim upstream implementation
-can leave new thread heaps with profiling disabled, so dedicated-heap and
-worker-thread sampling are not reliable. See the repository's
+The raw pprof APIs remain experimental. Dedicated heaps and workers can sample
+after lazy activation through native generic-allocation maintenance. Nested
+callback allocations are suppressed from sampling; callbacks must not unwind.
+Native snapshots now use Unix-epoch
+nanoseconds and report elapsed duration. See the repository's
 [review](https://github.com/houseme/rustfs-mimalloc/blob/main/UPSTREAM_REVIEW.md).
+
+`ArenaId::contains(ptr)` queries address membership without reading `ptr`.
+`ArenaId::area()` returns `(start, reserved_bytes)`, including allocator metadata
+and possibly uncommitted pages. The result must not be used as a Rust slice or
+freed as an allocation. Both queries also have raw sys bindings.
 
 ### Threadpool Hint
 
@@ -143,7 +150,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.1", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.2", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

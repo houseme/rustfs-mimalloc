@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream V3.6.0 development commit b5d94fe8.
+//! Pinned to upstream release v3.6.0, commit b18ab4ee.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -583,6 +583,12 @@ unsafe extern "C" {
     pub fn mi_arena_min_alignment() -> size_t;
     pub fn mi_arena_min_size() -> size_t;
     pub fn mi_arena_max_object_size() -> size_t;
+    /// Query the arena's reserved region, including allocator metadata.
+    /// `arena_id` must be valid; `size` may be null or writable for one size_t.
+    pub fn mi_arena_area(arena_id: mi_arena_id_t, size: *mut size_t) -> *mut c_void;
+    /// Test address membership without reading the pointed-to memory.
+    /// `arena_id` must be valid; `p` need not be an allocated block.
+    pub fn mi_arena_contains(arena_id: mi_arena_id_t, p: *const c_void) -> bool;
     pub fn mi_arenas_purge();
     pub fn mi_heap_new_in_arena(arena_id: mi_arena_id_t) -> *mut mi_heap_t;
 }

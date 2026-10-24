@@ -199,6 +199,12 @@ jobs:
         run: cmake --build target/upstream-cmake --target mimalloc-test-api mimalloc-test-api-fill mimalloc-test-arena mimalloc-test-bitmap mimalloc-test-fork mimalloc-test-qsbr mimalloc-test-profile mimalloc-test-pprof --parallel 2
       - name: Check allocation, fork, QSBR and native profiling contracts
         run: ctest --test-dir target/upstream-cmake --output-on-failure --timeout 120 -R '^(test-api|test-api-fill|test-arena|test-bitmap|test-fork|test-qsbr|test-profile|test-pprof)$'
+      - name: Configure arena purge-on-free opt-in
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-purge-on-free -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=OFF -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON -DCMAKE_C_FLAGS=-DMI_ARENA_PURGE_ON_FREE=1
+      - name: Check allocation and arenas with purge-on-free
+        run: |
+          cmake --build target/upstream-purge-on-free --target mimalloc-test-api mimalloc-test-arena --parallel 2
+          ctest --test-dir target/upstream-purge-on-free --output-on-failure --timeout 120 -R '^(test-api|test-arena)$'
       - name: Configure Linux profiling with malloc override
         if: runner.os == 'Linux'
         run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-profile-override -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=ON -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON

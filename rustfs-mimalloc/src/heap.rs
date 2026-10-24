@@ -473,6 +473,9 @@ impl Drop for Heap {
 // ── Arena ───────────────────────────────────────────────────────────────────
 
 /// Arena identifier for managing memory regions.
+///
+/// This is a copyable handle to a process-lifetime reservation. Dropping the
+/// handle or an associated heap does not release the arena's backing memory.
 #[derive(Debug, Clone, Copy)]
 pub struct ArenaId(rustfs_mimalloc_sys::mi_arena_id_t);
 
@@ -481,7 +484,31 @@ pub struct ArenaId(rustfs_mimalloc_sys::mi_arena_id_t);
 unsafe impl Send for ArenaId {}
 unsafe impl Sync for ArenaId {}
 
-/// Reserve OS memory as an exclusive arena.
+impl ArenaId {
+    /// Whether an address falls in this arena or one of its subarenas.
+    ///
+    /// This does not read `ptr`, and null returns false. Membership does not
+    /// imply that the address belongs to a live allocation or is committed.
+    pub fn contains(&self, ptr: *const u8) -> bool {
+        // SAFETY: safe arena constructors return process-lifetime identifiers;
+        // upstream compares addresses without dereferencing the queried pointer.
+        unsafe { rustfs_mimalloc_sys::mi_arena_contains(self.0, ptr.cast()) }
+    }
+
+    /// Return the arena's reserved start address and size in bytes.
+    ///
+    /// The region includes allocator metadata and may contain uncommitted
+    /// pages. It must not be turned into a Rust slice, freed or accessed as a
+    /// whole allocation. The raw pointer grants no ownership or access rights.
+    pub fn area(&self) -> (*mut u8, usize) {
+        let mut size = 0;
+        // SAFETY: the identifier is valid and `size` is writable for this call.
+        let start = unsafe { rustfs_mimalloc_sys::mi_arena_area(self.0, &mut size) };
+        (start.cast(), size)
+    }
+}
+
+/// Reserve OS memory as an arena, optionally exclusive to associated heaps.
 pub fn reserve_os_memory(
     size: usize,
     commit: bool,
@@ -914,6 +941,42 @@ mod tests {
     fn arena_min_values_are_sane() {
         let a = arena_min_alignment();
         assert!(a > 0 && a.is_power_of_two());
+    }
+
+    #[test]
+    fn arena_queries_distinguish_reservations_and_heap_allocations() {
+        let size = arena_min_size();
+        let first = reserve_os_memory(size, false, false, true).unwrap();
+        let second = reserve_os_memory(size, false, false, true).unwrap();
+        let (start, reserved) = first.area();
+        assert!(!start.is_null());
+        assert!(reserved >= size);
+        assert_eq!(start as usize % arena_min_alignment(), 0);
+        assert!(first.contains(start));
+        assert!(!first.contains(core::ptr::null()));
+        assert!(!second.contains(start));
+
+        let heap = Heap::new_in_arena(first).unwrap();
+        let ptr = unsafe { heap.malloc_aligned(4096, 64) };
+        assert!(!ptr.is_null());
+        assert!(first.contains(ptr));
+        assert!(!second.contains(ptr));
+        assert!((start as usize..start as usize + reserved).contains(&(ptr as usize)));
+        unsafe {
+            core::ptr::write_bytes(ptr, 0x5A, 4096);
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
+        heap.delete();
+        // Heap deletion does not release the process-lifetime arena reservation.
+        assert_eq!(first.area(), (start, reserved));
+        let (worker_start, worker_size) = std::thread::spawn(move || {
+            let (start, size) = first.area();
+            assert!(first.contains(start));
+            (start as usize, size)
+        })
+        .join()
+        .unwrap();
+        assert_eq!((worker_start, worker_size), (start as usize, reserved));
     }
 
     #[test]

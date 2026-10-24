@@ -8,6 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [0.7.2] - 2026-10-24
+
+### Changed
+
+- Synchronize all three crate versions, internal requirements and installation
+  examples at 0.7.2; consolidate pending changes into this single section.
+- Pin mimalloc to the official v3.6.0 release, commit `b18ab4ee`, 16 commits
+  after the 0.7.1 development snapshot. Numeric version 30600 is unchanged.
+- Document the upstream `MI_ARENA_PURGE_ON_FREE=1` CFLAGS opt-in, which processes
+  expired purges during arena free. Keep it disabled by default pending workload
+  RSS and latency measurements.
+
+### Added
+
+- Raw `mi_arena_area` and `mi_arena_contains` bindings, plus `ArenaId::area` and
+  `ArenaId::contains` queries. Reserved regions include allocator metadata and
+  possibly uncommitted pages; membership grants no allocation access rights.
+- Arena query contracts cover separate exclusive reservations, real heap
+  allocations, null membership, heap deletion and cross-thread queries. Header
+  and ABI gates now cover 133 Rust functions, 124 extern signatures, nine
+  callbacks, three public layouts and 45 option IDs.
+- Linux/macOS native CI also checks allocation and arena contracts with the
+  purge-on-free compile-time opt-in enabled.
+
+### Fixed
+
+- Inherit native pprof Unix-epoch nanosecond timestamps and elapsed duration,
+  atomic pthread-key publication/teardown, arm64_32 thread-pointer access and
+  pinned-page guard handling from upstream v3.6.0.
+- Remove the local Linux/Android `no_thp` source-generation workaround now fixed
+  by upstream PR #1445. Compile native parser/PMD/advice probes against the
+  unmodified source with four macro combinations and a dangling-else negative
+  control; no longer suppress sign-compare diagnostics after PR #1447.
+- Correct stale wrapper documentation about dedicated-heap/worker profiling;
+  sampling works after native lazy activation. Retain Windows static CRT
+  bootstrap compatibility and keep the vendored submodule pristine.
+
 ## [0.7.1] - 2026-10-21
 
 ### Changed

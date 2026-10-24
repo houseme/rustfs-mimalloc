@@ -16,7 +16,7 @@ For the upstream `mimalloc` provider:
 
 ```toml
 [dependencies]
-rustfs-mimalloc-profiling = { version = "0.7.1", default-features = false }
+rustfs-mimalloc-profiling = { version = "0.7.2", default-features = false }
 mimalloc = "0.1.52"
 ```
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-To use the RustFS provider directly, depend on `rustfs-mimalloc = "0.7.1"`
+To use the RustFS provider directly, depend on `rustfs-mimalloc = "0.7.2"`
 and substitute `rustfs_mimalloc::MiMalloc` for the provider above.
 
 ### Migration from 0.6
@@ -50,7 +50,7 @@ The old convenience name and zero-argument constructor remain available with an
 explicit feature:
 
 ```toml
-rustfs-mimalloc-profiling = { version = "0.7.1", features = ["rustfs-allocator"] }
+rustfs-mimalloc-profiling = { version = "0.7.2", features = ["rustfs-allocator"] }
 ```
 
 ```rust

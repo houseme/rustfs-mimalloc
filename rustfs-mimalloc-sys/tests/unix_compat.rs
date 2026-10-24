@@ -1,20 +1,3 @@
-#[path = "../unix_compat.rs"]
-mod compatibility;
-
-#[test]
-fn no_thp_patch_changes_only_the_dangling_else() {
-    let original = include_str!("../c_src/mimalloc/src/prim/unix/prim.c").replace("\r\n", "\n");
-    let patched = compatibility::patch_no_thp(&original);
-    assert_eq!(original.len() - patched.len(), "      else\n".len());
-    assert!(patched.contains("unix_madvise(p, size, MADV_NOHUGEPAGE)"));
-}
-
-#[test]
-#[should_panic(expected = "upstream Unix THP source changed")]
-fn no_thp_patch_rejects_upstream_drift() {
-    compatibility::patch_no_thp("changed upstream source");
-}
-
 #[cfg(unix)]
 #[test]
 fn native_parser_pmd_and_advice_controls() {
@@ -36,18 +19,14 @@ fn native_parser_pmd_and_advice_controls() {
         std::env::temp_dir().join(format!("mimalloc-unix-{}-{nonce}", std::process::id()));
     fs::create_dir(&directory).unwrap();
     for no_thp in [false, true] {
-        let source = if no_thp {
-            compatibility::patch_no_thp(&unix)
-        } else {
-            unix.clone()
-        };
+        let source = &unix;
         let probe = include_str!("fixtures/unix_probe.c")
             .replace("/* @PARSER@ */", parser)
             .replace(
                 "/* @DETECTOR@ */",
-                function(&source, "static size_t unix_detect_large_page_size("),
+                function(source, "static size_t unix_detect_large_page_size("),
             )
-            .replace("/* @MMAP@ */", function(&source, "static void* unix_mmap("));
+            .replace("/* @MMAP@ */", function(source, "static void* unix_mmap("));
         let input = directory.join("probe.c");
         fs::write(&input, &probe).unwrap();
         for has_nohugepage in [false, true] {
@@ -60,7 +39,6 @@ fn native_parser_pmd_and_advice_controls() {
                 "-Werror",
                 "-Wno-unused-parameter",
                 "-Wno-unused-function",
-                "-Wno-sign-compare",
             ]);
             if no_thp {
                 command.arg("-DMI_NO_THP=1");
@@ -87,10 +65,15 @@ fn native_parser_pmd_and_advice_controls() {
             );
         }
         if no_thp {
-            let unpatched = probe.replace(
-                function(&source, "static void* unix_mmap("),
-                function(&unix, "static void* unix_mmap("),
-            );
+            // Reintroduce the old dangling-else bug as a compile-failure control.
+            let opener =
+                "      {  // keep the `else` above well-formed when MI_NO_THP is defined\n";
+            let closer = "      #endif\n      }\n    }\n";
+            assert_eq!(probe.matches(opener).count(), 1);
+            assert_eq!(probe.matches(closer).count(), 1);
+            let unpatched = probe
+                .replace(opener, "")
+                .replace(closer, "      #endif\n    }\n");
             fs::write(&input, unpatched).unwrap();
             let output = Command::new("cc")
                 .args([

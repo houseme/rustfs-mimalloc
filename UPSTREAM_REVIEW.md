@@ -1,3 +1,146 @@
+# 0.7.2 upstream, API and performance review — 2026-10-24
+
+## Result and scope
+
+All three crates and internal requirements are **0.7.2**. The shared changelog
+has one 0.7.2 section and no Unreleased section. This update is for commit/push;
+no 0.7.2 tag or package publication is authorized.
+
+The review covers the upstream delta, public headers/ABI, platform build
+compatibility, GlobalAlloc forwarding, Heap/ThreadHeap/ArenaId lifetimes, and
+the profiling provider boundary and live-snapshot path. No additional confirmed
+Rust runtime defect was established in the reviewed paths. The concrete binding
+gap, obsolete Unix patch and stale native-profiling documentation are addressed
+below. Performance candidates are separate from verified defect fixes.
+
+## Upstream source and merged PR audit
+
+Move from `b5d94fe81c3b710499aaed3956b02fb1a8febb94` to the official
+[v3.6.0 release](https://github.com/microsoft/mimalloc/releases/tag/v3.6.0),
+whose annotated tag resolves to
+[`b18ab4eef383f655e760881b02eff8af02800879`](https://github.com/microsoft/mimalloc/commit/b18ab4eef383f655e760881b02eff8af02800879).
+This is **16 commits** after the 0.7.1 pin. The numeric C version remains
+**30600**; 0.7.1 already used that number for a development snapshot.
+
+GitHub `merged_at` and base branches were checked independently of commit
+subjects. Closed PRs with manually incorporated changes are not counted as
+GitHub merges.
+
+| PR | Verified status and relevance |
+| --- | --- |
+| [#1445](https://github.com/microsoft/mimalloc/pull/1445) | Merged into dev3. Fixes the MI_NO_THP dangling else; removes the need for our Unix source-generation patch. |
+| [#1446](https://github.com/microsoft/mimalloc/pull/1446) | Merged into dev3. Makes the Unix/Emscripten pthread key atomic, publishes only a successfully created key and exchanges the invalid sentinel during teardown. |
+| [#1447](https://github.com/microsoft/mimalloc/pull/1447) | Merged into dev3. Corrects the signed/unsigned PMD-size comparison. Native probes no longer suppress sign-compare diagnostics. |
+| [#1449](https://github.com/microsoft/mimalloc/pull/1449) | Merged into dev3. Adds an upstream Rust arena wrapper. The underlying C query functions already existed; this project had not bound two of them. |
+| [#1444](https://github.com/microsoft/mimalloc/pull/1444) | Closed, `merged_at` absent. Commit `395bfec2` incorporates arm64_32 support using a 64-bit system-register temporary. |
+| [#1448](https://github.com/microsoft/mimalloc/pull/1448) | Closed, `merged_at` absent. Commit `caaf3bc4` adds opt-in processing of expired arena purges during free. |
+| [#1450](https://github.com/microsoft/mimalloc/pull/1450) | Release integration merged into main3. The selected release tag resolves to the source commit above. |
+| [#1451](https://github.com/microsoft/mimalloc/pull/1451) | Merged into main3 after the tag; changes upstream test-workflow permissions, not allocator runtime behavior. Outside this pin. |
+| [#1452](https://github.com/microsoft/mimalloc/pull/1452) | Closed without a GitHub merge. The Rust/sys split already landed directly as `ff8a8786`; it is not a new C API. |
+
+Other direct changes include `1ff2382f` (native pprof timestamps) and `11984a58`
+(pinned-page guard handling). Native pprof now writes epoch nanoseconds and an
+elapsed duration, replacing the old monotonic-clock value with incorrect units.
+Pinned pages avoid unprotecting guards that were never installed.
+
+At review time dev3 is `a0816267`, three commits after the release tag, with a
+3.6.1 development version. Its unwind change addresses
+[issue #1454](https://github.com/microsoft/mimalloc/issues/1454): LLVM libunwind
+on musl does not provide the old `unw_backtrace` fallback. Keep this update on
+the formal v3.6.0 tag. Our cc build does not enable `MI_HAS_LIBUNWINDH` on musl;
+it therefore does not select that failing fallback. This also means native
+musl backtraces are not enabled by default. The allocator-neutral Rust profiler
+uses its own backtrace implementation. Explicitly configuring the native
+libunwind fallback or building upstream CMake on affected musl systems remains
+a known limitation of this pin; the post-release fix is not claimed as included.
+
+## API parity and delivered changes
+
+`mimalloc.h`, `mimalloc-profile.h`, `mimalloc-stats.h` and `mimalloc/qsbr.h` are
+unchanged between the old pin and this tag. There are **no new C function names,
+option IDs or public ABI layouts** in this delta. MI_STAT_VERSION remains 6.
+
+The new Rust arena contribution exposed an existing binding gap. Add raw
+`mi_arena_area` and `mi_arena_contains`, plus `ArenaId::area` and
+`ArenaId::contains`. This uses the existing copyable, process-lifetime arena
+identifier and does not introduce an arena destructor or an unchecked slice.
+
+- `area` returns a raw reserved start/size, including allocator metadata and
+  possibly uncommitted pages. It grants no ownership or memory access rights.
+- `contains` compares address membership, including subarenas, without reading
+  the queried pointer. Null returns false; membership does not prove that an
+  allocation is live, correctly sized or accessible.
+- A contract test creates two separate exclusive arenas, checks a real aligned
+  heap allocation, rejects null/other-arena membership and checks queries after
+  heap deletion and from a worker thread.
+
+The name/option gate now covers **133 Rust functions and 45 option IDs**. The
+C projection checks **124 extern signatures, nine callbacks and three repr(C)
+layouts**; seven negative controls reject ABI mutations. There are still 96 C
+exports outside the binding scope, including compatibility, process teardown,
+subprocess and visitor APIs. This is an inventory, not a claim of complete C
+API coverage or of runtime validation of every export.
+
+Remove `unix_compat.rs`, its Cargo archive entry and the no_thp OUT_DIR source
+generator. Linux/Android now compile upstream `static.c` directly. The native
+probe compiles all four MI_NO_THP/MADV_NOHUGEPAGE combinations from unmodified
+source and runs bounded-parser, PMD fallback and advice controls. A mutation
+reintroduces the dangling else and must fail compilation. Retain Windows
+static CRT bootstrap compatibility: the relevant upstream startup paths have
+not acquired an equivalent fix.
+
+Correct the wrapper README's obsolete claim that dedicated heaps/workers stay
+excluded from native sampling. Lazy activation and nested-allocation suppression
+are already exercised by the native callback contracts. No profiler sampling
+or GlobalAlloc hot-path policy changes are introduced here.
+
+## Performance and completeness opportunities
+
+These are **informational engineering priorities**, not measured speedup claims
+or newly established correctness defects.
+
+| Priority | Opportunity and tradeoff | Evidence needed before changing defaults |
+| --- | --- | --- |
+| 1 | Evaluate `CFLAGS=-DMI_ARENA_PURGE_ON_FREE=1` for bursty/idle workloads. It processes expired purges on arena free, but can add work to free paths and cannot guarantee an idle process returns all memory. Keep it off by default. | Isolated old/new or off/on A/B/B/A runs with throughput, p99 latency, committed bytes and RSS; reject results on baseline drift. Local API/arena tests only establish correctness. |
+| 1 | Validate THP policy on real Linux kernels with 16/64 KiB base pages and large PMD sizes. Host-C probes verify decisions, not kernel RSS or advice effectiveness. | Faults, RSS, collapse/purge behavior and tail latency for small and 64 KiB allocations. Preserve negative advice for oversized eligible mappings. |
+| 2 | Profile stack capture, live metadata and report-time shard copying before changing profiler representation or lock strategy. Retain loss/quality accounting and allocator-reentrancy constraints. | Representative concurrent reports and pressure workloads, sampled/dropped/pending events, report latency and metadata footprint. Existing 0.7.1 measurements below do not establish results for this pin. |
+| 2 | Investigate portable native unwinding on musl/Android without assuming a host header implies target linkability. Consider the post-v3.6.0 unwind fix with compiler/link probes and real target execution. | Static/dynamic musl plus LLVM/GCC unwinder coverage, nonempty native stacks and failure controls; preserve cross-compilation. |
+| 2 | Reuse existing ThreadHeap views per worker when switching heaps frequently, and tune collection from the owning worker. | Workload measurements showing TLS lookup/collection cost; preserve parent/context lifetimes and late-TLS restrictions. |
+
+## Validation and limits
+
+Local stable Rust 1.99.1 / macOS arm64 validation passes:
+
+- all-target workspace check; default, secure/debug, no_profile,
+  secure/debug/no_profile and all-feature workspace tests;
+- 45 allocator unit cases, 71 profiler unit cases, native callback/linkage and
+  28 independent-process environment-option cases, plus the arena query contract;
+- formatting, all-target/all-feature Clippy with warnings denied, rustdoc with
+  warnings denied, header/option inventory and C ABI/negative controls;
+- independent RustFS and upstream-mimalloc provider graphs, optional RustFS
+  convenience API, and normalized profiling archive default/all-features/release
+  and provider tests using local 0.7.2 dependency patches;
+- both normally ignored multithreaded/live-heap pressure tests explicitly pass
+  in a release-mode consumer of the RustFS allocator provider;
+- sys and wrapper archive verification; sys archives contain 102 files after
+  removing the obsolete compatibility module;
+- upstream Debug/C allocation, fill, arena, bitmap, fork, QSBR, profile and pprof
+  tests: **8/8**; additional purge-on-free API/arena tests: **2/2**. The latter
+  commands are also added to the existing Linux/macOS native CI jobs.
+
+No isolated before/after performance experiment was run; no throughput or RSS
+improvement is claimed. Real arm64_32 execution, 16/64 KiB Linux kernels and
+TSan verification of process-exit races were not performed locally. The existing
+CI covers Linux/musl, Windows/clang-cl/static CRT, macOS and Rust 1.95; the exact
+new-commit results must be checked after push. No historical toolchain was
+installed because of upstream's nested Rust package.
+
+## Archived 0.7.1 and earlier reviews
+
+Everything below is dated evidence for earlier pins, not a statement of current
+release status or performance. Version 0.7.1 was subsequently tagged and published;
+this 0.7.2 update is intentionally not published.
+
 # 0.7.1 upstream, API and performance review — 2026-10-21
 
 ## Result and version provenance

@@ -3,7 +3,7 @@
 ## Project
 
 rustfs-mimalloc: high-performance mimalloc V3 bindings for Rust, pinned to
-V3.6.0 development commit `b5d94fe8`.
+V3.6.0 release commit `b18ab4ee`.
 Cargo manifests intentionally omit `rust-version`. CI checks stable and Rust
 1.95.0 compatibility; this is not a declared minimum supported Rust version.
 Edition 2024 alone does not prove compiler or dependency compatibility. Lint

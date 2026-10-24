@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 development, commit `b5d94fe8`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 release, commit `b18ab4ee`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,7 +27,7 @@ Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.1"
+rustfs-mimalloc = "0.7.2"
 ```
 
 ```rust
@@ -85,7 +85,7 @@ Implements `GlobalAlloc` with aligned allocation/reallocation and general
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30600 = V3.6.0 development
+// Version: 30600 = V3.6.0 release
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -151,11 +151,12 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit b5d94fe8](https://github.com/microsoft/mimalloc/commit/b5d94fe81c3b710499aaed3956b02fb1a8febb94),
-on the V3.6.0 development line. The source version is 30600; this is a fixed
-development snapshot, not an upstream v3.6.0 release.
+The submodule pins [upstream commit b18ab4ee](https://github.com/microsoft/mimalloc/commit/b18ab4eef383f655e760881b02eff8af02800879),
+at the official v3.6.0 release tag. The source version remains 30600.
 
-The 54 commits after `6f45cc52` add experimental QSBR primitives, native pprof
+The release adds 16 commits after the 0.7.1 pin `b5d94fe8`, including native
+pprof timestamps, pthread-key synchronization and pinned-page guard fixes.
+Earlier development updates added experimental QSBR primitives, native pprof
 OOM/reentrancy fixes and hashed small-page offsets. Remote free now uses one
 weak acquire-release CAS; the earlier release-only branch was rolled back.
 Statistics merging skips zero current/peak updates. The immediate-purge
@@ -171,6 +172,14 @@ verification results, and remaining optimization opportunities.
 - `ThreadHeap::{calloc,malloc_csize,zalloc_csize,realloc,rezalloc}` extend cached
   worker contexts. They remain unsafe raw allocation operations with the same
   parent-heap and thread-context lifetime requirements.
+
+`ArenaId::contains` checks address membership (including subarenas), and
+`ArenaId::area` returns the reserved range including allocator metadata. These
+queries grant no ownership, allocation validity or permission to access memory.
+
+`MI_ARENA_PURGE_ON_FREE=1` can be passed through target `CFLAGS` to let arena
+frees process expired purges. It is disabled by default; measure RSS and tail
+latency before enabling it for a workload.
 
 Audit the binding names and option IDs against the pinned C headers with
 `python3 scripts/check_upstream_api.py --json target/upstream-api-audit.json`.
@@ -209,9 +218,9 @@ as large as detected PMD pages above 8 MiB receive `MADV_NOHUGEPAGE`, independen
 of positive-advice alignment checks. Missing/invalid PMD data falls back to 2 MiB.
 [PR #1431](https://github.com/microsoft/mimalloc/pull/1431) was closed without a
 GitHub merge; related changes landed as direct commits. RSS and latency need deployment-kernel
-validation. Linux/Android `no_thp` builds use a guarded OUT_DIR source copy to
-remove the upstream conditional's dangling `else`, retaining both compile-time
-THP suppression and oversized-page negative advice. The submodule is unchanged.
+validation. Linux/Android `no_thp` builds now use upstream source directly: PR #1445
+fixes the dangling conditional `else`. Compile-time THP suppression and
+oversized-page negative advice remain covered by native probes.
 
 `python3 scripts/check_upstream_abi.py` also compiles C projections of the
 Rust extern signatures, callbacks and three exposed `repr(C)` layouts against
@@ -340,7 +349,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.0 development, commit `b5d94fe8`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.0 release, commit `b18ab4ee`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
@@ -400,7 +409,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.1", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.2", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

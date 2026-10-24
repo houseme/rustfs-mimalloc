@@ -18,7 +18,6 @@ include = [
     "README.md",
     "build.rs",
     "windows_static_crt.rs",
-    "unix_compat.rs",
     "src/**",
     "tests/**",
     "c_src/mimalloc/LICENSE",
