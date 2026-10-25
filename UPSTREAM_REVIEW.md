@@ -1,3 +1,94 @@
+# 0.7.3 upstream and API review — 2026-10-26
+
+## Source selection
+
+The refreshed project main was `26ae27f`. The latest official upstream release
+is still [v3.6.0](https://github.com/microsoft/mimalloc/releases/tag/v3.6.0).
+This update pins
+[`3828cfeefbdab6d276fafa35b945e314742b5302`](https://github.com/microsoft/mimalloc/commit/3828cfeefbdab6d276fafa35b945e314742b5302)
+from dev3: **41 commits** after `b18ab4ee`, with C version **30601**. It is a
+**v3.6.1 development snapshot**, not an official v3.6.1 release. The concrete
+reasons to move past the release tag are the fork-child crash fix and the
+stats-merge performance correction. The revision is immutable rather than a
+floating branch dependency.
+
+## PRs and direct commits
+
+GitHub PR `merged_at` was checked separately from commit messages. Relative to
+the previous audit, the newly merged PR is
+[#1455](https://github.com/microsoft/mimalloc/pull/1455), merged into dev3 on
+2026-10-24. It prefers Emscripten's backend over WASI when both macros are
+present. Follow-up direct commits add Emscripten page-map/environment support.
+[#1452](https://github.com/microsoft/mimalloc/pull/1452) remains closed without
+a GitHub merge; its Rust/sys split was incorporated directly before this range.
+The earlier merged #1445/#1446/#1447/#1449/#1450 and main3 workflow-only #1451
+remain documented in the archived 0.7.2 review below.
+
+| Change | Evidence and effect |
+| --- | --- |
+| `12db0977`, `3828cfee` | [#1456](https://github.com/microsoft/mimalloc/issues/1456): defer dead-thread cleanup out of the fork handler; extend/fix native fork tests. This is a direct fix referencing an issue, not a merged PR. |
+| `f0032d4c` | [#1458](https://github.com/microsoft/mimalloc/issues/1458): raise the default stats merge threshold from 512 KiB to 4 MiB after a reported allocation-batch regression. Parent-heap statistics become less immediate. The reported percentages are workload-specific upstream evidence, not measurements of this Rust release. |
+| `a0816267`, `072f5d12` | [#1454](https://github.com/microsoft/mimalloc/issues/1454): use the compiler's `unwind.h` / `_Unwind_Backtrace` fallback, avoiding LLVM libunwind's missing `unw_backtrace`; stabilize the native profiling test. |
+| `79504a2b`, `c014c6be` | Correct C++ operator symbol mangling for the target size type and x32 virtual-address/popcount handling. |
+| CHERI series through `5db91f33` | Preserve capability provenance/bounds, separate address/size arithmetic, and use `page_start` internally. These are significant internal changes; CHERI support is not claimed for the Rust wrappers without a Rust target/toolchain validation. |
+
+An uncoordinated fork child that only calls exec or _exit no longer traverses
+other threads' potentially inconsistent allocator structures. A child that
+continues allocating still needs all other threads quiescent outside mimalloc
+at the fork; inherited locks can otherwise retain pages. Neither this fix nor
+the native fork test makes arbitrary Rust operations safe after a multithreaded
+fork. macOS also has independent Objective-C runtime fork restrictions.
+
+## Public API and ABI audit
+
+All four public header diffs were read: `mimalloc.h`, `mimalloc-profile.h`,
+`mimalloc-stats.h` and `mimalloc/qsbr.h`. Only the numeric version and the
+stats-threshold default comment change. There are **no new public C function
+names, option IDs, signatures, callbacks or exposed layouts**. MI_STAT_VERSION
+remains 6. Internal helpers such as `_mi_fork_epoch`, CHERI pointer helpers and
+`page_start` are not new public APIs.
+
+The before/after inventories differ only in `source_version`: 30600 → 30601.
+They retain **133 Rust functions, 45 option IDs and 96 intentionally unbound
+C exports**. The existing Rust option API already exposes the changed control;
+its documentation and clean-process tests now cover the new default and the
+previous/disabled configurations. No speculative wrappers or Cargo flags are
+added. The C projection checks **124 extern signatures, 9 callbacks and 3
+repr(C) layouts**, with all seven negative/matching controls passing locally.
+
+## Build and performance boundaries
+
+The guarded Windows static-CRT compatibility transform remains necessary; its
+source anchors and thread cleanup must continue to pass both local controls
+and Windows CI. Linux/Android no-THP source probes remain active. GlobalAlloc's
+aligned forwarding path and the allocator-neutral profiling dependency graph
+are preserved.
+
+Upstream CMake probes the compiler unwinder when execinfo is absent. Linux CI
+now forces that branch and checks that MI_HAS_UNWINDH actually succeeded before
+running native profile/pprof tests. This exercises the fallback on Linux GNU;
+it does not establish native musl unwind support. The Cargo build still does
+not enable that fallback automatically on musl. WebAssembly/CHERI changes are
+inherited source, not a new claim of tested Rust target coverage.
+
+The default stats threshold is eight times larger, so threshold-triggered
+merges can be less frequent. This is a mechanism change, not a guarantee of
+throughput or tail-latency gains. Keep the existing runtime option and startup
+`MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` / `0` controls for freshness or opt-out.
+Do not change sampling defaults or enable arena purge-on-free globally on this
+basis. See [the full 0.7.3 review](REVIEW_0.7.3.md) for verification and remaining
+measurement priorities.
+
+All three crates and internal requirements are synchronized at **0.7.3**, with
+one shared changelog section and no Unreleased section. The user requested
+commit/push only; no 0.7.3 tag or package publication is part of this update.
+
+---
+
+The following review is retained as historical evidence for 0.7.2. Its source
+selection, commands/results and publication boundary describe that earlier
+review; they do not override the current source selection above.
+
 # 0.7.2 upstream, API and performance review — 2026-10-24
 
 ## Result and scope

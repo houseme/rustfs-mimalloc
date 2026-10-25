@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.2"
+rustfs-mimalloc = "0.7.3"
 ```
 
 ```rust
@@ -50,7 +50,7 @@ APIs, while deallocation uses the general `mi_free` path.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30600 = V3.6.0 release source line
+let version = MiMalloc::version();       // 30601 = V3.6.1 development snapshot source line
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -72,8 +72,8 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.0 release (`b18ab4ee`)**.
-The numeric C version is 30600. QSBR's experimental constructor is raw sys FFI
+The submodule is pinned to upstream **V3.6.1 development snapshot (`3828cfee`)**.
+The numeric C version is 30601. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has
 the same ID and retains the old Rust variant. Preserve alignment requirements.
@@ -109,7 +109,10 @@ diagnostics and tuning support.
 subprocess immediately. `mi_option_arena_purge_immediate_size` can release
 large freed arena ranges without making all purges immediate; by default, the
 threshold is 32 MiB. `mi_option_stats_merge_threshold` tunes when thread-heap
-stats merge into the parent heap; its upstream default is 512 KiB.
+stats merge into the parent heap; its upstream default is 4 MiB. This reduces
+merge frequency but delays parent-heap statistics. Configure
+`MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for the previous default,
+or `0` to disable threshold-based merges.
 
 The raw pprof APIs remain experimental. Dedicated heaps and workers can sample
 after lazy activation through native generic-allocation maintenance. Nested
@@ -150,7 +153,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.2", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.3", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

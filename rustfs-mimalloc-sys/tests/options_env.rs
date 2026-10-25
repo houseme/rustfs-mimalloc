@@ -4,9 +4,17 @@ use rustfs_mimalloc_sys::{c_long, mi_option_get, mi_option_get_size, mi_option_t
 
 fn main() {
     let args: Vec<_> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("--profile-defaults") {
+    if args.get(1).map(String::as_str) == Some("--native-defaults") {
         // The environment is cleared by the parent before native startup.
         unsafe {
+            assert_eq!(
+                mi_option_get(mi_option_t::mi_option_stats_merge_threshold),
+                4 * 1024 * 1024
+            );
+            assert_eq!(
+                mi_option_get_size(mi_option_t::mi_option_stats_merge_threshold),
+                4 * 1024 * 1024
+            );
             assert_eq!(
                 mi_option_get(mi_option_t::mi_option_profile_sample_rate),
                 512 * 1024
@@ -69,6 +77,10 @@ fn main() {
         ("integer", "42 ".to_owned(), 32),
         ("integer", format!("{long_max}0"), 32),
         ("integer", format!("{long_min}0"), 32),
+        // Preserve opt-out and the previous threshold through the public option.
+        ("bytes", "0".to_owned(), 0),
+        ("bytes", "512KiB".to_owned(), 512 * 1024),
+        ("bytes", "4MiB".to_owned(), 4 * 1024 * 1024),
         ("bytes", "2MiB".to_owned(), 2 * 1024 * 1024),
         ("bytes", "0x2MiB".to_owned(), 2 * 1024 * 1024),
         ("bytes", "2mb".to_owned(), 2 * 1024 * 1024),
@@ -113,14 +125,14 @@ fn main() {
     }
     let mut defaults = std::process::Command::new(&executable);
     for (name, _) in std::env::vars_os() {
-        if name
-            .to_str()
-            .is_some_and(|name| name.to_ascii_uppercase().starts_with("MIMALLOC_PROFILE"))
-        {
+        if name.to_str().is_some_and(|name| {
+            let name = name.to_ascii_uppercase();
+            name.starts_with("MIMALLOC_PROFILE") || name == "MIMALLOC_STATS_MERGE_THRESHOLD"
+        }) {
             defaults.env_remove(name);
         }
     }
-    let output = defaults.arg("--profile-defaults").output().unwrap();
+    let output = defaults.arg("--native-defaults").output().unwrap();
     assert!(
         output.status.success(),
         "{}",

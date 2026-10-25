@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream release v3.6.0, commit b18ab4ee.
+//! Pinned to upstream dev3 v3.6.1 development snapshot, commit 3828cfee.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -107,6 +107,9 @@ pub enum mi_option_t {
     mi_option_profile_inuse_interval = 49,
     mi_option_profile_time_interval = 50,
     mi_option_profile_sample_rate = 51,
+    /// Bytes allocated/freed between thread-heap stats merges (default 4 MiB).
+    /// Zero disables threshold-based merging; smaller values update parent
+    /// statistics sooner at the cost of more frequent merges.
     mi_option_stats_merge_threshold = 52,
     mi_option_arena_purge_immediate_size = 53,
 }

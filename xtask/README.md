@@ -10,8 +10,8 @@ Run from the repository root with stable Rust and Cargo:
     cargo xtask test-providers --local-dependencies
     cargo xtask test-providers --local-dependencies --release
     cargo xtask verify-package --local-dependencies --allow-dirty
-    cargo xtask release-check 0.7.2
-    cargo xtask release-notes 0.7.2 --output target/release-notes.md
+    cargo xtask release-check 0.7.3
+    cargo xtask release-notes 0.7.3 --output target/release-notes.md
 
 The crate is unpublished and excluded from default workspace members. Its
 dependencies do not become allocator/profiler runtime dependencies. All version
@@ -41,7 +41,7 @@ sparse index and a downloaded archive SHA-256. A mismatching local archive fails
 immediately; visibility/network retries remain bounded at 40 attempts.
 
     cargo xtask verify-registry rustfs-mimalloc-sys 0.7.1
-    cargo xtask verify-registry rustfs-mimalloc-sys 0.7.2 --archive target/package/rustfs-mimalloc-sys-0.7.2.crate
+    cargo xtask verify-registry rustfs-mimalloc-sys 0.7.3 --archive target/package/rustfs-mimalloc-sys-0.7.3.crate
 
 Registry verification is read-only. These commands never upload a package,
 create a tag or dispatch a workflow.

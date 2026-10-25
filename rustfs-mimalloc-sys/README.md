@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.0 release commit `b18ab4ee`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.1 development snapshot commit `3828cfee`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.7.2"
+rustfs-mimalloc-sys = "0.7.3"
 ```
 
 ```rust
@@ -92,9 +92,11 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The V3.6.0 release pin retains fixes from upstream
-PRs #1412, #1416, #1418, #1419 and #1420, as well as subsequent `dev3` commits
-through the v3.6.0 release, reviewed on 2026-10-24. Available APIs include `mi_arenas_purge` and two options
+The V3.6.1 development snapshot pin adds 41 commits after v3.6.0, reviewed on
+2026-10-26. It includes PR #1455's Emscripten backend selection, compiler-unwinder
+fallback fixes, CHERI/provenance work, deferred fork-child cleanup (#1456) and
+a 4 MiB default stats merge threshold (#1458). This is not an upstream release.
+Available APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
 The previously added `mi_thread_id_of`,
 `mi_heap_set_debug_fill_preserve`, `mi_theap_delete` and
@@ -152,7 +154,10 @@ exposed as a redundant Cargo feature. Disabling the handler changes the raw
 `MI_ARENA_PURGE_ON_FREE=1` is a separate upstream CFLAGS opt-in to process
 expired purges on arena free; it remains disabled by default.
 
-On musl, backtrace capture needs an externally configured unwinder. GNU Linux
+Upstream's native pprof fallback now uses `unwind.h` and `_Unwind_Backtrace`
+instead of `unw_backtrace`. The Cargo build does not automatically enable this
+fallback on musl; native musl backtraces still need a target-configured compiler
+unwinder. The allocator-neutral Rust profiler uses its own capture path. GNU Linux
 and macOS use `execinfo`, Windows uses `CaptureStackBackTrace`; FreeBSD/DragonFly
 also link `execinfo` and `util`.
 

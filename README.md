@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.0 release, commit `b18ab4ee`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.1 development snapshot, commit `3828cfee`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -30,7 +30,7 @@ Repository maintenance and release validation use the unpublished Rust
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.2"
+rustfs-mimalloc = "0.7.3"
 ```
 
 ```rust
@@ -88,7 +88,7 @@ Implements `GlobalAlloc` with aligned allocation/reallocation and general
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30600 = V3.6.0 release
+// Version: 30601 = V3.6.1 development snapshot
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -154,12 +154,19 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit b18ab4ee](https://github.com/microsoft/mimalloc/commit/b18ab4eef383f655e760881b02eff8af02800879),
-at the official v3.6.0 release tag. The source version remains 30600.
+The submodule pins [upstream commit 3828cfee](https://github.com/microsoft/mimalloc/commit/3828cfeefbdab6d276fafa35b945e314742b5302),
+41 commits after the official v3.6.0 tag. This is a **v3.6.1 development
+snapshot**, with numeric C version **30601**, not a published upstream release.
 
-The release adds 16 commits after the 0.7.1 pin `b5d94fe8`, including native
-pprof timestamps, pthread-key synchronization and pinned-page guard fixes.
-Earlier development updates added experimental QSBR primitives, native pprof
+The update defers fork-child cleanup until normal allocation, so an uncoordinated
+multithreaded fork followed only by `exec` or `_exit` avoids traversing another
+thread's inconsistent allocator state. The default stats merge threshold rises
+from 512 KiB to 4 MiB, reducing merge frequency while delaying parent-heap
+statistics. Set `MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for the
+previous frequency, or `0` to disable threshold-based merges. The existing
+option APIs retain their IDs and units. No C function or public ABI is added.
+
+Earlier updates added experimental QSBR primitives, native pprof
 OOM/reentrancy fixes and hashed small-page offsets. Remote free now uses one
 weak acquire-release CAS; the earlier release-only branch was rolled back.
 Statistics merging skips zero current/peak updates. The immediate-purge
@@ -256,9 +263,10 @@ metadata. Hooks can run concurrently and during startup; they must not allocate,
 panic or unwind. Aligned allocations can report their backing block rather than
 the adjusted pointer; heap destruction does not report each freed block. This is
 a C build opt-in, not a runtime registration API or a complete leak detector.
-Default builds leave it disabled. `fork` support requires every other thread to
-be quiescent outside mimalloc; it does not make unrestricted Rust code safe in
-the child of a multithreaded process.
+Default builds leave it disabled. A multithreaded fork child that only calls
+`exec` or `_exit` does not run allocator cleanup. Continued allocation in the
+child still requires other threads to have been quiescent outside mimalloc at
+the fork; this does not make unrestricted Rust code safe in that child.
 
 - `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
   path. These unsafe functions require a small allocation whose page is **still
@@ -352,7 +360,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.0 release, commit `b18ab4ee`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.1 development snapshot, commit `3828cfee`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
@@ -412,7 +420,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.2", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.3", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

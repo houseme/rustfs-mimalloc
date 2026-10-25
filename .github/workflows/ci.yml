@@ -201,6 +201,15 @@ jobs:
         run: |
           cmake --build target/upstream-purge-on-free --target mimalloc-test-api mimalloc-test-arena --parallel 2
           ctest --test-dir target/upstream-purge-on-free --output-on-failure --timeout 120 -R '^(test-api|test-arena)$'
+      - name: Configure compiler-unwinder fallback without execinfo
+        if: runner.os == 'Linux'
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-unwind -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=OFF -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON -DMI_HAS_EXECINFOH=OFF
+      - name: Check native profiling with compiler-unwinder fallback
+        if: runner.os == 'Linux'
+        run: |
+          grep -q '^MI_HAS_UNWINDH:INTERNAL=1$' target/upstream-unwind/CMakeCache.txt
+          cmake --build target/upstream-unwind --target mimalloc-test-profile mimalloc-test-pprof --parallel 2
+          ctest --test-dir target/upstream-unwind --output-on-failure --timeout 120 -R '^(test-profile|test-pprof)$'
       - name: Configure Linux profiling with malloc override
         if: runner.os == 'Linux'
         run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-profile-override -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=ON -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON

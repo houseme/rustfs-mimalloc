@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [0.7.3] - 2026-10-26
+
+### Changed
+
+- Pin mimalloc to `3828cfee`, a v3.6.1 development snapshot (numeric version
+  30601), 41 commits after the v3.6.0 release used by 0.7.2. Include Emscripten
+  backend/page-map fixes, CHERI provenance work and corrected C++ allocation
+  symbol mangling. Platform-specific support still requires target validation.
+- Inherit the upstream 4 MiB stats merge threshold, replacing 512 KiB to reduce
+  merge frequency. Parent-heap statistics can update later; existing public
+  option APIs and the startup environment retain the previous threshold or
+  disable threshold-based merging. Sampling defaults are unchanged.
+- Synchronize the three crate versions, internal requirements and installation
+  examples at 0.7.3. Consolidate pending work into this single release section.
+
+### Fixed
+
+- Defer native fork-child cleanup to normal allocation so a child that only
+  calls exec or _exit avoids traversing inconsistent state left by concurrently
+  allocating threads (upstream #1456). Continued child allocation still requires
+  quiescent allocator state at fork; general Rust fork safety is not implied.
+- Inherit the compiler-unwinder pprof fallback using `_Unwind_Backtrace`, fixing
+  the missing `unw_backtrace` symbol reported with LLVM libunwind (#1454).
+  Cargo's native musl backtrace configuration remains opt-in.
+
+### Validation
+
+- Re-audit four public C headers, all bound names, option IDs, extern signatures,
+  callbacks and exposed layouts. There are no new public C APIs in this delta;
+  existing Rust bindings remain aligned without additional API surface.
+- Cover the 4 MiB default in a clean child environment and explicit 0/512 KiB/
+  4 MiB overrides. Run the updated native fork suite and add Linux CI coverage
+  that forces and verifies the compiler-unwinder fallback without execinfo.
+- Record the upstream PR audit, review findings, performance tradeoffs and
+  validation boundaries in `UPSTREAM_REVIEW.md` and `REVIEW_0.7.3.md`.
+
 ## [0.7.2] - 2026-10-25
 
 ### Changed
