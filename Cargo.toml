@@ -19,7 +19,7 @@ rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.7.3" }
 rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.7.3" }
 
 backtrace = "0.3"
-cc = "1.9.0"
+cc = "1.10.0"
 criterion = "0.8.2"
 findshlibs = "0.10"
 libc = "0.2"
@@ -37,8 +37,8 @@ regex = "1.13.1"
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 shlex = "2.0.1"
-syn = { version = "2.0.119", features = ["full"] }
+syn = { version = "3.0.9", features = ["full"] }
 tar = "0.4.46"
 tempfile = "3.27.0"
 toml = "1.1.8"
-ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
