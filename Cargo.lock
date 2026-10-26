@@ -1376,7 +1376,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shlex",
- "syn 2.0.119",
+ "syn 3.0.9",
  "tar",
  "tempfile",
  "toml",
