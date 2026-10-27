@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [Unreleased]
+
+### Changed
+
+- Group the profiler's per-allocation hot-path reads (`recorder_active`,
+  `allocator_seen` and the sampling config generation) in one 64-byte-aligned
+  cache-line struct, so sample-hit counter writes can no longer bounce the
+  line those reads share. This mirrors the existing live-shard alignment;
+  behavior and public APIs are unchanged.
+
+### Added
+
+- Benchmark coverage in the `rustfs-mimalloc` alloc suite for `realloc`
+  (same-size and growing), `alloc_zeroed`, and contended multi-threaded
+  alloc/free scaling at 1/2/4/8 workers.
+
 ## [0.7.3] - 2026-10-26
 
 ### Changed
