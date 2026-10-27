@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::{
-    SAMPLING_CONFIG_GENERATION, SampleWeight, StackKey, session_is_current, splitmix64,
+    HOT_ALLOCATION_STATE, SampleWeight, StackKey, session_is_current, splitmix64,
     with_profiler_suppressed,
 };
 
@@ -214,7 +214,7 @@ pub(super) fn begin_reallocation(pointer: usize) -> Option<PendingReallocation> 
     entry.reallocating = true;
     Some(PendingReallocation {
         pointer,
-        generation: SAMPLING_CONFIG_GENERATION.load(Ordering::Acquire),
+        generation: HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire),
         finished: false,
     })
 }
