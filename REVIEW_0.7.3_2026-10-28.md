@@ -64,6 +64,21 @@ inject a private macro into the ABI test nor hide the diagnostic. The selected
 pin passes all header/ABI controls. C++ QSBR linkage remains an upstream follow-up,
 not a delivered fix.
 
+## Compiler/configuration regression
+
+The reviewed head's Linux CI failed all-feature Clippy. Commit 407ebc8 gated
+the entire session-test module behind not(no_hooks), including the pure Mach-O
+header-symbol test. The helper at reviewed profiler.rs:1593 still compiled for
+any test target; on non-Apple targets that gated test was its only caller.
+Clippy -D warnings therefore rejected the unused helper. Local macOS lint did
+not expose this because the platform resolver remains a caller there.
+
+Move the existing pure symbol test into an independent test module, retaining
+coverage with and without hooks. Leave the helper's platform gate, session-test
+gate and warning policy intact. Default tests, no_hooks tests and local
+all-feature Clippy pass; final Linux/Windows CI verifies the affected targets.
+This is a confirmed compiler/configuration failure, not a runtime vulnerability.
+
 ## Per-commit result
 
 | Commit | Reviewed behavior and result |
@@ -71,7 +86,7 @@ not a delivered fix.
 | `0253caf32bb273a4ce6e426688d24539862348f3` | syn 3 PointerMutability and FnPtr migration. The complete parser and its callers preserve const/mutable pointer projection, callback calling convention and rejection behavior. Host C signatures/layouts and all seven matching/negative controls pass. No additional confirmed defect. |
 | `7530fe404c0ef06a509687c5d32795f1896d428a` | Hot-state consolidation, including live tracking's generation reads. Atomic orderings and generation/session callers remain consistent; the 64-byte-only padding gap is corrected above. |
 | `71ecfac9c30e4e6ca75d7fce079a49cdd9b9ce6e` | Realloc/zeroed/threaded benchmarks. Pointer/layout use and ownership are retained; the threaded workload description and missing comparisons are corrected above. |
-| `407ebc83f7d1d6b436660921e99d84a1daef6650` | no_hooks compile-time opt-out. Public start rejects sessions before claiming ownership; provider operations preserve failure/zeroing/alignment/realloc/cross-thread-free contracts. Add explicit feature CI and document dependency-graph-wide feature unification. No additional confirmed runtime defect. |
+| `407ebc83f7d1d6b436660921e99d84a1daef6650` | no_hooks compile-time opt-out. Fix the non-Apple test/Clippy configuration regression above. Public start rejects sessions before claiming ownership; provider operations preserve failure/zeroing/alignment/realloc/cross-thread-free contracts. Add explicit feature CI and document dependency-graph-wide feature unification. No additional confirmed runtime defect. |
 | `13fd20fed06131c0c8f5a99a59145abead17fc61` | Formatting changes inspected with their surrounding functions. No additional behavioral finding. Final formatting is checked with cargo fmt. |
 
 The review covers changed Rust code, unsafe allocator forwarding, FFI/ABI,
@@ -123,7 +138,7 @@ a causal speedup.
 ## Validation and delivery
 
 The focused suite passes: default and secure/debug workspace tests, 77 profiler
-unit cases, 45 allocator unit cases, 15 xtask cases, no_hooks contracts (18 unit
+unit cases, 45 allocator unit cases, 15 xtask cases, no_hooks contracts (19 unit
 cases), 34 isolated native-option cases and 63 executable benchmark smoke rows.
 The layout regression has a recorded failing-before/passing-after result.
 Native debug tests pass 8/8; native secure allocation/arena/QSBR tests pass 3/3;

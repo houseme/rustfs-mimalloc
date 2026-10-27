@@ -57,6 +57,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   backtrace configuration remains opt-in.
 - Correct the 64-byte-only hot-state isolation assumption and the threaded
   benchmark's claim to exercise cross-thread free-list contention.
+- Keep the pure Mach-O symbol test enabled with no_hooks, preventing an unused
+  helper from breaking all-feature Clippy on non-Apple targets. Session tests
+  retain their hooks requirement; warning checks are not suppressed.
 
 ### Validation
 

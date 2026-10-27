@@ -3255,28 +3255,6 @@ mod tests {
     }
 
     #[test]
-    fn macho_image_headers_are_not_function_symbols() {
-        for kind in [
-            "execute", "dylib", "bundle", "object", "preload", "dylinker",
-        ] {
-            for prefix in ["_", "__"] {
-                assert!(is_macho_header_symbol(
-                    format!("{prefix}mh_{kind}_header").as_bytes()
-                ));
-            }
-        }
-        for name in [
-            "mh_execute_header",
-            "___mh_execute_header",
-            "__mh_execute_header_suffix",
-            "application::__mh_execute_header",
-            "application::allocate",
-        ] {
-            assert!(!is_macho_header_symbol(name.as_bytes()));
-        }
-    }
-
-    #[test]
     fn rust_symbol_normalization_removes_hashes_before_profiler_filtering() {
         let names: &[&[u8]] = &[
             b"_ZN25rustfs_mimalloc_profiling8profiler13record_sample17h0123456789abcdefE",
@@ -3523,6 +3501,33 @@ mod tests {
         assert!(ring.push(test_sample(stack)));
         assert_eq!(ring.drain_into(&mut Vec::new(), 0), 0);
         assert_eq!(ring.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod symbol_tests {
+    use super::*;
+
+    #[test]
+    fn macho_image_headers_are_not_function_symbols() {
+        for kind in [
+            "execute", "dylib", "bundle", "object", "preload", "dylinker",
+        ] {
+            for prefix in ["_", "__"] {
+                assert!(is_macho_header_symbol(
+                    format!("{prefix}mh_{kind}_header").as_bytes()
+                ));
+            }
+        }
+        for name in [
+            "mh_execute_header",
+            "___mh_execute_header",
+            "__mh_execute_header_suffix",
+            "application::__mh_execute_header",
+            "application::allocate",
+        ] {
+            assert!(!is_macho_header_symbol(name.as_bytes()));
+        }
     }
 }
 
