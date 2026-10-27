@@ -97,7 +97,12 @@ Only Rust allocations through `SamplingAllocator` after initialization are
 observed. Installing a bare provider alone does not enable this profiler;
 direct C allocations are outside its coverage. The Rust wrapper is independent
 of the experimental native mimalloc profiler. The allocator's `no_profile`
-feature disables native sampling, but does not disable this wrapper.
+feature disables native sampling, but does not disable this wrapper. This
+crate's own `no_hooks` feature goes further: it compiles the observation
+hooks down to plain allocator forwarding, removing every per-allocation
+atomic read and the sampler/live bookkeeping, and `Profiler::start` then
+fails with `InvalidConfig`. Enable it when depending on this crate (for
+example through `rustfs-allocator`) without ever running a session.
 
 Allocation event buffers and the live table are bounded. Registry/queue
 contention can omit new samples, counted explicitly. Accepted events are in

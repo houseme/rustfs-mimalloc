@@ -20,6 +20,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Added
 
+- `no_hooks` feature on `rustfs-mimalloc-profiling`: compiles the
+  allocation-observation hooks down to plain allocator forwarding, removing
+  the per-allocation atomic reads and sampler/live bookkeeping, and makes
+  `Profiler::start` fail with `InvalidConfig`. Default builds are unchanged.
 - Benchmark coverage in the `rustfs-mimalloc` alloc suite for `realloc`
   (same-size and growing), `alloc_zeroed`, and contended multi-threaded
   alloc/free scaling at 1/2/4/8 workers.

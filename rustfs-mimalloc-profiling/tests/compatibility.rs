@@ -1,4 +1,5 @@
-#![cfg(feature = "rustfs-allocator")]
+// Session-driven integration tests require the observation hooks.
+#![cfg(all(feature = "rustfs-allocator", not(feature = "no_hooks")))]
 
 use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingMiMalloc};
 

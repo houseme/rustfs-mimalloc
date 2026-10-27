@@ -582,7 +582,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // Remove before freeing: another thread may immediately reuse this
         // address once the provider receives it.
-        if live::enabled() {
+        if hooks_enabled() && live::enabled() {
             remove_live_allocation(ptr as usize);
         }
         // SAFETY: Deallocation is forwarded unchanged; callers must pass a
@@ -594,7 +594,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
         mark_allocator_seen();
         // Keep the metadata slot reserved before the provider can recycle the old
         // address. Lifecycle maintenance must also run while sampling is suppressed.
-        let pending = if live::enabled() {
+        let pending = if hooks_enabled() && live::enabled() {
             with_profiler_suppressed(|| live::begin_reallocation(ptr as usize))
         } else {
             None
@@ -606,7 +606,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
             with_profiler_suppressed(|| pending.finish(new_ptr as usize, new_size as u64))
         });
         if !new_ptr.is_null() {
-            if new_ptr != ptr && live::enabled() {
+            if new_ptr != ptr && hooks_enabled() && live::enabled() {
                 record_live_reallocation(new_ptr as usize, new_size as u64, previous);
             }
             let recorded_size = realloc_recorded_size(ptr, new_ptr, layout.size(), new_size);
@@ -634,8 +634,16 @@ impl Profiler {
     /// Start a session after installing [`SamplingAllocator`] as global allocator.
     ///
     /// Fails if the configuration is invalid, the sampling allocator has not
-    /// observed allocations, or another session is active.
+    /// observed allocations, or another session is active. With the `no_hooks`
+    /// feature it fails with [`Error::InvalidConfig`] because no observation
+    /// machinery is compiled in.
     pub fn start(config: MimallocConfig) -> Result<Self> {
+        if !hooks_enabled() {
+            // Sessions have nothing to observe when hooks are compiled out.
+            return Err(Error::InvalidConfig(
+                "allocation hooks are compiled out by the no_hooks feature",
+            ));
+        }
         let mut profiler = Self::new(config);
         profiler.initialize()?;
         Ok(profiler)
@@ -780,7 +788,17 @@ impl Profiler {
     }
 }
 
+/// Compile-time hook switch. With `no_hooks`, observation paths fold away and
+/// every allocation forwards straight to the wrapped allocator.
+#[inline(always)]
+const fn hooks_enabled() -> bool {
+    cfg!(not(feature = "no_hooks"))
+}
+
 fn mark_allocator_seen() {
+    if !hooks_enabled() {
+        return;
+    }
     if !HOT_ALLOCATION_STATE.allocator_seen.load(Ordering::Relaxed) {
         HOT_ALLOCATION_STATE.allocator_seen.store(true, Ordering::Relaxed);
     }
@@ -790,6 +808,9 @@ fn mark_allocator_seen() {
 // deallocation body, including their stack/register requirements.
 #[inline(never)]
 fn remove_live_allocation(pointer: usize) {
+    if !hooks_enabled() {
+        return;
+    }
     with_profiler_suppressed(|| live::remove(pointer));
 }
 
@@ -866,7 +887,8 @@ fn with_recording_guard<R>(f: impl FnOnce(&Cell<SamplerState>) -> R) -> Option<R
 }
 
 fn record_allocation(ptr: *mut u8, size: u64) {
-    if size == 0 || !HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire) {
+    if size == 0 || !hooks_enabled() || !HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire)
+    {
         return;
     }
     let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
@@ -1371,7 +1393,7 @@ fn drain_recorded_samples_into(out: &mut Vec<RecordedAllocationSample>, limit: u
     drained
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "no_hooks")))]
 fn drain_recorded_samples(limit: usize) -> Vec<RecordedAllocationSample> {
     let mut out = Vec::new();
     drain_recorded_samples_into(&mut out, limit);
@@ -1402,7 +1424,7 @@ fn recorded_sample_shard_capacity(total_capacity: usize) -> usize {
     total_capacity.saturating_add(RECORDED_SAMPLE_SHARD_COUNT - 1) / RECORDED_SAMPLE_SHARD_COUNT
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "no_hooks")))]
 fn build_allocation_samples(
     recorded: Vec<RecordedAllocationSample>,
     max_depth: usize,
@@ -1596,7 +1618,7 @@ fn duration_to_u64_micros(duration: std::time::Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "no_hooks")))]
 mod tests {
     use super::*;
     use std::sync::Mutex as TestMutex;
@@ -3391,5 +3413,30 @@ mod tests {
         assert!(ring.push(test_sample(stack)));
         assert_eq!(ring.drain_into(&mut Vec::new(), 0), 0);
         assert_eq!(ring.len(), 1);
+    }
+}
+
+#[cfg(all(test, feature = "no_hooks"))]
+mod no_hooks_tests {
+    use super::*;
+
+    #[test]
+    fn hooks_fold_to_plain_forwarding_and_sessions_are_rejected() {
+        let allocator = SamplingAllocator::with_allocator(std::alloc::System);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        unsafe {
+            let ptr = allocator.alloc(layout);
+            assert!(!ptr.is_null());
+            let grown = allocator.realloc(ptr, layout, 128);
+            assert!(!grown.is_null());
+            allocator.dealloc(grown, Layout::from_size_align(128, 8).unwrap());
+        }
+        assert!(!HOT_ALLOCATION_STATE.allocator_seen.load(Ordering::Relaxed));
+        assert!(!HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire));
+        assert!(!live::enabled());
+        assert!(matches!(
+            Profiler::start(MimallocConfig::default()),
+            Err(Error::InvalidConfig(_))
+        ));
     }
 }

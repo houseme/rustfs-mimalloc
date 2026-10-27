@@ -1,3 +1,6 @@
+// Session-driven integration tests require the observation hooks.
+#![cfg(not(feature = "no_hooks"))]
+
 use rustfs_mimalloc_profiling::SamplingAllocator;
 
 #[global_allocator]
