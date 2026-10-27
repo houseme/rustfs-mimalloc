@@ -214,7 +214,9 @@ pub(super) fn begin_reallocation(pointer: usize) -> Option<PendingReallocation> 
     entry.reallocating = true;
     Some(PendingReallocation {
         pointer,
-        generation: HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire),
+        generation: HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire),
         finished: false,
     })
 }

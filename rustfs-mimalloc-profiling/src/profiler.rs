@@ -213,7 +213,9 @@ impl TlsSampleBuffer {
             samples: [None; TLS_SAMPLE_RING_CAPACITY],
             head: 0,
             len: 0,
-            generation: HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire),
+            generation: HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire),
         }
     }
 
@@ -665,7 +667,9 @@ impl Profiler {
         if !self.initialized {
             return;
         }
-        HOT_ALLOCATION_STATE.recorder_active.store(false, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(false, Ordering::Release);
         with_profiler_suppressed(|| {
             clear_registered_tls_samples();
             live::clear();
@@ -693,7 +697,9 @@ impl Profiler {
         self.initialized = true;
         with_profiler_suppressed(|| {
             SAMPLE_INTERVAL_BYTES.store(self.config.sample_interval_bytes, Ordering::Relaxed);
-            HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel);
+            HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .fetch_add(1, Ordering::AcqRel);
             CAPTURE_DEPTH.store(
                 self.config
                     .max_depth
@@ -724,7 +730,9 @@ impl Profiler {
             clear_registered_tls_samples();
             warm_backtrace();
             live::prepare(self.config.live_heap_tracking, self.config.max_live_samples);
-            HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+            HOT_ALLOCATION_STATE
+                .recorder_active
+                .store(true, Ordering::Release);
             self.last_report = Some(Instant::now());
         });
 
@@ -800,7 +808,9 @@ fn mark_allocator_seen() {
         return;
     }
     if !HOT_ALLOCATION_STATE.allocator_seen.load(Ordering::Relaxed) {
-        HOT_ALLOCATION_STATE.allocator_seen.store(true, Ordering::Relaxed);
+        HOT_ALLOCATION_STATE
+            .allocator_seen
+            .store(true, Ordering::Relaxed);
     }
 }
 
@@ -887,11 +897,15 @@ fn with_recording_guard<R>(f: impl FnOnce(&Cell<SamplerState>) -> R) -> Option<R
 }
 
 fn record_allocation(ptr: *mut u8, size: u64) {
-    if size == 0 || !hooks_enabled() || !HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire)
+    if size == 0
+        || !hooks_enabled()
+        || !HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire)
     {
         return;
     }
-    let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+    let generation = HOT_ALLOCATION_STATE
+        .sampling_config_generation
+        .load(Ordering::Acquire);
     let _ = SAMPLER_STATE.try_with(|sampler| {
         let mut state = sampler.get();
         if state.profiler_suppressed || state.in_profiler {
@@ -948,7 +962,10 @@ fn splitmix64(mut value: u64) -> u64 {
 
 fn session_is_current(generation: u64) -> bool {
     HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire)
-        && HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire) == generation
+        && HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire)
+            == generation
 }
 
 fn record_live_reallocation(
@@ -959,7 +976,9 @@ fn record_live_reallocation(
     if !HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire) {
         return;
     }
-    let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+    let generation = HOT_ALLOCATION_STATE
+        .sampling_config_generation
+        .load(Ordering::Acquire);
     let sampled = with_recording_guard(|sampler| {
         let mut state = sampler.get();
         if state.rng_state == 0 {
@@ -1174,7 +1193,9 @@ fn clear_registered_tls_samples() {
     for buffer in registered_tls_sample_buffers() {
         if let Ok(mut buffer) = buffer.lock() {
             buffer.clear();
-            buffer.generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+            buffer.generation = HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire);
         }
     }
 }
@@ -1229,7 +1250,11 @@ fn flush_tls_samples_to_global(
     // Generation validation and reservations belong inside the shard lock.
     // Initialization clears each shard under the same lock before resetting
     // the global count, so an old flush cannot reserve slots in a new session.
-    if buffer.generation != HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire) {
+    if buffer.generation
+        != HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire)
+    {
         buffer.clear();
         return true;
     }
@@ -1678,7 +1703,9 @@ mod tests {
 
     impl Drop for RecorderActiveGuard {
         fn drop(&mut self) {
-            HOT_ALLOCATION_STATE.recorder_active.store(false, Ordering::Release);
+            HOT_ALLOCATION_STATE
+                .recorder_active
+                .store(false, Ordering::Release);
             live::prepare(false, 0);
         }
     }
@@ -1715,7 +1742,9 @@ mod tests {
         for buffer in registered_tls_sample_buffers() {
             let mut buffer = buffer.lock().expect("lock tls samples");
             buffer.clear();
-            buffer.generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+            buffer.generation = HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire);
         }
     }
 
@@ -1822,8 +1851,12 @@ mod tests {
     fn unsampled_thread_does_not_allocate_or_register_a_tls_ring() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         let previous_interval = SAMPLE_INTERVAL_BYTES.swap(u64::MAX, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .fetch_add(1, Ordering::AcqRel);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let before = registered_tls_sample_buffers().len();
         std::thread::spawn(|| {
@@ -1838,7 +1871,9 @@ mod tests {
     #[test]
     fn backend_rejects_concurrent_owners_and_drop_releases_recorder() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let previous_seen = HOT_ALLOCATION_STATE.allocator_seen.swap(true, Ordering::Relaxed);
+        let previous_seen = HOT_ALLOCATION_STATE
+            .allocator_seen
+            .swap(true, Ordering::Relaxed);
         let mut first = Profiler::new(MimallocConfig::default());
         first.initialize().expect("initialize first backend");
         let mut second = Profiler::new(MimallocConfig::default());
@@ -1850,14 +1885,18 @@ mod tests {
         let mut third = Profiler::new(MimallocConfig::default());
         third.initialize().expect("initialize after owner drop");
         drop(third);
-        HOT_ALLOCATION_STATE.allocator_seen.store(previous_seen, Ordering::Relaxed);
+        HOT_ALLOCATION_STATE
+            .allocator_seen
+            .store(previous_seen, Ordering::Relaxed);
         clear_test_buffers();
     }
 
     #[test]
     fn report_counters_count_raw_drains_not_repeated_live_snapshots_and_reset() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let previous_seen = HOT_ALLOCATION_STATE.allocator_seen.swap(true, Ordering::Relaxed);
+        let previous_seen = HOT_ALLOCATION_STATE
+            .allocator_seen
+            .swap(true, Ordering::Relaxed);
         let mut backend = Profiler::new(MimallocConfig {
             ring_capacity: 16,
             report_drain_limit: 1,
@@ -1875,7 +1914,9 @@ mod tests {
             100,
             stack,
             SampleWeight::for_allocation(1024, 1),
-            HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire),
+            HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire),
         );
         backend.report().unwrap();
         assert_eq!(
@@ -1900,7 +1941,9 @@ mod tests {
             (0, 0)
         );
         drop(restarted);
-        HOT_ALLOCATION_STATE.allocator_seen.store(previous_seen, Ordering::Relaxed);
+        HOT_ALLOCATION_STATE
+            .allocator_seen
+            .store(previous_seen, Ordering::Relaxed);
         clear_test_buffers();
     }
 
@@ -1908,7 +1951,9 @@ mod tests {
     fn live_snapshot_storage_tracks_empty_and_sparse_occupancy() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, DEFAULT_MAX_LIVE_SAMPLES);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let empty = live::snapshot();
         let stack = StackKey {
@@ -1919,7 +1964,9 @@ mod tests {
             100,
             stack,
             SampleWeight::for_allocation(1024, 1),
-            HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire),
+            HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire),
         );
         let sparse = live::snapshot();
         println!(
@@ -1943,9 +1990,13 @@ mod tests {
     fn live_snapshot_survives_reports_and_cross_thread_free() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+        let generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         let stack = StackKey {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
@@ -1969,9 +2020,13 @@ mod tests {
     fn live_membership_filter_keeps_colliding_pointers_until_both_are_freed() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+        let generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         let stack = StackKey {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
@@ -2007,9 +2062,13 @@ mod tests {
     fn failed_reallocation_preserves_metadata_under_capacity_pressure() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 64);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+        let generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         let stack = StackKey {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
@@ -2047,9 +2106,13 @@ mod tests {
     fn old_live_samples_and_reallocation_tokens_cannot_enter_restarted_session() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let old_generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+        let old_generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         let stack = StackKey {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
@@ -2061,11 +2124,18 @@ mod tests {
             old_generation,
         );
         let pending = live::begin_reallocation(100).expect("reserve old-session pointer");
-        HOT_ALLOCATION_STATE.recorder_active.store(false, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(false, Ordering::Release);
         live::clear();
-        let generation = HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .fetch_add(1, Ordering::AcqRel)
+            + 1;
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         pending.finish(0, 0);
         live::record(
             100,
@@ -2214,7 +2284,9 @@ mod tests {
         };
         let mut buffer = TlsSampleBuffer::new();
         buffer.push(test_sample(stack));
-        HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel);
+        HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .fetch_add(1, Ordering::AcqRel);
         assert!(flush_tls_samples_on_exit(&mut buffer));
         assert!(buffer.is_empty());
         assert_eq!(count_recorded_samples(), 0);
@@ -2227,9 +2299,13 @@ mod tests {
     fn abandoned_reallocation_token_restores_its_live_slot() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 64);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
-        let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+        let generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         let stack = StackKey {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
@@ -2250,11 +2326,15 @@ mod tests {
     fn suppressed_and_reentrant_frees_still_remove_live_metadata() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let allocator = SamplingAllocator::with_allocator(std::alloc::System);
         let layout = Layout::from_size_align(1024, 8).expect("layout");
-        let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+        let generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         let stack = StackKey {
             frames: [42; MAX_CAPTURE_DEPTH],
             depth: 1,
@@ -2292,7 +2372,9 @@ mod tests {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let allocator = SamplingAllocator::with_allocator(ReallocProvider { always_move: false });
         let layout = Layout::from_size_align(1024, 8).expect("layout");
@@ -2301,7 +2383,9 @@ mod tests {
             // SAFETY: Allocate valid storage directly through mimalloc.
             let pointer = unsafe { allocator.inner.alloc(layout) };
             assert!(!pointer.is_null());
-            let generation = HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire);
+            let generation = HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire);
             let stack = StackKey {
                 frames: [42; MAX_CAPTURE_DEPTH],
                 depth: 1,
@@ -2348,7 +2432,9 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         clear_test_buffers();
         live::prepare(true, 64);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let allocator = SamplingAllocator::with_allocator(ReallocProvider { always_move: false });
         let layout = Layout::from_size_align(1024, 64).unwrap();
@@ -2363,7 +2449,9 @@ mod tests {
             pointer as usize,
             stack,
             SampleWeight::for_allocation(1024, 1),
-            HOT_ALLOCATION_STATE.sampling_config_generation.load(Ordering::Acquire),
+            HOT_ALLOCATION_STATE
+                .sampling_config_generation
+                .load(Ordering::Acquire),
         );
         // SAFETY: The provider deterministically rejects this valid request.
         let failed = unsafe { allocator.realloc(pointer, layout, TEST_ALLOCATION_CAPACITY + 1) };
@@ -2384,7 +2472,9 @@ mod tests {
         clear_test_buffers();
         let previous_interval = SAMPLE_INTERVAL_BYTES.swap(4096, Ordering::Relaxed);
         live::prepare(true, 4096);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let allocator = SamplingAllocator::with_allocator(ReallocProvider { always_move: true });
         let layout = Layout::from_size_align(128, 8).unwrap();
@@ -2413,7 +2503,9 @@ mod tests {
     fn unregistered_thread_exit_discards_its_previous_session_ring() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -2435,7 +2527,9 @@ mod tests {
             release_rx.recv().expect("wait for new session");
         });
         ready_rx.recv().expect("wait for old ring");
-        HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel);
+        HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .fetch_add(1, Ordering::AcqRel);
         release_tx.send(()).expect("exit worker in new session");
         worker.join().expect("join old-session worker");
         assert_eq!(count_recorded_samples(), 0);
@@ -2466,7 +2560,9 @@ mod tests {
     fn profiler_suppression_skips_internal_allocations_without_drop_count() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active_guard = RecorderActiveGuard;
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
         RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
@@ -2481,7 +2577,9 @@ mod tests {
     fn reentrant_allocation_is_ignored_without_drop_count() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active_guard = RecorderActiveGuard;
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
         RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
@@ -2797,10 +2895,14 @@ mod tests {
         let _guard = TEST_LOCK.lock().unwrap();
         clear_test_buffers();
         let previous_interval = SAMPLE_INTERVAL_BYTES.swap(1, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel);
+        HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .fetch_add(1, Ordering::AcqRel);
         RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         std::thread::spawn(|| {
             // Reverse destruction order closes the recorder before this last
@@ -2822,10 +2924,14 @@ mod tests {
         clear_test_buffers();
         live::prepare(false, 0);
         let previous_interval = SAMPLE_INTERVAL_BYTES.swap(1, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.sampling_config_generation.fetch_add(1, Ordering::AcqRel);
+        HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .fetch_add(1, Ordering::AcqRel);
         RECORDED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (continue_tx, continue_rx) = std::sync::mpsc::channel();
@@ -3012,7 +3118,9 @@ mod tests {
         FLUSH_COUNT.store(0, Ordering::Relaxed);
         FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active_guard = RecorderActiveGuard;
 
         std::thread::spawn(move || {
@@ -3051,7 +3159,9 @@ mod tests {
         FLUSH_COUNT.store(0, Ordering::Relaxed);
         FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
-        HOT_ALLOCATION_STATE.recorder_active.store(true, Ordering::Release);
+        HOT_ALLOCATION_STATE
+            .recorder_active
+            .store(true, Ordering::Release);
         let _active_guard = RecorderActiveGuard;
 
         std::thread::spawn(move || {

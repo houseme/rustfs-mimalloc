@@ -241,11 +241,7 @@ fn bench_realloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("realloc");
     for size in [64, 1024, 65536] {
         for new_size in [size, size * 2] {
-            let variant = if new_size == size {
-                "same"
-            } else {
-                "grow"
-            };
+            let variant = if new_size == size { "same" } else { "grow" };
             if !cfg!(feature = "override") {
                 group.bench_function(BenchmarkId::new(format!("system_{variant}"), size), |b| {
                     let layout = Layout::from_size_align(size, 8).unwrap();
@@ -296,21 +292,23 @@ fn bench_threaded_alloc_free(c: &mut Criterion) {
                 .map(|_| {
                     let start = Arc::clone(&start);
                     let stop = Arc::clone(&stop);
-                    std::thread::spawn(move || loop {
-                        start.wait();
-                        if DONE.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        for _ in 0..OPS_PER_WORKER {
-                            unsafe {
-                                let ptr = std::alloc::alloc(layout);
-                                assert!(!ptr.is_null());
-                                ptr.write(0x5A);
-                                std::hint::black_box(ptr);
-                                std::alloc::dealloc(ptr, layout);
+                    std::thread::spawn(move || {
+                        loop {
+                            start.wait();
+                            if DONE.load(Ordering::Relaxed) {
+                                break;
                             }
+                            for _ in 0..OPS_PER_WORKER {
+                                unsafe {
+                                    let ptr = std::alloc::alloc(layout);
+                                    assert!(!ptr.is_null());
+                                    ptr.write(0x5A);
+                                    std::hint::black_box(ptr);
+                                    std::alloc::dealloc(ptr, layout);
+                                }
+                            }
+                            stop.wait();
                         }
-                        stop.wait();
                     })
                 })
                 .collect();
