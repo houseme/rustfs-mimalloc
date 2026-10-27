@@ -29,7 +29,7 @@ fn main() {
 
 | Feature | Description |
 |---------|-------------|
-| `secure` | Guard pages and encoded/randomized free lists (MI_SECURE=4) |
+| `secure` | Metadata guard pages, checked frees and encoded/randomized free lists (MI_SECURE=4) |
 | `debug` | mimalloc debug checks |
 | `debug_in_debug` | Auto-enable `debug` in Cargo debug builds |
 | `override` | Override system `malloc`/`free` on non-Windows targets |
@@ -72,7 +72,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.1 development snapshot (`3828cfee`)**.
+The submodule is pinned to upstream **V3.6.1 development snapshot (`810774fb`)**.
 The numeric C version is 30601. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has

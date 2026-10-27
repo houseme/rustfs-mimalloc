@@ -3,7 +3,7 @@
 ## Project
 
 rustfs-mimalloc: high-performance mimalloc V3 bindings for Rust, pinned to
-V3.6.1 development snapshot commit `3828cfee`.
+V3.6.1 development snapshot commit `810774fb`.
 Cargo manifests intentionally omit `rust-version`. CI checks stable and Rust
 1.95.0 compatibility; this is not a declared minimum supported Rust version.
 Edition 2024 alone does not prove compiler or dependency compatibility. Lint
@@ -37,6 +37,10 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 ## Features
 
 `secure` / `debug` / `debug_in_debug` / `override` / `local_dynamic_tls` / `no_thp` / `no_profile`
+
+The profiling crate separately offers `rustfs-allocator` and application-level
+`no_hooks`. The latter disables observation for the unified dependency graph
+and makes Profiler::start return InvalidConfig; it differs from native no_profile.
 
 ## Dependency and changelog policy
 

@@ -3,6 +3,8 @@
 //! Install [`SamplingAllocator`] as the global allocator, then own a [`Profiler`]
 //! for each recording session. Reports are uncompressed pprof protobuf bytes.
 //! There is no uploader, background thread, or dependency on a profiling service.
+//! The application-level `no_hooks` feature disables observation for the entire
+//! feature-unified dependency graph; [`Profiler::start`] then rejects sessions.
 //!
 //! ```no_run
 //! use rustfs_mimalloc_profiling::{MimallocConfig, Profiler, SamplingAllocator};

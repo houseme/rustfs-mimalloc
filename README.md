@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.1 development snapshot, commit `3828cfee`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.1 development snapshot, commit `810774fb`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -58,7 +58,7 @@ the profiling crate. See the companion README for usage and migration.
 
 | Feature | Default | Description |
 |---------|:-------:|-------------|
-| `secure` | | Guard pages and encoded/randomized free lists (MI_SECURE=4) |
+| `secure` | | Metadata guard pages, checked frees and encoded/randomized free lists (MI_SECURE=4) |
 | `debug` | | mimalloc debug checks |
 | `debug_in_debug` | | Auto-enable `debug` in Cargo debug builds |
 | `override` | | Override system `malloc`/`free` on non-Windows targets |
@@ -154,8 +154,8 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 3828cfee](https://github.com/microsoft/mimalloc/commit/3828cfeefbdab6d276fafa35b945e314742b5302),
-41 commits after the official v3.6.0 tag. This is a **v3.6.1 development
+The submodule pins [upstream commit 810774fb](https://github.com/microsoft/mimalloc/commit/810774fbc87ef545ccee2995552f47371b7e7b78),
+70 commits after the official v3.6.0 tag. This is a **v3.6.1 development
 snapshot**, with numeric C version **30601**, not a published upstream release.
 
 The update defers fork-child cleanup until normal allocation, so an uncoordinated
@@ -200,7 +200,9 @@ while preserving `mi_option_guarded_precise`, including existing glob imports.
 Do not enable precise guarded placement for Rust allocations requiring alignment.
 `mi_option_page_reclaim_on_free` now initializes each heap's policy; configure it
 before creating a heap. Use the environment before process startup to affect the
-main heap, which can exist before Rust `main` runs.
+main heap, which can exist before Rust `main` runs. The default is `0`, meaning
+reclaim into the originating thread context only; `1` enables reclaim across
+contexts and `-1` disables reclaim on free.
 
 Raw `mi_heap_new_qsbr` is declared in `mimalloc/qsbr.h`. It returns null/ENOSYS in
 ordinary builds. Enabled single-source builds require custom host C metadata and
@@ -267,6 +269,8 @@ Default builds leave it disabled. A multithreaded fork child that only calls
 `exec` or `_exit` does not run allocator cleanup. Continued allocation in the
 child still requires other threads to have been quiescent outside mimalloc at
 the fork; this does not make unrestricted Rust code safe in that child.
+On macOS, upstream's early child repair requires malloc-zone override (the
+`override` feature); Objective-C runtime fork restrictions still apply.
 
 - `MiMalloc::free_small_local{,_nonnull}` exposes the new thread-local free fast
   path. These unsafe functions require a small allocation whose page is **still
@@ -360,7 +364,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.1 development snapshot, commit `3828cfee`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.1 development snapshot, commit `810774fb`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

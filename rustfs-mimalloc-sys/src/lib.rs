@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream dev3 v3.6.1 development snapshot, commit 3828cfee.
+//! Pinned to upstream dev3 v3.6.1 development snapshot, commit 810774fb.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -90,6 +90,8 @@ pub enum mi_option_t {
     mi_option_guarded_sample_rate = 32,
     mi_option_guarded_sample_seed = 33,
     mi_option_generic_collect = 34,
+    /// Heap-creation reclaim-on-free policy: -1 disables, 0 restricts reclaim to
+    /// the originating context (default), and 1 allows other contexts.
     mi_option_page_reclaim_on_free = 35,
     mi_option_page_full_retain = 36,
     mi_option_page_max_candidates = 37,

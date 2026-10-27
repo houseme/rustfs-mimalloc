@@ -15,7 +15,7 @@ categories = ["memory-management", "development-tools::profiling"]
 [features]
 default = []
 rustfs-allocator = ["dep:rustfs-mimalloc"]
-# Compile the allocation-observation hooks down to plain allocator forwarding.
+# Optimized builds reduce observation hooks to plain allocator forwarding.
 # Sessions cannot start; per-allocation atomic reads and sampler/live
 # bookkeeping fold away entirely. Default builds keep hooks enabled.
 no_hooks = []

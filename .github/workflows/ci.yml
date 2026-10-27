@@ -132,6 +132,8 @@ jobs:
         run: cargo xtask test-providers --local-dependencies
       - name: Validate optional RustFS convenience API
         run: cargo test --locked -p rustfs-mimalloc-profiling --features rustfs-allocator --test compatibility
+      - name: Validate compiled-out observation hooks
+        run: cargo test --locked -p rustfs-mimalloc-profiling --features no_hooks,rustfs-allocator
 
   profiling-benchmark:
     name: Profiling quality diagnostics
@@ -201,6 +203,20 @@ jobs:
         run: |
           cmake --build target/upstream-purge-on-free --target mimalloc-test-api mimalloc-test-arena --parallel 2
           ctest --test-dir target/upstream-purge-on-free --output-on-failure --timeout 120 -R '^(test-api|test-arena)$'
+      - name: Configure secure native metadata
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-secure -DCMAKE_BUILD_TYPE=Debug -DMI_SECURE=ON -DMI_OVERRIDE=OFF -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON
+      - name: Check secure allocation, arenas and QSBR
+        run: |
+          cmake --build target/upstream-secure --target mimalloc-test-api mimalloc-test-arena mimalloc-test-qsbr --parallel 2
+          ctest --test-dir target/upstream-secure --output-on-failure --timeout 120 -R '^(test-api|test-arena|test-qsbr)$'
+      - name: Configure macOS malloc-zone override
+        if: runner.os == 'macOS'
+        run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-zone-override -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=ON -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON
+      - name: Check macOS fork-zone repair and profiling
+        if: runner.os == 'macOS'
+        run: |
+          cmake --build target/upstream-zone-override --target mimalloc-test-fork mimalloc-test-pprof --parallel 2
+          ctest --test-dir target/upstream-zone-override --output-on-failure --timeout 120 -R '^(test-fork|test-pprof)$'
       - name: Configure compiler-unwinder fallback without execinfo
         if: runner.os == 'Linux'
         run: cmake -S rustfs-mimalloc-sys/c_src/mimalloc -B target/upstream-unwind -DCMAKE_BUILD_TYPE=Debug -DMI_OVERRIDE=OFF -DMI_PROFILE=ON -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_OPT_ARCH=OFF -DMI_NO_USE_CXX=ON -DMI_HAS_EXECINFOH=OFF

@@ -8,6 +8,10 @@ fn main() {
         // The environment is cleared by the parent before native startup.
         unsafe {
             assert_eq!(
+                mi_option_get(mi_option_t::mi_option_page_reclaim_on_free),
+                0
+            );
+            assert_eq!(
                 mi_option_get(mi_option_t::mi_option_stats_merge_threshold),
                 4 * 1024 * 1024
             );
@@ -41,6 +45,7 @@ fn main() {
                 "integer" => mi_option_get(mi_option_t::mi_option_max_warnings) as i64,
                 "bytes" => mi_option_get_size(mi_option_t::mi_option_stats_merge_threshold) as i64,
                 "kib" => mi_option_get_size(mi_option_t::mi_option_arena_purge_min_size) as i64,
+                "reclaim" => mi_option_get(mi_option_t::mi_option_page_reclaim_on_free) as i64,
                 _ => panic!("unknown option case"),
             }
         };
@@ -92,6 +97,9 @@ fn main() {
         ("kib", "32KiB".to_owned(), 32 * 1024),
         ("kib", "2kb".to_owned(), 2 * 1024),
         ("kib", "0x20KiB".to_owned(), 32 * 1024),
+        ("reclaim", "-1".to_owned(), -1),
+        ("reclaim", "0".to_owned(), 0),
+        ("reclaim", "1".to_owned(), 1),
     ];
     let executable = std::env::current_exe().unwrap();
     for (kind, value, expected) in &cases {
@@ -99,6 +107,7 @@ fn main() {
             "integer" => "MIMALLOC_MAX_WARNINGS",
             "bytes" => "MIMALLOC_STATS_MERGE_THRESHOLD",
             "kib" => "MIMALLOC_ARENA_PURGE_MIN_SIZE",
+            "reclaim" => "MIMALLOC_PAGE_RECLAIM_ON_FREE",
             _ => unreachable!(),
         };
         let mut command = std::process::Command::new(&executable);
@@ -127,7 +136,9 @@ fn main() {
     for (name, _) in std::env::vars_os() {
         if name.to_str().is_some_and(|name| {
             let name = name.to_ascii_uppercase();
-            name.starts_with("MIMALLOC_PROFILE") || name == "MIMALLOC_STATS_MERGE_THRESHOLD"
+            name.starts_with("MIMALLOC_PROFILE")
+                || name == "MIMALLOC_STATS_MERGE_THRESHOLD"
+                || name == "MIMALLOC_PAGE_RECLAIM_ON_FREE"
         }) {
             defaults.env_remove(name);
         }

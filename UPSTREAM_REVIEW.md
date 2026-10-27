@@ -1,3 +1,86 @@
+# 0.7.3 follow-up upstream/API audit — 2026-10-28
+
+## Selected and rejected revisions
+
+Project base: `13fd20fed06131c0c8f5a99a59145abead17fc61`, current after
+`git pull --ff-only`. The official upstream release is still
+[v3.6.0](https://github.com/microsoft/mimalloc/releases/tag/v3.6.0).
+The selected dev3 revision is
+[`810774fbc87ef545ccee2995552f47371b7e7b78`](https://github.com/microsoft/mimalloc/commit/810774fbc87ef545ccee2995552f47371b7e7b78),
+**29 commits** after our previous `3828cfee` pin and **70 commits** after v3.6.0.
+The C version remains **30601**, a v3.6.1 development snapshot.
+
+The refreshed dev3 head was
+[`c9c93615f626f546ff6d2756685fa5dd926aefef`](https://github.com/microsoft/mimalloc/commit/c9c93615f626f546ff6d2756685fa5dd926aefef).
+It was tried and rejected by `cargo xtask check-abi`: preceding commit
+`8374d1b2` adds `mi_decl_externc` to `mimalloc/qsbr.h` without defining it in
+that public header's include chain. A standalone C include fails with
+`unknown type name 'mi_decl_externc'`, before ABI compatibility can be tested.
+The final child commit only suppresses an MSVC padding warning. Both are
+excluded; we do not mask the failure by injecting private macros into the ABI
+probe or modifying vendored sources. The selected parent passes the existing
+header and ABI controls. C++ QSBR linkage is therefore not claimed as fixed.
+
+## Newly merged PRs and direct changes
+
+GitHub merged_at/base data was read independently of commit subjects:
+
+| Item | Verified status and relevance |
+| --- | --- |
+| [#1460](https://github.com/microsoft/mimalloc/pull/1460) | Merged into dev3 on 2026-10-27 (`a28c653a`). Adds the strdup-family MSVC static override entries. Our Rust `override` feature remains non-Windows; this does not add Rust exports. |
+| [#1461](https://github.com/microsoft/mimalloc/pull/1461) | Merged into dev3 on 2026-10-26 (`ec622b00`). Upstream Rust build-script fallback for debug-assertion detection. Our cc build already uses its own PROFILE/feature policy and does not execute upstream's Cargo script. |
+| [#1465](https://github.com/microsoft/mimalloc/pull/1465) | Closed without a GitHub merge; `eb7c852e` incorporates the page-map comment correction directly. |
+| [#1463](https://github.com/microsoft/mimalloc/pull/1463) | Closed without a GitHub merge, targeting dev (v2). Direct dev3 commit `333d6850` addresses shadowing/uninitialized-variable warnings separately. |
+| [#1453](https://github.com/microsoft/mimalloc/pull/1453), [#1452](https://github.com/microsoft/mimalloc/pull/1452) | Closed without a GitHub merge. They are not counted as newly merged APIs. |
+
+Other selected changes include:
+
+- `a29c64cf`: macOS early fork-zone repair, before allocating libSystem child
+  handlers; drops potentially torn thread free lists and suspends abandoned-page
+  reclaim. This path requires malloc-zone override. General Rust/Objective-C
+  fork restrictions and the quiescent-state requirement for continued child
+  allocation remain.
+- `5cae4734`: restore page_reclaim_on_free to `0` by default, matching the public
+  comment. The policy is still captured at heap creation. Raw ID 35 and the
+  existing Rust option API remain unchanged.
+- `9173f0a0` through `80d2df6f`: protect arena/page/heap/process metadata, revise
+  secure levels, require checked frees at MI_SECURE>=2, and consolidate process
+  state/options. `810774fb` handles guard protection on Windows image memory
+  where MEM_RESET fails. The Cargo secure feature still selects MI_SECURE=4.
+- `cbd6dcec`: simplify the internal page map to two levels, including 32-bit.
+  The heap/init.c → heap/process.c move and metadata helpers are internal.
+
+## API, build and performance decisions
+
+Read the diff of all four public headers. The selected range only changes the
+page-reclaim default comment in mimalloc.h. There are **no new public C names,
+option IDs, callbacks, signatures or exposed layouts**. Before/after JSON API
+inventories are byte-identical: **133 functions, 45 option IDs, 96 intentionally
+unbound exports**, C version 30601. The host C projection and all seven controls
+still check **124 extern signatures, 9 callbacks and 3 layouts**.
+
+The page-reclaim default and -1/0/1 startup settings are checked in independent
+processes. Windows static-CRT compatibility remains guarded by source anchors
+and target CI. New native CI coverage explicitly runs secure metadata tests and
+macOS fork/pprof with zone override; existing Linux unwinder, parser/no-THP,
+provider and archive checks remain in force. The source tree stays pristine.
+
+No additional native API wrapper or Cargo secure level is introduced. The
+existing option API already controls the changed policy. Reclaim, metadata
+protection and process-state changes can affect latency/RSS; they are not
+represented as measured throughput gains. Native musl unwinding and untested
+Rust CHERI/WebAssembly targets retain their prior validation boundaries.
+
+See [the latest-five-commit audit](REVIEW_0.7.3_2026-10-28.md) for Rust findings,
+no_hooks code-generation evidence, benchmark corrections and validation scope.
+All package versions remain 0.7.3. Changelog changes are consolidated; this
+update authorizes source commit/push only, without tagging or publication.
+
+---
+
+The 2026-10-26 and older reports below are historical evidence for their own
+pins and must not override the current revision/validation decisions above.
+
 # 0.7.3 upstream and API review — 2026-10-26
 
 ## Source selection

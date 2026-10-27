@@ -8,61 +8,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [Unreleased]
+## [0.7.3] - 2026-10-28
 
 ### Changed
 
-- Group the profiler's per-allocation hot-path reads (`recorder_active`,
-  `allocator_seen` and the sampling config generation) in one 64-byte-aligned
-  cache-line struct, so sample-hit counter writes can no longer bounce the
-  line those reads share. This mirrors the existing live-shard alignment;
-  behavior and public APIs are unchanged.
+- Pin mimalloc to `810774fb`, a v3.6.1 development snapshot (numeric version
+  30601), 70 commits after the v3.6.0 release used by 0.7.2. Keep the source
+  pristine. Exclude the latest two dev3 commits because `8374d1b2` breaks
+  standalone QSBR header compilation; the existing ABI gate detects the failure.
+- Inherit guarded arena/page/heap/process metadata, revised native secure
+  levels and checked frees at MI_SECURE>=2. The Rust `secure` feature continues
+  to select MI_SECURE=4. Inherit Windows image-memory guard handling, static
+  override strdup fixes, and atomic native error-handler storage.
+- Retain the upstream 4 MiB stats merge threshold, replacing 512 KiB to reduce
+  merge frequency at the cost of parent-heap statistics freshness. Existing
+  public options and startup environment controls remain available.
+- Restore the upstream page-reclaim-on-free default to originating context only
+  (`0`); configure before heap creation to allow all contexts (`1`) or disable
+  reclaim on free (`-1`). The numeric option ID is unchanged.
+- Group profiler hot reads in a 128-byte-aligned region, isolating them from
+  sample-hit writes on both 64-byte and Apple Silicon 128-byte cache lines.
+  Preserve the sampler's atomic ordering and session-generation contracts.
+- Adapt the unpublished Rust ABI tool to syn 3's pointer and function-pointer
+  AST without changing its C projection or negative controls.
+- Keep all three crate versions and internal requirements at 0.7.3, and merge
+  pending changes into this single shared section.
 
 ### Added
 
-- `no_hooks` feature on `rustfs-mimalloc-profiling`: compiles the
-  allocation-observation hooks down to plain allocator forwarding, removing
-  the per-allocation atomic reads and sampler/live bookkeeping, and makes
-  `Profiler::start` fail with `InvalidConfig`. Default builds are unchanged.
-- Benchmark coverage in the `rustfs-mimalloc` alloc suite for `realloc`
-  (same-size and growing), `alloc_zeroed`, and contended multi-threaded
-  alloc/free scaling at 1/2/4/8 workers.
-
-## [0.7.3] - 2026-10-26
-
-### Changed
-
-- Pin mimalloc to `3828cfee`, a v3.6.1 development snapshot (numeric version
-  30601), 41 commits after the v3.6.0 release used by 0.7.2. Include Emscripten
-  backend/page-map fixes, CHERI provenance work and corrected C++ allocation
-  symbol mangling. Platform-specific support still requires target validation.
-- Inherit the upstream 4 MiB stats merge threshold, replacing 512 KiB to reduce
-  merge frequency. Parent-heap statistics can update later; existing public
-  option APIs and the startup environment retain the previous threshold or
-  disable threshold-based merging. Sampling defaults are unchanged.
-- Synchronize the three crate versions, internal requirements and installation
-  examples at 0.7.3. Consolidate pending work into this single release section.
+- `rustfs-mimalloc-profiling/no_hooks` compiles out allocation observation in
+  optimized builds and rejects sessions with `InvalidConfig`. Default behavior
+  is preserved. Feature unification applies the opt-out to the full dependency
+  graph, so it should be selected by the application.
+- Allocator benchmarks for same-size/growing realloc and zeroed allocations,
+  plus 1/2/4/8-worker same-thread allocation/free scaling. Include an explicit
+  System comparison and a separate barrier-roundtrip control; cross-thread
+  ownership transfer remains a distinct benchmark. No measured speedup is claimed.
 
 ### Fixed
 
-- Defer native fork-child cleanup to normal allocation so a child that only
-  calls exec or _exit avoids traversing inconsistent state left by concurrently
-  allocating threads (upstream #1456). Continued child allocation still requires
-  quiescent allocator state at fork; general Rust fork safety is not implied.
-- Inherit the compiler-unwinder pprof fallback using `_Unwind_Backtrace`, fixing
-  the missing `unw_backtrace` symbol reported with LLVM libunwind (#1454).
-  Cargo's native musl backtrace configuration remains opt-in.
+- Defer fork-child cleanup so a child that only calls exec or _exit avoids
+  traversing concurrently modified allocator state (#1456). Include macOS
+  early malloc-zone child repair; that platform path requires zone override.
+  Continued allocation after fork still needs quiescent allocator state, and
+  general Rust/Objective-C fork safety is not implied.
+- Retain `_Unwind_Backtrace` as native pprof's compiler-unwinder fallback,
+  avoiding the missing LLVM `unw_backtrace` symbol (#1454). Native Cargo musl
+  backtrace configuration remains opt-in.
+- Correct the 64-byte-only hot-state isolation assumption and the threaded
+  benchmark's claim to exercise cross-thread free-list contention.
 
 ### Validation
 
-- Re-audit four public C headers, all bound names, option IDs, extern signatures,
-  callbacks and exposed layouts. There are no new public C APIs in this delta;
-  existing Rust bindings remain aligned without additional API surface.
-- Cover the 4 MiB default in a clean child environment and explicit 0/512 KiB/
-  4 MiB overrides. Run the updated native fork suite and add Linux CI coverage
-  that forces and verifies the compiler-unwinder fallback without execinfo.
-- Record the upstream PR audit, review findings, performance tradeoffs and
-  validation boundaries in `UPSTREAM_REVIEW.md` and `REVIEW_0.7.3.md`.
+- Audit the latest five project commits and upstream merged PRs #1460/#1461.
+  Recheck all four public C headers: no new public functions, option IDs,
+  callbacks or layouts; existing Rust APIs remain synchronized.
+- Extend clean-process option tests to cover default reclaim policy and all
+  three explicit settings. Add a hot-state layout regression, explicit no_hooks
+  CI coverage, and native secure/macOS override validation.
+- Keep API/ABI controls, isolated providers, pressure tests and normalized
+  archive validation. Record evidence and limitations in `UPSTREAM_REVIEW.md`
+  and `REVIEW_0.7.3_2026-10-28.md`.
 
 ## [0.7.2] - 2026-10-25
 

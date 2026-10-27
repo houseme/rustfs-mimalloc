@@ -49,9 +49,9 @@ static CAPTURE_DEPTH: AtomicUsize = AtomicUsize::new(MAX_CAPTURE_DEPTH);
 static NATIVE_STACK_CAPTURE: AtomicBool = AtomicBool::new(false);
 static SAMPLE_INTERVAL_BYTES: AtomicU64 = AtomicU64::new(DEFAULT_SAMPLE_INTERVAL_BYTES);
 
-/// Per-allocation hot-path state. These are read on every allocation, so they
-/// share one aligned cache line that sample-hit counter writes cannot bounce.
-#[repr(align(64))]
+/// Isolate hot reads from sample-hit writes on both 64-byte and 128-byte cache
+/// lines (including Apple Silicon). Alignment also pads the static's size.
+#[repr(align(128))]
 struct HotAllocationState {
     recorder_active: AtomicBool,
     allocator_seen: AtomicBool,
@@ -3523,6 +3523,25 @@ mod tests {
         assert!(ring.push(test_sample(stack)));
         assert_eq!(ring.drain_into(&mut Vec::new(), 0), 0);
         assert_eq!(ring.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod hot_state_layout_tests {
+    use super::*;
+
+    #[test]
+    fn hot_reads_do_not_share_a_128_byte_region_with_adjacent_counters() {
+        // Apple Silicon has 128-byte cache lines. A 64-byte region can still
+        // share one line with the next frequently updated counter.
+        #[repr(C)]
+        struct Adjacent {
+            hot: HotAllocationState,
+            counter: AtomicU64,
+        }
+        assert!(std::mem::align_of::<HotAllocationState>() >= 128);
+        assert!(std::mem::offset_of!(Adjacent, counter) >= 128);
+        assert_eq!(std::ptr::addr_of!(HOT_ALLOCATION_STATE) as usize % 128, 0);
     }
 }
 

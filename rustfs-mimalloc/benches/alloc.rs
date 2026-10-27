@@ -9,6 +9,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 #[global_allocator]
 static GLOBAL: rustfs_mimalloc::MiMalloc = rustfs_mimalloc::MiMalloc;
 
+const THREADED_OPS_PER_WORKER: usize = 512;
+
 fn bench_alloc_dealloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("alloc_dealloc");
     for size in [8, 64, 256, 1024, 4096, 65536] {
@@ -273,58 +275,85 @@ fn bench_realloc(c: &mut Criterion) {
     group.finish();
 }
 
-// Contended same-size alloc/free hammering: worker threads start once and
-// rendezvous with the harness per iteration, so spawn cost stays out of the
-// measurement and thread counts expose cross-thread free-list contention.
-fn bench_threaded_alloc_free(c: &mut Criterion) {
-    const OPS_PER_WORKER: usize = 512;
-    static DONE: AtomicBool = AtomicBool::new(false);
-    let mut group = c.benchmark_group("threaded_alloc_free");
-    for threads in [1, 2, 4, 8] {
-        group.throughput(Throughput::Elements((threads * OPS_PER_WORKER) as u64));
-        group.bench_function(BenchmarkId::new("mimalloc", threads), |b| {
-            DONE.store(false, Ordering::Relaxed);
-            let layout = Layout::from_size_align(128, 8).unwrap();
-            // Workers plus the harness participate in both barriers.
-            let start = Arc::new(Barrier::new(threads + 1));
-            let stop = Arc::new(Barrier::new(threads + 1));
-            let workers: Vec<_> = (0..threads)
-                .map(|_| {
-                    let start = Arc::clone(&start);
-                    let stop = Arc::clone(&stop);
-                    std::thread::spawn(move || {
-                        loop {
-                            start.wait();
-                            if DONE.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            for _ in 0..OPS_PER_WORKER {
+// Each worker allocates and frees its own blocks. The timed round includes two
+// barriers; worker spawn/join stay outside it. Cross-thread ownership transfers
+// are measured separately by cross_thread_free_batch.
+fn bench_threaded<A: GlobalAlloc + Copy + Send + 'static>(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &str,
+    allocator: Option<A>,
+    threads: usize,
+) {
+    group.bench_function(BenchmarkId::new(name, threads), |b| {
+        let done = Arc::new(AtomicBool::new(false));
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let start = Arc::new(Barrier::new(threads + 1));
+        let stop = Arc::new(Barrier::new(threads + 1));
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                let done = Arc::clone(&done);
+                let start = Arc::clone(&start);
+                let stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    loop {
+                        start.wait();
+                        if done.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if let Some(allocator) = allocator {
+                            for _ in 0..THREADED_OPS_PER_WORKER {
                                 unsafe {
-                                    let ptr = std::alloc::alloc(layout);
+                                    let ptr = allocator.alloc(layout);
                                     assert!(!ptr.is_null());
                                     ptr.write(0x5A);
                                     std::hint::black_box(ptr);
-                                    std::alloc::dealloc(ptr, layout);
+                                    allocator.dealloc(ptr, layout);
                                 }
                             }
-                            stop.wait();
                         }
-                    })
+                        stop.wait();
+                    }
                 })
-                .collect();
-            b.iter(|| {
-                start.wait();
-                stop.wait();
-            });
-            DONE.store(true, Ordering::Relaxed);
-            // Release workers waiting for the next round so they can exit.
+            })
+            .collect();
+        b.iter(|| {
             start.wait();
-            for worker in workers {
-                worker.join().unwrap();
-            }
+            stop.wait();
         });
+        done.store(true, Ordering::Relaxed);
+        start.wait();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+}
+
+fn bench_threaded_alloc_free(c: &mut Criterion) {
+    let mut group = c.benchmark_group("threaded_alloc_free");
+    for threads in [1, 2, 4, 8] {
+        group.throughput(Throughput::Elements(
+            (threads * THREADED_OPS_PER_WORKER) as u64,
+        ));
+        if !cfg!(feature = "override") {
+            bench_threaded(&mut group, "system", Some(System), threads);
+        }
+        bench_threaded(
+            &mut group,
+            "mimalloc",
+            Some(rustfs_mimalloc::MiMalloc),
+            threads,
+        );
     }
     group.finish();
+
+    // Report synchronization separately, as rounds rather than allocations.
+    // This is a diagnostic control, not a value to subtract from other rows.
+    let mut control = c.benchmark_group("threaded_barrier_roundtrip");
+    control.throughput(Throughput::Elements(1));
+    for threads in [1, 2, 4, 8] {
+        bench_threaded(&mut control, "barriers", None::<System>, threads);
+    }
+    control.finish();
 }
 
 criterion_group!(

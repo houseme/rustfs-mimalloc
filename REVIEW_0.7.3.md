@@ -1,3 +1,11 @@
+# 0.7.3 review index
+
+The current source selection and latest-five-commit audit are in
+[the 2026-10-28 follow-up](REVIEW_0.7.3_2026-10-28.md).
+The earlier review below retains its original pin and validation evidence.
+
+---
+
 # Global 0.7.3 review — 2026-10-26
 
 Base: refreshed origin/main at
