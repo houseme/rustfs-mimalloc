@@ -19,7 +19,7 @@ fn c_type(kind: &Type) -> Result<String> {
     match kind {
         Type::Ptr(pointer) => {
             let pointee = c_type(&pointer.elem)?;
-            if pointer.mutability.is_some() {
+            if matches!(pointer.mutability, syn::PointerMutability::Mut(_)) {
                 Ok(format!("{pointee}*"))
             } else if pointee.ends_with('*') {
                 Ok(format!("{pointee} const*"))
@@ -130,7 +130,7 @@ pub fn generate(source: &str) -> Result<(String, usize, usize)> {
         match item {
             Item::Type(item) if item.ident.to_string().ends_with("_fun") => {
                 let name = item.ident.to_string();
-                let Type::BareFn(callback) = item.ty.as_ref() else {
+                let Type::FnPtr(callback) = item.ty.as_ref() else {
                     bail!("unparsed callback {name}")
                 };
                 convention(callback.abi.as_ref())?;
