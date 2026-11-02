@@ -267,34 +267,42 @@ pub fn generate(source: &str) -> Result<(String, usize, usize)> {
     Ok((lines.join("\n") + "\n", functions.len(), callbacks))
 }
 
-pub fn compile(probe: &str, compiler: &str) -> Result<Output> {
-    let directory = tempfile::tempdir()?;
-    let path = directory.path().join("check.c");
-    fs::write(&path, probe)?;
-    let include = directory.path().join("include");
-    public_headers::prepare(
-        &util::root().join("rustfs-mimalloc-sys/c_src/mimalloc/include"),
-        &include,
-    )?;
-    let words =
-        shlex::split(compiler).ok_or_else(|| anyhow::anyhow!("invalid compiler command"))?;
-    let (program, args) = words
-        .split_first()
-        .ok_or_else(|| anyhow::anyhow!("empty compiler command"))?;
-    util::output(
-        Command::new(program)
-            .args(args)
-            .args(["-std=c11", "-Werror", "-fsyntax-only", "-I"])
-            .arg(include)
-            .arg(path),
-    )
+struct CompilerProbe {
+    directory: tempfile::TempDir,
+    words: Vec<String>,
+}
+
+impl CompilerProbe {
+    fn new(compiler: &str) -> Result<Self> {
+        let words =
+            shlex::split(compiler).ok_or_else(|| anyhow::anyhow!("invalid compiler command"))?;
+        ensure!(!words.is_empty(), "empty compiler command");
+        let directory = tempfile::tempdir()?;
+        public_headers::prepare(
+            &util::root().join("rustfs-mimalloc-sys/c_src/mimalloc/include"),
+            &directory.path().join("include"),
+        )?;
+        Ok(Self { directory, words })
+    }
+
+    fn compile(&self, probe: &str) -> Result<Output> {
+        let path = self.directory.path().join("check.c");
+        fs::write(&path, probe)?;
+        util::output(
+            Command::new(&self.words[0])
+                .args(&self.words[1..])
+                .args(["-std=c11", "-Werror", "-fsyntax-only", "-I"])
+                .arg(self.directory.path().join("include"))
+                .arg(path),
+        )
+    }
 }
 
 pub fn run(args: &mut Args) -> Result<()> {
     let cc = args.value("--cc", "cc")?;
     args.finish()?;
     let (probe, functions, callbacks) = generate(&api::bindings()?)?;
-    let result = compile(&probe, &cc)?;
+    let result = CompilerProbe::new(&cc)?.compile(&probe)?;
     ensure!(
         result.status.success(),
         "{}",
@@ -310,10 +318,11 @@ pub fn run(args: &mut Args) -> Result<()> {
 pub fn controls(args: &mut Args) -> Result<()> {
     let cc = args.value("--cc", "cc")?;
     args.finish()?;
+    let compiler = CompilerProbe::new(&cc)?;
     let original = api::bindings()?;
     let (probe, _, _) = generate(&original)?;
     ensure!(
-        compile(&probe, &cc)?.status.success(),
+        compiler.compile(&probe)?.status.success(),
         "matching bindings must compile"
     );
     for (before, after, diagnostic) in [
@@ -336,7 +345,7 @@ pub fn controls(args: &mut Args) -> Result<()> {
         let changed = original.replacen(before, after, 1);
         ensure!(changed != original, "mutation did not match");
         let (probe, _, _) = generate(&changed)?;
-        let result = compile(&probe, &cc)?;
+        let result = compiler.compile(&probe)?;
         ensure!(
             !result.status.success()
                 && String::from_utf8_lossy(&result.stderr).contains(diagnostic),

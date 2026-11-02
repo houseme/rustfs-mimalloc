@@ -1,5 +1,45 @@
 # 0.7.3 release readiness — 2026-11-02
 
+## Final main-based review and tag preparation
+
+The follow-up review starts from refreshed origin/main at
+66ef33dce245c0603c56f2a4d7da9772a5cc193c. The tree was clean and no v0.7.3
+tag existed locally or remotely. The allocator/profiler runtime, native pin,
+public APIs, heap ownership and recording/lock contracts remain unchanged.
+No additional confirmed runtime defect was established in this review.
+
+The concrete changes concern generated headers and ABI preparation. Previously
+prepare copied every header and then overwrote QSBR again. A deterministic
+regression sets output timestamps to a known old value: it fails on the base
+revision and passes after the refactor. Unchanged output now preserves its
+bytes/timestamps, avoiding needless downstream dependency invalidation; changed
+inputs still refresh. First-build reads/copies remain necessary. No numeric
+build-speed or runtime-throughput gain is claimed.
+
+Validate the source correction before creating or mutating output. Canonicalize
+existing source/destination ancestors and reject equal, ancestor/descendant or
+existing symlink-alias overlap. Missing destination suffixes may not contain
+unresolved parent traversal. This prevents recursive self-copy and accidental
+source mutation. Tests cover source sentinels, untouched output on source drift,
+unchanged timestamps, refresh behavior and Unix aliases. This is a path-usage
+contract for owned build outputs, not a general filesystem race-hardening API.
+
+The ABI-control driver now owns one temporary directory and prepared include
+tree per invocation, with the compiler command parsed once. Each C probe still
+compiles and validates independently; all matching/negative controls remain.
+The C/C++ standalone-header and actual native-link contracts are retained.
+
+These are build/tooling improvements. Active-profile capture and report costs
+still need isolated A/B/B/A measurements before changing runtime defaults. The
+tag is created locally only after final-source validation; pushing it would
+trigger actual publication and is outside this tag-creation request.
+
+The earlier release-preparation review and results follow. Final-source local,
+CI and dry-run evidence is reported with delivery rather than attributed to
+the earlier source commit.
+
+---
+
 Base: a1f256a, clean and current after git pull --ff-only. All three released
 crates remain version 0.7.3, edition 2024, without a declared Cargo rust-version.
 Local verification uses stable Rust 1.99.1. The source pin is the official

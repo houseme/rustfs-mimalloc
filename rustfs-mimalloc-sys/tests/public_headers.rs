@@ -2,6 +2,59 @@
 mod headers;
 
 #[test]
+fn unchanged_exports_keep_timestamps_and_changed_inputs_are_refreshed() {
+    use std::{
+        fs,
+        time::{Duration, SystemTime},
+    };
+    let directory = std::env::temp_dir().join(format!(
+        "mimalloc-incremental-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let source = directory.join("source");
+    let output = directory.join("output");
+    fs::create_dir_all(source.join("mimalloc")).unwrap();
+    fs::write(source.join("mimalloc.h"), "original base header").unwrap();
+    fs::write(
+        source.join("mimalloc/qsbr.h"),
+        include_str!("../c_src/mimalloc/include/mimalloc/qsbr.h"),
+    )
+    .unwrap();
+    headers::prepare(&source, &output).unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_secs(3600);
+    for header in ["mimalloc.h", "mimalloc/qsbr.h"] {
+        fs::File::options()
+            .write(true)
+            .open(output.join(header))
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(old))
+            .unwrap();
+    }
+    headers::prepare(&source, &output).unwrap();
+    for header in ["mimalloc.h", "mimalloc/qsbr.h"] {
+        assert_eq!(
+            fs::metadata(output.join(header))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            old,
+            "unchanged {header} was rewritten"
+        );
+    }
+    fs::write(source.join("mimalloc.h"), "updated base header").unwrap();
+    headers::prepare(&source, &output).unwrap();
+    assert_eq!(
+        fs::read_to_string(output.join("mimalloc.h")).unwrap(),
+        "updated base header"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn qsbr_correction_is_guarded_and_preserves_the_original() {
     let copy = std::env::temp_dir().join(format!(
         "mimalloc-header-copy-{}-{}",
@@ -31,8 +84,71 @@ fn qsbr_correction_is_guarded_and_preserves_the_original() {
     assert_eq!(exported, headers::qsbr(source).unwrap());
     let again = copy.with_extension("again");
     assert!(headers::prepare(&copy, &again).is_err());
-    std::fs::remove_dir_all(again).unwrap();
+    assert!(
+        !again.exists(),
+        "invalid headers must fail before creating output"
+    );
     std::fs::remove_dir_all(copy).unwrap();
+}
+
+#[test]
+fn overlapping_paths_and_invalid_headers_are_rejected_before_output_changes() {
+    use std::{fs, io::ErrorKind, time::SystemTime};
+    let directory = std::env::temp_dir().join(format!(
+        "mimalloc-path-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let source = directory.join("source");
+    fs::create_dir_all(source.join("mimalloc")).unwrap();
+    fs::write(source.join("mimalloc.h"), "source sentinel").unwrap();
+    fs::write(
+        source.join("mimalloc/qsbr.h"),
+        include_str!("../c_src/mimalloc/include/mimalloc/qsbr.h"),
+    )
+    .unwrap();
+    for destination in [&source, &source.join("nested/output"), &directory] {
+        assert_eq!(
+            headers::prepare(&source, destination).unwrap_err().kind(),
+            ErrorKind::InvalidInput
+        );
+    }
+    assert!(!source.join("nested").exists());
+    assert_eq!(
+        fs::read_to_string(source.join("mimalloc.h")).unwrap(),
+        "source sentinel"
+    );
+    #[cfg(unix)]
+    {
+        let alias = directory.join("alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        assert_eq!(
+            headers::prepare(&source, &alias.join("output"))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidInput
+        );
+        assert!(!source.join("output").exists());
+    }
+    fs::write(source.join("mimalloc/qsbr.h"), "changed declaration").unwrap();
+    let destination = directory.join("untouched");
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("mimalloc.h"), "output sentinel").unwrap();
+    assert_eq!(
+        headers::prepare(&source, &destination).unwrap_err().kind(),
+        ErrorKind::InvalidData
+    );
+    assert_eq!(
+        fs::read_to_string(destination.join("mimalloc.h")).unwrap(),
+        "output sentinel"
+    );
+    let missing = directory.join("not-created");
+    assert!(headers::prepare(&source, &missing).is_err());
+    assert!(!missing.exists());
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

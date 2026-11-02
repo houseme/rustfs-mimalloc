@@ -32,24 +32,83 @@ pub fn qsbr(source: &str) -> io::Result<String> {
     ))
 }
 
+/// Prepare a disjoint export tree. Validate the correction before touching output,
+/// then preserve unchanged files so downstream compiler caches remain valid.
 pub fn prepare(source: &Path, destination: &Path) -> io::Result<()> {
+    let source = fs::canonicalize(source)?;
+    let destination = resolve_destination(destination)?;
+    if destination.starts_with(&source) || source.starts_with(&destination) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "header source and destination must not overlap",
+        ));
+    }
+    let original = source.join("mimalloc/qsbr.h");
+    let corrected = qsbr(&fs::read_to_string(&original)?)?;
+    copy_tree(&source, &destination, &original, corrected.as_bytes())
+}
+
+fn resolve_destination(path: &Path) -> io::Result<std::path::PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut ancestor = absolute.as_path();
+    loop {
+        match fs::canonicalize(ancestor) {
+            Ok(mut resolved) => {
+                let tail = absolute.strip_prefix(ancestor).map_err(io::Error::other)?;
+                for component in tail.components() {
+                    match component {
+                        std::path::Component::Normal(name) => resolved.push(name),
+                        std::path::Component::CurDir => {}
+                        _ => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "unresolved parent traversal in header destination",
+                            ));
+                        }
+                    }
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                ancestor = ancestor.parent().ok_or(error)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn copy_tree(
+    source: &Path,
+    destination: &Path,
+    original: &Path,
+    corrected: &[u8],
+) -> io::Result<()> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
+        let path = entry.path();
         let target = destination.join(entry.file_name());
         if entry.file_type()?.is_dir() {
-            prepare(&entry.path(), &target)?;
+            copy_tree(&path, &target, original, corrected)?;
+        } else if path == original {
+            write_if_changed(&target, corrected)?;
         } else {
-            fs::copy(entry.path(), target)?;
+            write_if_changed(&target, &fs::read(path)?)?;
         }
     }
-    let header = source.join("mimalloc/qsbr.h");
-    // Only the include-tree root contains this path.
-    if header.is_file() {
-        fs::write(
-            destination.join("mimalloc/qsbr.h"),
-            qsbr(&fs::read_to_string(header)?)?,
-        )?;
-    }
     Ok(())
+}
+
+fn write_if_changed(path: &Path, content: &[u8]) -> io::Result<()> {
+    match fs::read(path) {
+        Ok(existing) if existing == content => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    fs::write(path, content)
 }

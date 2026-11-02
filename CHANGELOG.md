@@ -12,6 +12,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Preserve unchanged exported-header bytes and timestamps, refreshing only
+  changed files. Validate the QSBR correction and disjoint source/output paths
+  before writing; reject overlap through existing path aliases as well.
+- Reuse one prepared header tree and compiler configuration for each ABI-control
+  run, eliminating repeated staging across matching and negative probes.
 - Pin mimalloc to the official v3.6.1 release, `56dc5eb8` (numeric version
   30601), 25 commits after the previous validated development pin. The vendor
   source remains pristine; post-release 3.6.2/MTE development is excluded.
