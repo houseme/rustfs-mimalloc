@@ -8,14 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.3] - 2026-10-28
+## [0.7.3] - 2026-11-02
 
 ### Changed
 
-- Pin mimalloc to `810774fb`, a v3.6.1 development snapshot (numeric version
-  30601), 70 commits after the v3.6.0 release used by 0.7.2. Keep the source
-  pristine. Exclude the latest two dev3 commits because `8374d1b2` breaks
-  standalone QSBR header compilation; the existing ABI gate detects the failure.
+- Pin mimalloc to the official v3.6.1 release, `56dc5eb8` (numeric version
+  30601), 25 commits after the previous validated development pin. The vendor
+  source remains pristine; post-release 3.6.2/MTE development is excluded.
+- Export a generated include tree with a guarded standalone QSBR declaration
+  correction. Preserve C linkage in C++ and include the public base header;
+  expose the corrected path through DEP_MIMALLOC_INCLUDE. ABI checks consume
+  the same header transformation as downstream builds.
+- Update Windows static-CRT entropy compatibility for the removed upstream
+  weak initializer and new weak-context retry. Before CRT readiness, bypass OS
+  entropy without consuming the real-failure warning; afterwards use native
+  strong entropy/reseeding. Dynamic CRT builds retain unmodified native source.
 - Inherit guarded arena/page/heap/process metadata, revised native secure
   levels and checked frees at MI_SECURE>=2. The Rust `secure` feature continues
   to select MI_SECURE=4. Inherit Windows image-memory guard handling, static
@@ -35,6 +42,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   pending changes into this single shared section.
 
 ### Added
+
+- Raw C23 `mi_free_sized` and `mi_free_aligned_sized` bindings, plus unsafe
+  `MiMalloc::free_sized` / `free_aligned_sized` wrappers. The C23 aligned form
+  takes alignment before size; both must match the original allocation.
+  GlobalAlloc's forwarding behavior is unchanged.
 
 - `rustfs-mimalloc-profiling/no_hooks` compiles out allocation observation in
   optimized builds and rejects sessions with `InvalidConfig`. Default behavior
@@ -63,15 +75,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
-- Audit the latest five project commits and upstream merged PRs #1460/#1461.
-  Recheck all four public C headers: no new public functions, option IDs,
-  callbacks or layouts; existing Rust APIs remain synchronized.
+- Recheck all public headers and merged/direct upstream changes. Cover 135
+  bound functions, 45 option IDs, 126 extern signatures, nine callbacks and
+  three layouts. C/C++ header/link tests and bootstrap-entropy controls join
+  the release gates; no public option/layout changes are introduced.
 - Extend clean-process option tests to cover default reclaim policy and all
   three explicit settings. Add a hot-state layout regression, explicit no_hooks
   CI coverage, and native secure/macOS override validation.
 - Keep API/ABI controls, isolated providers, pressure tests and normalized
   archive validation. Record evidence and limitations in `UPSTREAM_REVIEW.md`
-  and `REVIEW_0.7.3_2026-10-28.md`.
+  and `REVIEW_0.7.3_2026-11-02.md`.
 
 ## [0.7.2] - 2026-10-25
 

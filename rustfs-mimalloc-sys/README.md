@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.1 development snapshot commit `810774fb`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.1 release commit `56dc5eb8`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -92,14 +92,21 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The V3.6.1 development snapshot pin adds 70 commits after v3.6.0, reviewed on
-2026-10-28. It includes PR #1455's Emscripten backend selection, compiler-unwinder
+The V3.6.1 release pin adds 25 commits after our previous development pin,
+reviewed on 2026-11-02. It includes PR #1455's Emscripten backend selection, compiler-unwinder
 fallback fixes, CHERI/provenance work, deferred fork-child cleanup (#1456) and
 a 4 MiB default stats merge threshold (#1458), macOS fork-zone handling, and
-guarded metadata/process state in secure mode. This is not an upstream release.
-The latest two dev3 commits are excluded because `8374d1b2` introduces an
-undefined macro in the standalone public QSBR header; see
-[the upstream review](../UPSTREAM_REVIEW.md).
+guarded metadata/process state in secure mode. C23 `mi_free_sized` and
+`mi_free_aligned_sized` are newly bound; alignment precedes size in the latter.
+
+The upstream release still has a standalone QSBR header defect. Build scripts
+export a corrected include tree through `DEP_MIMALLOC_INCLUDE`, using a guarded
+copy that adds the base public header and standard C++ C-linkage guards. Use
+that include path for downstream C/C++; the vendored originals remain pristine.
+The ABI tool uses the same transformation, and tests compile all four public
+headers individually in C/C++ and link a C++ consumer to the native C library.
+QSBR's ENOSYS diagnostic is delivered through mimalloc's error callback, not a
+promise to set libc errno. See [the upstream review](../UPSTREAM_REVIEW.md).
 Available APIs include `mi_arenas_purge` and two options
 for thread-heap stats merging and large-range purging.
 The previously added `mi_thread_id_of`,

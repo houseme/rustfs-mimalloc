@@ -1,4 +1,4 @@
-//! Compatibility with the pinned dev3 Windows startup implementation.
+//! Compatibility with the pinned Windows startup implementation.
 
 pub fn enabled(target_features: &str, rustflags: &str) -> bool {
     let mut enabled = target_features.split(',').any(|flag| flag == "crt-static");
@@ -36,10 +36,25 @@ pub fn replace_once(source: &str, before: &str, after: &str) -> String {
     source.replacen(before, after, 1)
 }
 
-pub fn patch_theap(source: &str) -> String {
-    const BEFORE: &str = "    // #if defined(_WIN32) && !defined(MI_SHARED_LIB)\n    // if (tld->thread_seq==0) {\n    //   _mi_random_init_weak(&theap->random);    // prevent allocation failure during bcrypt dll initialization with static linking (issue #1185)\n    // }\n    // else\n    // #endif\n    // {\n    //   _mi_random_init(&theap->random);\n    // }";
-    const AFTER: &str = "    #if defined(_WIN32) && !defined(MI_SHARED_LIB)\n    if (tld->thread_seq==0) {\n      _mi_random_init_weak(&theap->random);  // reseeded by the late CRT callback\n    }\n    #endif";
-    replace_once(source, BEFORE, AFTER)
+/// Use weak entropy only while the CRT is unavailable. This also covers the
+/// upstream split path that now retries initialization for weak contexts.
+pub fn patch_random(source: &str) -> String {
+    let source = replace_once(
+        source,
+        "void _mi_random_init(mi_random_ctx_t* ctx) {\n",
+        "void _mi_random_init(mi_random_ctx_t* ctx) {\n  const bool use_weak = _mi_preloading();\n",
+    );
+    let source = replace_once(
+        &source,
+        "  if (!_mi_prim_random_buf(key, sizeof(key))) {",
+        "  if (use_weak || !_mi_prim_random_buf(key, sizeof(key))) {",
+    );
+    let source = replace_once(
+        &source,
+        "if (mi_atomic_exchange_relaxed(&warned, (size_t)1) == 0)",
+        "if (!use_weak && mi_atomic_exchange_relaxed(&warned, (size_t)1) == 0)",
+    );
+    format!("#include \"mimalloc/heap/process.h\"\n{source}")
 }
 
 pub fn patch_prim(source: &str) -> String {

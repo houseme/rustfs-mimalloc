@@ -5,6 +5,7 @@
 
 use std::{env, fs, path::PathBuf};
 
+mod public_headers;
 mod windows_static_crt;
 
 struct TargetCfg {
@@ -71,6 +72,7 @@ fn main() {
     // Tell Cargo to re-run if features change
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=windows_static_crt.rs");
+    println!("cargo:rerun-if-changed=public_headers.rs");
     // static.c includes these files; cc cannot discover that dependency tree.
     println!("cargo:rerun-if-changed=c_src/mimalloc/include");
     println!("cargo:rerun-if-changed=c_src/mimalloc/src");
@@ -206,8 +208,15 @@ fn main() {
     link_system_libs(&target);
 
     // Export include directory for downstream crates
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:include={manifest_dir}/c_src/mimalloc/include");
+    let include =
+        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set")).join("include");
+    public_headers::prepare(&PathBuf::from("c_src/mimalloc/include"), &include)
+        .expect("failed to prepare standalone public headers");
+    println!("cargo:include={}", include.display());
+    println!(
+        "cargo:rustc-env=MIMALLOC_PUBLIC_INCLUDE={}",
+        include.display()
+    );
 
     // Print version info
     let header = fs::read_to_string("c_src/mimalloc/include/mimalloc.h")
@@ -228,19 +237,19 @@ fn main() {
 
 /// Retain static CRT startup/bootstrap compatibility; ImageBase is fixed upstream.
 fn windows_static_source() -> PathBuf {
-    const UPSTREAM_THEAP_INCLUDE: &str = "#include \"heap/theap.c\"";
-    const PATCHED_THEAP_INCLUDE: &str = "#include \"mimalloc-static-crt-theap.c\"";
+    const UPSTREAM_RANDOM_INCLUDE: &str = "#include \"util/random.c\"";
+    const PATCHED_RANDOM_INCLUDE: &str = "#include \"mimalloc-static-crt-random.c\"";
 
     let source_dir = PathBuf::from("c_src/mimalloc/src");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
-    let theap = fs::read_to_string(source_dir.join("heap/theap.c"))
-        .expect("failed to read upstream theap.c")
+    let random = fs::read_to_string(source_dir.join("util/random.c"))
+        .expect("failed to read upstream random.c")
         .replace("\r\n", "\n");
     fs::write(
-        out_dir.join("mimalloc-static-crt-theap.c"),
-        windows_static_crt::patch_theap(&theap),
+        out_dir.join("mimalloc-static-crt-random.c"),
+        windows_static_crt::patch_random(&random),
     )
-    .expect("failed to write the Windows static CRT theap.c compatibility source");
+    .expect("failed to write the Windows static CRT random.c compatibility source");
 
     let windows_prim = fs::read_to_string(source_dir.join("prim/windows/prim.c"))
         .expect("failed to read upstream Windows prim.c")
@@ -263,14 +272,14 @@ fn windows_static_source() -> PathBuf {
     .expect("failed to write the Windows static CRT primitive selector");
 
     // Give the compatibility copy a unique include name so the C compiler
-    // cannot resolve the unpatched upstream theap.c from its source directory.
+    // cannot resolve the unpatched upstream random.c from its source directory.
     let static_source = fs::read_to_string(source_dir.join("static.c"))
         .expect("failed to read mimalloc's static.c aggregator");
     let prim_include = "#include \"mimalloc-static-crt-prim.c\"\n#if defined(_MSC_VER) && defined(_MT) && !defined(_DLL) && !defined(MI_STATIC_CRT_STARTUP_COMPAT)\n#error Windows static CRT startup compatibility source was not included\n#endif";
     let static_source = windows_static_crt::replace_once(
         &static_source,
-        UPSTREAM_THEAP_INCLUDE,
-        PATCHED_THEAP_INCLUDE,
+        UPSTREAM_RANDOM_INCLUDE,
+        PATCHED_RANDOM_INCLUDE,
     );
     let static_path = out_dir.join("mimalloc-static.c");
     fs::write(

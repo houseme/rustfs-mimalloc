@@ -61,7 +61,10 @@ fn pinned_startup_sources_accept_patch_and_preserve_thread_cleanup() {
         .split_once("#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)")
         .unwrap();
     assert_eq!(before, after);
-    startup::patch_theap(&include_str!("../c_src/mimalloc/src/heap/theap.c").replace("\r\n", "\n"));
+    let random = include_str!("../c_src/mimalloc/src/util/random.c").replace("\r\n", "\n");
+    let patched = startup::patch_random(&random);
+    assert!(patched.contains("use_weak || !_mi_prim_random_buf"));
+    assert!(patched.contains("!use_weak && mi_atomic_exchange_relaxed"));
 }
 
 #[test]
@@ -85,4 +88,44 @@ fn upstream_drift_fails_build_instead_of_silently_skipping_patch() {
             "changed upstream callback",
         );
     startup::patch_prim(&source);
+}
+
+#[cfg(unix)]
+#[test]
+fn bootstrap_entropy_defers_os_calls_and_retains_real_failure_warnings() {
+    use std::{fs, process::Command};
+    let original = include_str!("../c_src/mimalloc/src/util/random.c").replace("\r\n", "\n");
+    let source = startup::patch_random(&original);
+    let start = source
+        .find("void _mi_random_init(mi_random_ctx_t* ctx) {")
+        .unwrap();
+    let end = start + source[start..].find("\n}").unwrap() + 2;
+    let probe =
+        include_str!("fixtures/random_probe.c").replace("/* @INIT@ */", &source[start..end]);
+    let directory = std::env::temp_dir().join(format!(
+        "mimalloc-entropy-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("probe.c");
+    fs::write(&path, probe).unwrap();
+    let executable = directory.join("probe");
+    let result = Command::new("cc")
+        .args(["-std=c11", "-Wall", "-Wextra", "-Werror"])
+        .arg(path)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(Command::new(executable).status().unwrap().success());
+    fs::remove_dir_all(directory).unwrap();
 }

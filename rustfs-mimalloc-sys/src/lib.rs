@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream dev3 v3.6.1 development snapshot, commit 810774fb.
+//! Pinned to upstream release v3.6.1, commit 56dc5eb8.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -233,9 +233,16 @@ unsafe extern "C" {
     /// Snapshot of the allocation page's current owner, or zero for null,
     /// detached or abandoned pages. Not a Rust `ThreadId` or an ownership lock.
     /// A non-null pointer must be a live mimalloc allocation; its owner can change.
+    /// QSBR-enabled host adapters may retain the previous owner on abandonment.
     pub fn mi_thread_id_of(p: *const c_void) -> size_t;
     pub fn mi_good_size(size: size_t) -> size_t;
     pub fn mi_free_size(p: *mut c_void, size: size_t);
+    /// C23 sized free. Non-null `p` must have been allocated with exactly `size`
+    /// and ordinary alignment. For aligned allocations use `mi_free_aligned_sized`.
+    pub fn mi_free_sized(p: *mut c_void, size: size_t);
+    /// C23 aligned sized free; note alignment precedes size, unlike
+    /// `mi_free_size_aligned`. Both must match the original allocation.
+    pub fn mi_free_aligned_sized(p: *mut c_void, alignment: size_t, size: size_t);
     pub fn mi_free_small(p: *mut c_void);
     pub fn mi_free_small_nonnull(p: *mut c_void);
     /// The non-null allocation must be on a small page still owned by the calling thread.

@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.1 development snapshot, commit `810774fb`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.1 release, commit `56dc5eb8`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -88,7 +88,7 @@ Implements `GlobalAlloc` with aligned allocation/reallocation and general
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30601 = V3.6.1 development snapshot
+// Version: 30601 = V3.6.1 release
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -154,9 +154,9 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 810774fb](https://github.com/microsoft/mimalloc/commit/810774fbc87ef545ccee2995552f47371b7e7b78),
-70 commits after the official v3.6.0 tag. This is a **v3.6.1 development
-snapshot**, with numeric C version **30601**, not a published upstream release.
+The submodule pins [upstream commit 56dc5eb8](https://github.com/microsoft/mimalloc/commit/56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c),
+at the official **v3.6.1 release**, 25 commits after the previous validated pin.
+The numeric C version remains **30601**.
 
 The update defers fork-child cleanup until normal allocation, so an uncoordinated
 multithreaded fork followed only by `exec` or `_exit` avoids traversing another
@@ -164,7 +164,13 @@ thread's inconsistent allocator state. The default stats merge threshold rises
 from 512 KiB to 4 MiB, reducing merge frequency while delaying parent-heap
 statistics. Set `MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for the
 previous frequency, or `0` to disable threshold-based merges. The existing
-option APIs retain their IDs and units. No C function or public ABI is added.
+option APIs retain their IDs and units. This release adds C23 sized-free APIs;
+option IDs, callback signatures and exposed layouts are unchanged.
+
+`MiMalloc::free_sized(ptr, size)` and
+`MiMalloc::free_aligned_sized(ptr, alignment, size)` expose these unsafe APIs.
+Sizes and alignment must match the original allocation; the C23 aligned form
+places alignment before size. GlobalAlloc still uses its general free path.
 
 Earlier updates added experimental QSBR primitives, native pprof
 OOM/reentrancy fixes and hashed small-page offsets. Remote free now uses one
@@ -364,7 +370,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.1 development snapshot, commit `810774fb`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.1 release, commit `56dc5eb8`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

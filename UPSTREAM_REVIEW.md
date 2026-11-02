@@ -1,3 +1,83 @@
+# 0.7.3 release-readiness review — 2026-11-02
+
+The current update selects the official
+[v3.6.1 release](https://github.com/microsoft/mimalloc/releases/tag/v3.6.1),
+commit `56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c`, 25 commits after the previous
+validated `810774fb` pin. C version remains 30601. The reviewed project base
+is a1f256a. Post-release dev3 at a1844f6f contains 3.6.2/MTE/sealed-area work;
+that development range is outside this release preparation.
+
+## Public API and header correction
+
+Read all four public-header diffs. Two C23 functions are new:
+mi_free_sized(p, size) and mi_free_aligned_sized(p, alignment, size). Add raw
+bindings and matching unsafe MiMalloc wrappers, plus null/ordinary/over-aligned
+allocation contracts. They forward to existing native sized-free implementations;
+no extra speedup is claimed, and GlobalAlloc still uses its general free path.
+Option IDs, profiler callbacks and public layouts are unchanged. Coverage is
+135 bound Rust functions, 45 option IDs, 126 extern signatures, nine callbacks
+and three layouts. All seven existing ABI/option controls remain active.
+
+The official release retains the previously rejected QSBR standalone-header
+regression: the header uses private mi_decl_externc and omits its public base
+header. The raw release fails the existing C ABI projection. Keep the pinned
+vendor source pristine, but generate a corrected include tree at build time.
+The guarded transformation adds the public base header and standard C++ C-linkage
+guards around the constructor. Export this tree via DEP_MIMALLOC_INCLUDE;
+the ABI compiler uses the same transformation rather than defining a private
+macro to silence the error. C/C++ tests compile all four headers independently
+and link a C++ consumer to the actual native C library, including the C23 APIs.
+Changed/missing correction anchors fail instead of silently skipping the patch.
+
+QSBR remains an experimental raw interface without an owning Rust heap adapter.
+The default constructor returns null and reports ENOSYS through mimalloc's
+error callback; it does not promise libc errno. In a QSBR host build,
+mi_thread_id_of can retain an abandoned page's previous owner; ordinary builds
+retain the existing zero-on-abandonment behavior.
+
+## PR audit and direct changes
+
+GitHub merged_at and base branches were checked separately from commit subjects.
+
+| Item | Verified status and scope |
+| --- | --- |
+| [#1469](https://github.com/microsoft/mimalloc/pull/1469) | Merged into dev (v2), then incorporated into v3 through b3b3743a. Removing C++11 construct/destroy members enables standard container trivial-operation fast paths; this is not a Rust API. |
+| [#1470](https://github.com/microsoft/mimalloc/pull/1470) | Closed without a GitHub merge. Direct e98f991b adds the C23 wrappers/overrides; the commit subject references #1407, so it is not counted as a merge of #1470. |
+| [#1467](https://github.com/microsoft/mimalloc/pull/1467) | Closed without a GitHub merge. Direct 0beb4090 applies LoadLibrary behavior to Xbox/UWP. |
+| [#1471](https://github.com/microsoft/mimalloc/pull/1471) | Release-line integration merged into main3 after the selected tag. |
+| [#1472](https://github.com/microsoft/mimalloc/pull/1472) | Merged into main3 after the release integration; README reference correction, outside the selected tag. |
+| [#1462](https://github.com/microsoft/mimalloc/pull/1462), [#1349](https://github.com/microsoft/mimalloc/pull/1349) | Closed without a GitHub merge. No corresponding new Rust capability is inferred from closure alone. |
+
+Other selected changes consolidate clocks, output/profiler buffers and OS state,
+retry weak entropy initialization, improve early Linux entropy fallback, retain
+QSBR owner identity and document native security modes. Native profiling remains
+independent of the allocator-neutral Rust profiler.
+
+## Windows and performance decisions
+
+Upstream removed _mi_random_init_weak and now retries weak contexts from split.
+The old generated theap patch would no longer link and would miss that retry.
+Replace it with one guarded random.c correction for Windows static CRT only:
+all initializer entries use weak entropy while _mi_preloading reports that the
+CRT is unavailable, avoiding early BCrypt calls. Normal native initialization
+and late-CRT reseeding use strong OS entropy afterwards. Intentional bootstrap
+fallback does not consume the once-only real-entropy-failure warning. Preserve
+the existing late .CRT$XCT lifecycle fix and thread cleanup; dynamic CRT source
+is unchanged. A native probe checks early bypass, later strong initialization,
+and one real-failure warning; Windows runtime/startup CI remains required.
+
+Further priorities remain active-profile stack capture/report costs and
+stats/reclaim/purge policy versus throughput, statistics freshness, RSS and tail
+latency. The existing no_hooks opt-out and 128-byte hot-state padding remain.
+No isolated before/after speedup is claimed. See
+[the release-readiness report](REVIEW_0.7.3_2026-11-02.md) for validation scope.
+This preparation retains package version 0.7.3 and authorizes commit/push and
+release dry-run only; no tag or real publication is performed.
+
+---
+
+Earlier reviews below are historical and retain their original pins/results.
+
 # 0.7.3 follow-up upstream/API audit — 2026-10-28
 
 ## Selected and rejected revisions

@@ -76,6 +76,8 @@ impl MiMalloc {
     /// Returns zero for null, abandoned or detached pages. The value is not a
     /// Rust `ThreadId` and does not authorize local-only frees: page ownership
     /// can change after the query.
+    /// Experimental QSBR adapters can retain a previous owner for abandoned
+    /// pages; ordinary builds have no such adapter.
     ///
     /// # Safety
     /// `ptr` must be null or a live mimalloc allocation. Keep the allocation and
@@ -196,6 +198,26 @@ impl MiMalloc {
     #[inline]
     pub unsafe fn free_csize(ptr: *mut u8, size: usize) {
         unsafe { rustfs_mimalloc_sys::mi_free_csize(ptr as *mut c_void, size) }
+    }
+
+    /// C23 sized free for an allocation with ordinary alignment.
+    ///
+    /// # Safety
+    /// `ptr` must be null or an exclusively owned mimalloc block allocated with
+    /// exactly `size`. For aligned allocations use [`Self::free_aligned_sized`].
+    #[inline]
+    pub unsafe fn free_sized(ptr: *mut u8, size: usize) {
+        unsafe { rustfs_mimalloc_sys::mi_free_sized(ptr.cast(), size) }
+    }
+
+    /// C23 aligned sized free. Alignment precedes size in this API.
+    ///
+    /// # Safety
+    /// `ptr` must be null or an exclusively owned mimalloc block; `alignment`
+    /// and `size` must exactly match the original allocation contract.
+    #[inline]
+    pub unsafe fn free_aligned_sized(ptr: *mut u8, alignment: usize, size: usize) {
+        unsafe { rustfs_mimalloc_sys::mi_free_aligned_sized(ptr.cast(), alignment, size) }
     }
 
     /// Free a non-null mimalloc block when the allocation size is known.
@@ -479,6 +501,27 @@ mod tests {
             30601,
             "expected pinned V3.6.1 snapshot"
         );
+    }
+
+    #[test]
+    fn c23_sized_free_preserves_the_alignment_argument_order() {
+        unsafe {
+            MiMalloc::free_sized(core::ptr::null_mut(), 64);
+            MiMalloc::free_aligned_sized(core::ptr::null_mut(), 4096, 73);
+            for size in [1, 73, 1024, 65536] {
+                let ptr = rustfs_mimalloc_sys::mi_malloc(size).cast::<u8>();
+                assert!(!ptr.is_null());
+                core::ptr::write_bytes(ptr, 0x5a, size);
+                MiMalloc::free_sized(ptr, size);
+                for alignment in [64, 4096] {
+                    let ptr = rustfs_mimalloc_sys::mi_malloc_aligned(size, alignment).cast::<u8>();
+                    assert!(!ptr.is_null());
+                    assert_eq!(ptr as usize % alignment, 0);
+                    core::ptr::write_bytes(ptr, 0xa5, size);
+                    MiMalloc::free_aligned_sized(ptr, alignment, size);
+                }
+            }
+        }
     }
 
     #[test]

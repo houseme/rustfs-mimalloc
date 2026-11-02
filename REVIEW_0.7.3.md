@@ -1,6 +1,8 @@
 # 0.7.3 review index
 
 The current source selection and latest-five-commit audit are in
+[the 2026-11-02 readiness review](REVIEW_0.7.3_2026-11-02.md).
+The latest-five-commit audit remains in
 [the 2026-10-28 follow-up](REVIEW_0.7.3_2026-10-28.md).
 The earlier review below retains its original pin and validation evidence.
 

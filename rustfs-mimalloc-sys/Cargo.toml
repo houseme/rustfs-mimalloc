@@ -18,6 +18,7 @@ include = [
     "README.md",
     "build.rs",
     "windows_static_crt.rs",
+    "public_headers.rs",
     "src/**",
     "tests/**",
     "c_src/mimalloc/LICENSE",

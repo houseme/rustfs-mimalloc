@@ -9,6 +9,9 @@ use std::{
 };
 use syn::{FnArg, Item, Pat, ReturnType, Type, Visibility};
 
+#[path = "../../rustfs-mimalloc-sys/public_headers.rs"]
+mod public_headers;
+
 const LAYOUTS: [&str; 3] = [
     "mi_heap_area_t",
     "mi_profiler_sample_data_t",
@@ -268,6 +271,11 @@ pub fn compile(probe: &str, compiler: &str) -> Result<Output> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("check.c");
     fs::write(&path, probe)?;
+    let include = directory.path().join("include");
+    public_headers::prepare(
+        &util::root().join("rustfs-mimalloc-sys/c_src/mimalloc/include"),
+        &include,
+    )?;
     let words =
         shlex::split(compiler).ok_or_else(|| anyhow::anyhow!("invalid compiler command"))?;
     let (program, args) = words
@@ -277,7 +285,7 @@ pub fn compile(probe: &str, compiler: &str) -> Result<Output> {
         Command::new(program)
             .args(args)
             .args(["-std=c11", "-Werror", "-fsyntax-only", "-I"])
-            .arg(util::root().join("rustfs-mimalloc-sys/c_src/mimalloc/include"))
+            .arg(include)
             .arg(path),
     )
 }
