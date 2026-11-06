@@ -1,3 +1,80 @@
+# 0.7.4 runtime review and improvements — 2026-11-07
+
+This pass starts from `c905f59` and examines production allocation, heap and
+arena contracts, profiling session ownership, sampled pointer lifecycles,
+buffer admission, report snapshots, symbolization and pprof generation.
+
+## Functional assessment
+
+| Area | Assessment and action |
+| --- | --- |
+| Global allocator and raw allocation helpers | Alignment and allocation ownership are forwarded through the native entry points. Specialized small/sized frees require their documented caller contracts. Existing alignment, zeroing, resize and remote-free regressions cover the exercised paths. |
+| Heap and arena ownership | Cached contexts borrow their parent and stay on their creating thread. Borrowed raw heap handles require caller-enforced lifetimes. Arena reservations have process lifetime. These constraints remain part of the advanced API contracts. |
+| Session startup | Extreme queue/live capacities passed configuration validation and panicked in infallible reservations. Use fallible preallocation and expose `MetadataAllocationFailed`, with partial storage and recorder ownership released before retry. |
+| Session stop | Stop cleared TLS rings and live maps but left global queue records and backing storage. Discard global queues after synchronizing registered TLS handoffs and free their storage outside the locks. |
+| Live snapshots | Normal snapshots acquired each shard twice. Retain the first guard through the common copy path, reducing stable-snapshot acquisitions from 128 to 64. Growth and table rebuilding reserve outside locks using the shard admission bound. |
+| Reallocation and cross-thread frees | Pending entries reserve rollback storage, and tracked frees remove metadata before provider reuse. Snapshot rebuilding preserves pending markers. Existing rollback, moved/in-place realloc, address reuse and session-generation tests exercise these contracts. |
+| Reporting and pprof | Reports aggregate stacks, resolve each instruction once per report and encode interval/live values separately. Add complete report timing through `last_report_elapsed_micros()`, covering work before encoding and temporary cleanup. |
+| Build and API maintenance | The native pin and reviewed export inventory remain current. Existing C/C++ header, ABI and option checks cover the native boundary. Profiling additions expose a diagnostic function and a variant on the existing non-exhaustive error enum. |
+
+## Reproduced defects and implementation validation
+
+The startup regression calls the public `Profiler::start` with `usize::MAX`
+queue capacity and live capacity. The previous implementation panicked with
+`capacity overflow`. Both cases now return the typed error, clear partial
+storage and allow a subsequent ordinary session to start and report.
+
+The stop regression inserts an accepted global record, stops the session and
+checks diagnostics plus queue capacity. Previously `buffered_samples` stayed
+at one. It now reaches zero and every global queue releases its backing storage.
+Each worker retains its fixed TLS ring storage until thread exit.
+
+The snapshot regression exercises occupied output, a capacity-sufficient fast
+path, table rebuilding and an admission during the unlocked reservation gap.
+It verifies that reservation occurs outside the shard lock, copied records fit
+reserved storage, and both old and newly admitted pending realloc markers
+survive the rebuild. Table deallocation runs after unlocking.
+
+Local checks pass with stable Rust 1.99.1 on macOS arm64. They include workspace
+tests, 79 profiling unit tests, both ignored release pressure tests, no_hooks,
+isolated provider contracts in debug/release, all-target/all-feature Clippy,
+rustdoc with warnings denied, normalized package validation and version checks.
+API coverage remains 137 bound native functions and 46 options.
+
+## Runtime diagnostics and tuning
+
+Two one-second, two-worker live-profiling runs exercise the public example,
+with a 1 MiB sample interval and periodic reports. These runs use different
+buffer/report configurations on the development host. They establish the
+diagnostic behavior and sample-quality tradeoff. Software speedup attribution
+requires an isolated same-configuration ABBA comparison.
+
+| Configuration | Recorded / reported | Allocation drops | Live drops / pending | Last full report / encoding phase |
+| --- | --- | --- | --- | --- |
+| 512 global slots, 100 ms reports | 6,459 / 6,331 | 52,392 | 0 / 0 | 158 / 80 microseconds |
+| 8,192 global slots, 25 ms reports | 60,381 / 60,381 | 6 | 0 / 0 | 175 / 49 microseconds |
+
+The dense workload exceeds the smaller queue's reporting budget. More slots
+and more frequent reports improve retained sample quality, with additional
+metadata and reporting work. The new full-report timer makes the earlier
+drain/snapshot/symbolization costs visible alongside the encoding phase.
+Choose these capacities and intervals using the application's allocation rate,
+drop counts, retained live metadata, report latency and RSS budget.
+
+Further performance work should first measure stack capture under active
+sampling and report aggregation/symbolization at realistic stack cardinality.
+Cached aligned `ThreadHeap` growth and native reclaim/purge tuning remain
+workload-specific opportunities. The constant 64-shard fast-path lock reduction
+is established by the implementation. End-to-end throughput impact awaits an
+isolated comparison.
+
+Evidence is saved in `target/review-runtime-*.log`. The `start-before` and
+`stop-before` logs contain the failing regressions. The `live-example` and
+`live-quality` logs preserve both diagnostic runs. The following sections
+retain the earlier 0.7.4 audit history.
+
+---
+
 # 0.7.4 follow-up review — 2026-11-07
 
 Project base `475aac0` is current after `git pull --ff-only`. A fresh upstream

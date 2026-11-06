@@ -43,7 +43,7 @@ pub mod pprof;
 pub use error::Error;
 pub use profiler::{
     MimallocConfig, MimallocStackCapture, MimallocStats, Profiler, SamplingAllocator,
-    mimalloc_stats,
+    last_report_elapsed_micros, mimalloc_stats,
 };
 
 #[cfg(feature = "rustfs-allocator")]

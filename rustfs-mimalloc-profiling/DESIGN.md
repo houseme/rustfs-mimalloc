@@ -44,6 +44,27 @@ re-exported by adapters without duplicating state.
 
 ## Sampling and bounded recording
 
+Startup preallocates global queues and live maps through fallible reservations.
+`MetadataAllocationFailed` propagates through the session owner, whose Drop
+disables admission, clears registered TLS rings, releases global queues and
+live maps, and relinquishes recorder ownership. Explicit stop uses that same
+cleanup order. TLS exit handoffs are synchronized through registered ring
+locks before global queues are released. Fixed worker TLS ring storage remains
+owned by each thread until its exit.
+
+Live snapshot collection keeps its first shard lock through the common copy
+path. A storage-growth or table-rebuild path drops that guard, reserves for
+the shard's configured admission bound and reacquires the lock. Rebuilding
+copies pending realloc markers along with samples and frees the retired table
+after unlocking. This reduces stable-snapshot lock acquisitions from 128 to
+64 across the 64 shards. Output-vector growth and table allocation run outside
+the shard lock.
+
+Report diagnostics record complete elapsed time after the suppressed report
+closure has released its temporary data. The existing pprof-phase timer covers
+mapping collection and encoding. The two timers help distinguish earlier drain,
+snapshot and symbolization costs from the final encoding phase.
+
 Reports share one sample-output vector across both global-drain passes and TLS
 rings. A source lock is returned only when that batch fits the vector's spare
 capacity. Growth happens after unlocking, followed by a fresh length check;

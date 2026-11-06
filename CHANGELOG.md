@@ -12,6 +12,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Reduce stable live-heap snapshot locking from two acquisitions to one per
+  shard. Reserve growth and rebuilt tables outside locks, preserving concurrent
+  admissions and pending realloc metadata.
 - Pin pristine mimalloc source to v3.6.2 development commit `ea136f74`, 161
   commits after the previous v3.6.1 release pin. Numeric version is 30602;
   upstream's latest official release at review time remains v3.6.1.
@@ -27,6 +30,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Added
 
+- `last_report_elapsed_micros()` and the overhead example's
+  `last_report_elapsed_us` output cover the complete report path, including
+  aggregation, symbolization and temporary cleanup.
+- `Error::MetadataAllocationFailed` reports session queue/live-table reservation
+  failures and supports retrying with smaller capacities.
 - Raw `mi_theap_realloc_aligned` / `mi_theap_rezalloc_aligned` and unsafe
   `ThreadHeap::realloc_aligned` / `rezalloc_aligned`, following upstream PR
   #1477. Cached per-worker contexts support aligned buffer growth without
@@ -38,6 +46,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Return a recoverable error when profiling metadata preallocation fails,
+  including capacity overflow. Release partial storage and recorder ownership
+  before a subsequent session starts.
+- Clear pending global sample records and release their backing storage during
+  `Profiler::stop` and Drop, after synchronizing registered TLS handoffs.
 - Reconcile generated include directories when upstream headers are renamed,
   removed or change between files and directories. Replace generated symlinks
   without modifying their targets. Preserve unchanged header timestamps for

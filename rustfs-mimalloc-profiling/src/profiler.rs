@@ -77,6 +77,7 @@ static FLUSH_COUNT: AtomicU64 = AtomicU64::new(0);
 static FLUSHED_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 static DROPPED_SAMPLES: AtomicU64 = AtomicU64::new(0);
 static LAST_PPROF_ENCODE_ELAPSED_MICROS: AtomicU64 = AtomicU64::new(0);
+static LAST_REPORT_ELAPSED_MICROS: AtomicU64 = AtomicU64::new(0);
 
 static RECORDED_SAMPLE_SHARDS: LazyLock<Vec<Mutex<VecDeque<RecordedAllocationSample>>>> =
     LazyLock::new(|| {
@@ -460,6 +461,16 @@ pub fn mimalloc_stats() -> MimallocStats {
     }
 }
 
+/// Duration of the last completed report in microseconds, including draining,
+/// live snapshots, aggregation, stack resolution, mappings, encoding and cleanup.
+///
+/// Returns zero until the first report completes in a new session. The value
+/// remains available after stop and resets when the next session initializes.
+/// This is a process-wide diagnostic, sampled independently of [`mimalloc_stats`].
+pub fn last_report_elapsed_micros() -> u64 {
+    LAST_REPORT_ELAPSED_MICROS.load(Ordering::Relaxed)
+}
+
 impl Default for MimallocConfig {
     fn default() -> Self {
         Self {
@@ -639,6 +650,8 @@ impl Profiler {
     /// observed allocations, or another session is active. With the `no_hooks`
     /// feature it fails with [`Error::InvalidConfig`] because no observation
     /// machinery is compiled in.
+    /// Returns [`Error::MetadataAllocationFailed`] if session buffer or live-table
+    /// preallocation fails. A subsequent session can retry with smaller capacities.
     pub fn start(config: MimallocConfig) -> Result<Self> {
         if !hooks_enabled() {
             // Sessions have nothing to observe when hooks are compiled out.
@@ -659,10 +672,11 @@ impl Profiler {
         }
     }
 
-    /// Stop recording, release metadata, and relinquish recorder ownership.
+    /// Stop recording, release global/live-table storage, and relinquish ownership.
     ///
     /// This is idempotent. Pending samples are discarded; call [`Self::report`]
     /// first when they are needed. The allocator remains usable after stopping.
+    /// Workers retain their fixed TLS ring storage until thread exit.
     pub fn stop(&mut self) {
         if !self.initialized {
             return;
@@ -672,6 +686,7 @@ impl Profiler {
             .store(false, Ordering::Release);
         with_profiler_suppressed(|| {
             clear_registered_tls_samples();
+            clear_recorded_samples();
             live::clear();
         });
         self.initialized = false;
@@ -695,7 +710,7 @@ impl Profiler {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| Error::AlreadyActive)?;
         self.initialized = true;
-        with_profiler_suppressed(|| {
+        with_profiler_suppressed(|| -> Result<()> {
             SAMPLE_INTERVAL_BYTES.store(self.config.sample_interval_bytes, Ordering::Relaxed);
             HOT_ALLOCATION_STATE
                 .sampling_config_generation
@@ -723,18 +738,20 @@ impl Profiler {
             FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
             DROPPED_SAMPLES.store(0, Ordering::Relaxed);
             LAST_PPROF_ENCODE_ELAPSED_MICROS.store(0, Ordering::Relaxed);
-            prepare_sample_buffer(self.config.ring_capacity);
+            LAST_REPORT_ELAPSED_MICROS.store(0, Ordering::Relaxed);
+            prepare_sample_buffer(self.config.ring_capacity)?;
             // A session can be stopped and started again while worker threads keep
             // their TLS rings alive. Clear registered rings at the session boundary
             // so old samples cannot be flushed into the next profile interval.
             clear_registered_tls_samples();
             warm_backtrace();
-            live::prepare(self.config.live_heap_tracking, self.config.max_live_samples);
+            live::prepare(self.config.live_heap_tracking, self.config.max_live_samples)?;
             HOT_ALLOCATION_STATE
                 .recorder_active
                 .store(true, Ordering::Release);
             self.last_report = Some(Instant::now());
-        });
+            Ok(())
+        })?;
 
         log::info!(target: LOG_TAG, "Mimalloc profiling session started");
         Ok(())
@@ -755,7 +772,8 @@ impl Profiler {
         // Reporting allocates for registry snapshots, aggregation, symbol
         // resolution, and pprof encoding. Suppressing this thread avoids
         // profiler self-sampling without disabling worker-thread sampling.
-        with_profiler_suppressed(|| {
+        let report_start = Instant::now();
+        let result = with_profiler_suppressed(|| {
             let now = Instant::now();
             let duration_nanos = self
                 .last_report
@@ -792,7 +810,12 @@ impl Profiler {
             REPORT_COUNT.fetch_add(1, Ordering::Relaxed);
 
             Ok(pprof_data)
-        })
+        });
+        LAST_REPORT_ELAPSED_MICROS.store(
+            duration_to_u64_micros(report_start.elapsed()),
+            Ordering::Relaxed,
+        );
+        result
     }
 }
 
@@ -1328,7 +1351,20 @@ fn release_global_sample_slots(slots: usize) {
     }
 }
 
-fn prepare_sample_buffer(capacity: usize) {
+fn clear_recorded_samples() {
+    // Stop first quiesces and clears registered TLS rings, including exit
+    // handoffs. Release global storage afterwards, outside the shard locks.
+    for shard in RECORDED_SAMPLE_SHARDS.iter() {
+        let old = {
+            let mut samples = shard.lock().unwrap_or_else(|error| error.into_inner());
+            std::mem::take(&mut *samples)
+        };
+        drop(old);
+    }
+    GLOBAL_BUFFERED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
+}
+
+fn prepare_sample_buffer(capacity: usize) -> Result<()> {
     for shard in RECORDED_SAMPLE_SHARDS.iter() {
         let Ok(mut samples) = shard.lock() else {
             DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
@@ -1338,10 +1374,15 @@ fn prepare_sample_buffer(capacity: usize) {
         let current_capacity = samples.capacity();
         let shard_capacity = recorded_sample_shard_capacity(capacity);
         if current_capacity < shard_capacity {
-            samples.reserve(shard_capacity);
+            samples.try_reserve_exact(shard_capacity).map_err(|_| {
+                Error::MetadataAllocationFailed(
+                    "mimalloc: cannot reserve allocation sample buffers",
+                )
+            })?;
         }
     }
     GLOBAL_BUFFERED_SAMPLE_COUNT.store(count_recorded_samples(), Ordering::Relaxed);
+    Ok(())
 }
 
 /// Return a source lock only when copying its bounded batch cannot grow output.
@@ -1706,7 +1747,7 @@ mod tests {
             HOT_ALLOCATION_STATE
                 .recorder_active
                 .store(false, Ordering::Release);
-            live::prepare(false, 0);
+            live::prepare(false, 0).unwrap();
         }
     }
 
@@ -1733,7 +1774,7 @@ mod tests {
         GLOBAL_BUFFERED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         // Production initialize preallocates every shard before recording.
         // Tests must honor that contract instead of relying on Vec growth.
-        prepare_sample_buffer(DEFAULT_RING_CAPACITY);
+        prepare_sample_buffer(DEFAULT_RING_CAPACITY).unwrap();
         NEXT_RECORDED_SAMPLE_SHARD.store(0, Ordering::Relaxed);
         NEXT_DRAINED_SAMPLE_SHARD.store(0, Ordering::Relaxed);
         NEXT_REPORT_SOURCE.store(0, Ordering::Relaxed);
@@ -1869,6 +1910,72 @@ mod tests {
     }
 
     #[test]
+    fn oversized_metadata_is_recoverable_and_releases_session_ownership() {
+        let _guard = TEST_LOCK.lock().expect("lock test");
+        let previous_seen = HOT_ALLOCATION_STATE
+            .allocator_seen
+            .swap(true, Ordering::Relaxed);
+        for config in [
+            MimallocConfig {
+                ring_capacity: usize::MAX,
+                ..MimallocConfig::default()
+            },
+            MimallocConfig {
+                live_heap_tracking: true,
+                max_live_samples: usize::MAX,
+                ..MimallocConfig::default()
+            },
+        ] {
+            let result = std::panic::catch_unwind(|| Profiler::start(config));
+            assert!(result.is_ok(), "metadata reservation must return an error");
+            assert!(matches!(
+                result.unwrap(),
+                Err(Error::MetadataAllocationFailed(_))
+            ));
+            assert!(!BACKEND_CLAIMED.load(Ordering::Acquire));
+            assert!(!HOT_ALLOCATION_STATE.recorder_active.load(Ordering::Acquire));
+            assert_eq!(mimalloc_stats().buffered_samples, Some(0));
+            assert_eq!(live::metadata_payload_bytes(), 0);
+            assert!(
+                RECORDED_SAMPLE_SHARDS
+                    .iter()
+                    .all(|shard| shard.lock().unwrap().capacity() == 0)
+            );
+            let mut next = Profiler::start(MimallocConfig::default()).unwrap();
+            next.report().unwrap();
+            next.stop();
+        }
+        HOT_ALLOCATION_STATE
+            .allocator_seen
+            .store(previous_seen, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn stop_discards_global_records_and_releases_their_storage() {
+        let _guard = TEST_LOCK.lock().expect("lock test");
+        let previous_seen = HOT_ALLOCATION_STATE
+            .allocator_seen
+            .swap(true, Ordering::Relaxed);
+        let mut profiler = Profiler::start(MimallocConfig::default()).unwrap();
+        let stack = StackKey {
+            frames: [0; MAX_CAPTURE_DEPTH],
+            depth: 0,
+        };
+        push_global_test_samples([test_sample(stack)]);
+        assert!(mimalloc_stats().buffered_samples.unwrap() > 0);
+        profiler.stop();
+        assert_eq!(mimalloc_stats().buffered_samples, Some(0));
+        for shard in RECORDED_SAMPLE_SHARDS.iter() {
+            let samples = shard.lock().unwrap();
+            assert!(samples.is_empty());
+            assert_eq!(samples.capacity(), 0);
+        }
+        HOT_ALLOCATION_STATE
+            .allocator_seen
+            .store(previous_seen, Ordering::Relaxed);
+    }
+
+    #[test]
     fn backend_rejects_concurrent_owners_and_drop_releases_recorder() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         let previous_seen = HOT_ALLOCATION_STATE
@@ -1919,6 +2026,8 @@ mod tests {
                 .load(Ordering::Acquire),
         );
         backend.report().unwrap();
+        let stats = mimalloc_stats();
+        assert!(last_report_elapsed_micros() >= stats.last_pprof_encode_elapsed_micros);
         assert_eq!(
             (mimalloc_stats().reports, mimalloc_stats().reported_samples),
             (1, 1)
@@ -1936,6 +2045,7 @@ mod tests {
         drop(backend);
         let mut restarted = Profiler::new(MimallocConfig::default());
         restarted.initialize().unwrap();
+        assert_eq!(last_report_elapsed_micros(), 0);
         assert_eq!(
             (mimalloc_stats().reports, mimalloc_stats().reported_samples),
             (0, 0)
@@ -1950,7 +2060,7 @@ mod tests {
     #[test]
     fn live_snapshot_storage_tracks_empty_and_sparse_occupancy() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, DEFAULT_MAX_LIVE_SAMPLES);
+        live::prepare(true, DEFAULT_MAX_LIVE_SAMPLES).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -1989,7 +2099,7 @@ mod tests {
     #[test]
     fn live_snapshot_survives_reports_and_cross_thread_free() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2019,7 +2129,7 @@ mod tests {
     #[test]
     fn live_membership_filter_keeps_colliding_pointers_until_both_are_freed() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2061,7 +2171,7 @@ mod tests {
     #[test]
     fn failed_reallocation_preserves_metadata_under_capacity_pressure() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, 64);
+        live::prepare(true, 64).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2105,7 +2215,7 @@ mod tests {
     #[test]
     fn old_live_samples_and_reallocation_tokens_cannot_enter_restarted_session() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2132,7 +2242,7 @@ mod tests {
             .sampling_config_generation
             .fetch_add(1, Ordering::AcqRel)
             + 1;
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2225,8 +2335,10 @@ mod tests {
         REPORT_COUNT.store(2, Ordering::Relaxed);
         DROPPED_SAMPLES.store(3, Ordering::Relaxed);
         LAST_PPROF_ENCODE_ELAPSED_MICROS.store(11, Ordering::Relaxed);
+        LAST_REPORT_ELAPSED_MICROS.store(13, Ordering::Relaxed);
 
         let stats = mimalloc_stats();
+        assert_eq!(last_report_elapsed_micros(), 13);
 
         assert_eq!(
             stats,
@@ -2252,6 +2364,7 @@ mod tests {
         FLUSHED_SAMPLE_COUNT.store(0, Ordering::Relaxed);
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
         LAST_PPROF_ENCODE_ELAPSED_MICROS.store(0, Ordering::Relaxed);
+        LAST_REPORT_ELAPSED_MICROS.store(0, Ordering::Relaxed);
         clear_test_buffers();
     }
 
@@ -2298,7 +2411,7 @@ mod tests {
     #[test]
     fn abandoned_reallocation_token_restores_its_live_slot() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, 64);
+        live::prepare(true, 64).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2325,7 +2438,7 @@ mod tests {
     #[test]
     fn suppressed_and_reentrant_frees_still_remove_live_metadata() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2371,7 +2484,7 @@ mod tests {
     fn tracked_reallocation_below_byte_remainder_keeps_live_sample_without_allocation_event() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2431,7 +2544,7 @@ mod tests {
     fn failed_provider_realloc_restores_the_existing_live_record() {
         let _guard = TEST_LOCK.lock().unwrap();
         clear_test_buffers();
-        live::prepare(true, 64);
+        live::prepare(true, 64).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2471,7 +2584,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
         let previous_interval = SAMPLE_INTERVAL_BYTES.swap(4096, Ordering::Relaxed);
-        live::prepare(true, 4096);
+        live::prepare(true, 4096).unwrap();
         HOT_ALLOCATION_STATE
             .recorder_active
             .store(true, Ordering::Release);
@@ -2839,7 +2952,7 @@ mod tests {
         push_global_test_samples([test_sample(stack), test_sample(stack)]);
         GLOBAL_BUFFERED_SAMPLE_COUNT.store(usize::MAX, Ordering::Relaxed);
 
-        prepare_sample_buffer(10);
+        prepare_sample_buffer(10).unwrap();
 
         assert_eq!(count_recorded_samples(), 0);
         assert_eq!(GLOBAL_BUFFERED_SAMPLE_COUNT.load(Ordering::Relaxed), 0);
@@ -2922,7 +3035,7 @@ mod tests {
     fn registry_contention_never_accepts_samples_hidden_from_the_reporter() {
         let _guard = TEST_LOCK.lock().unwrap();
         clear_test_buffers();
-        live::prepare(false, 0);
+        live::prepare(false, 0).unwrap();
         let previous_interval = SAMPLE_INTERVAL_BYTES.swap(1, Ordering::Relaxed);
         HOT_ALLOCATION_STATE
             .sampling_config_generation

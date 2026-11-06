@@ -239,6 +239,10 @@ fn run_active(config: WorkloadConfig, live_heap: bool) -> Result<(), Box<dyn std
         "pprof_encode_elapsed_us={}",
         stats.last_pprof_encode_elapsed_micros
     );
+    println!(
+        "last_report_elapsed_us={}",
+        rustfs_mimalloc_profiling::last_report_elapsed_micros()
+    );
 
     backend.stop();
     if let Some(path) = std::env::var_os("MIMALLOC_BENCH_PPROF_PATH") {

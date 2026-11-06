@@ -4,6 +4,8 @@
 pub enum Error {
     /// A configuration field is invalid or unsupported on this platform.
     InvalidConfig(&'static str),
+    /// Session metadata preallocation exceeded capacity limits or available memory.
+    MetadataAllocationFailed(&'static str),
     /// The sampling allocator has not observed any allocation in this process.
     AllocatorNotObserved,
     /// Another profiling session already owns the process recorder.
@@ -15,7 +17,7 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
-            Self::InvalidConfig(message) => message,
+            Self::InvalidConfig(message) | Self::MetadataAllocationFailed(message) => message,
             Self::AllocatorNotObserved => {
                 "mimalloc: SamplingAllocator has not observed allocations; install it as #[global_allocator] before starting profiling"
             }

@@ -75,6 +75,12 @@ first to retain them. A stopped owner cannot report or affect a later session.
 Applications schedule reports and provide their own storage or uploader.
 `pprof::Profile` exposes standard protobuf types for `prost::Message` decoding.
 
+Session buffer and live-table preallocation failures return
+`Error::MetadataAllocationFailed`. The failed start releases recorder ownership
+and partial metadata, so applications can retry with smaller capacities.
+Stopping releases global sample-buffer and live-table storage. Worker threads
+retain their fixed TLS rings until thread exit, with pending records cleared.
+
 ## Profile semantics
 
 - Default reports contain interval `alloc_objects/count` and `alloc_space/bytes`.
@@ -117,6 +123,19 @@ The temporary live-copy vector is sized from retained occupancy. Stable empty
 snapshots need no vector storage; concurrent admissions can grow that buffer
 outside the shard lock before copying. The preallocated live tables and
 `live_metadata_payload_bytes` accounting are unchanged.
+
+Live snapshots lock each shard once when existing output and table capacity are
+sufficient. Growth and table rebuilding allocate after unlocking, reserve for
+concurrent admissions and reacquire the shard before copying. Table replacement
+preserves pending realloc reservations, and retired storage is freed after
+unlocking.
+
+`last_report_elapsed_micros()` measures the last completed report,
+including draining, live snapshots, aggregation, symbol resolution, mapping
+collection, encoding and temporary cleanup. Compare it with
+`last_pprof_encode_elapsed_micros` to identify costs before the encoding phase.
+Both values reset when a new session starts. The overhead example prints the
+complete duration as `last_report_elapsed_us`.
 
 Portable backtrace capture is the default. `MimallocStackCapture::Native` is
 an opt-in Linux GNU collector and is rejected elsewhere. Mapping and build-ID

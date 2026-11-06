@@ -13,6 +13,7 @@ use super::{
     HOT_ALLOCATION_STATE, SampleWeight, StackKey, session_is_current, splitmix64,
     with_profiler_suppressed,
 };
+use crate::{Error, Result};
 
 const SHARD_COUNT: usize = 64;
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -57,11 +58,11 @@ pub(super) fn enabled() -> bool {
     ENABLED.load(Ordering::Acquire)
 }
 
-pub(super) fn prepare(enabled: bool, capacity: usize) {
+pub(super) fn prepare(enabled: bool, capacity: usize) -> Result<()> {
     clear();
     DROPPED.store(0, Ordering::Relaxed);
     if !enabled {
-        return;
+        return Ok(());
     }
     let shards = SHARDS.get_or_init(|| {
         std::array::from_fn(|_| LiveShard {
@@ -76,9 +77,13 @@ pub(super) fn prepare(enabled: bool, capacity: usize) {
     });
     let mut payload_bytes = 0_usize;
     for (index, shard) in shards.iter().enumerate() {
-        let mut entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
         let shard_capacity = capacity / SHARD_COUNT + usize::from(index < capacity % SHARD_COUNT);
-        entries.samples = HashMap::with_capacity(shard_capacity);
+        let mut samples = HashMap::new();
+        samples.try_reserve(shard_capacity).map_err(|_| {
+            Error::MetadataAllocationFailed("mimalloc: cannot reserve live sample metadata")
+        })?;
+        let mut entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
+        entries.samples = samples;
         payload_bytes = payload_bytes.saturating_add(
             entries
                 .samples
@@ -92,6 +97,7 @@ pub(super) fn prepare(enabled: bool, capacity: usize) {
     }
     METADATA_PAYLOAD_BYTES.store(payload_bytes, Ordering::Relaxed);
     ENABLED.store(true, Ordering::Release);
+    Ok(())
 }
 
 pub(super) fn clear() {
@@ -308,50 +314,42 @@ pub(super) fn snapshot() -> Vec<LiveAllocationSample> {
     // reporting. Stable empty/sparse heaps need no whole-shard reservation.
     let mut samples = Vec::with_capacity(sample_count());
     for shard in shards {
-        // Allocate the output storage before taking a shard lock. Samples are
-        // copied under the lock, with aggregation/symbolization done afterward.
-        let (capacity, rebuild) = {
-            let entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
-            (
-                entries.capacity,
-                entries.samples.capacity() < entries.capacity,
-            )
-        };
-        let mut replacement = rebuild.then(|| HashMap::with_capacity(capacity));
-        let mut entries = lock_snapshot_entries(shard, &mut samples);
-        let old = replacement.take().map(|mut replacement| {
-            replacement.extend(
-                entries
-                    .samples
-                    .iter()
-                    .map(|(pointer, entry)| (*pointer, *entry)),
-            );
-            std::mem::replace(&mut entries.samples, replacement)
-        });
-        samples.extend(entries.samples.values().map(|entry| entry.sample));
-        drop(entries);
-        // Rebuilding happens only during reporting. Free the old table outside
-        // its shard lock so allocator metadata cleanup cannot recurse into it.
-        drop(old);
+        snapshot_shard(shard, &mut samples, Vec::reserve);
     }
     samples
 }
 
-fn lock_snapshot_entries<'a>(
-    shard: &'a LiveShard,
+fn snapshot_shard(
+    shard: &LiveShard,
     samples: &mut Vec<LiveAllocationSample>,
-) -> std::sync::MutexGuard<'a, LiveMap> {
-    let entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
-    if samples.capacity() - samples.len() >= entries.samples.len() {
-        return entries;
-    }
-    // Admissions outgrew the initial occupancy estimate. Reserve this shard's
-    // hard limit outside its lock, then reacquire it. All later admissions fit;
-    // copying under the lock cannot allocate or discard a retained sample.
+    reserve: impl FnOnce(&mut Vec<LiveAllocationSample>, usize),
+) {
+    let mut entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
     let capacity = entries.capacity;
+    let rebuild = entries.samples.capacity() < capacity;
+    let mut replacement = None;
+    if rebuild || samples.capacity() - samples.len() < entries.samples.len() {
+        drop(entries);
+        replacement = rebuild.then(|| HashMap::with_capacity(capacity));
+        // Any unlock can admit more records. Reserve this shard's full bound
+        // before reacquiring it, so the copy and table rebuild cannot allocate.
+        reserve(samples, capacity);
+        entries = shard.entries.lock().unwrap_or_else(|err| err.into_inner());
+    }
+    let old = replacement.map(|mut replacement| {
+        replacement.extend(
+            entries
+                .samples
+                .iter()
+                .map(|(pointer, entry)| (*pointer, *entry)),
+        );
+        std::mem::replace(&mut entries.samples, replacement)
+    });
+    samples.extend(entries.samples.values().map(|entry| entry.sample));
     drop(entries);
-    samples.reserve(capacity);
-    shard.entries.lock().unwrap_or_else(|err| err.into_inner())
+    // Table deallocation can enter allocator bookkeeping. Release it after
+    // unlocking, including when a pending realloc reservation was copied.
+    drop(old);
 }
 
 pub(super) fn sample_count() -> usize {
@@ -409,10 +407,15 @@ mod tests {
         };
         let mut samples = Vec::with_capacity(1);
         samples.push(sample);
-        let entries = lock_snapshot_entries(&shard, &mut samples);
-        assert!(samples.capacity() - samples.len() >= entries.samples.len());
-        let capacity = samples.capacity();
-        samples.extend(entries.samples.values().map(|entry| entry.sample));
+        let mut reserved_capacity = 0;
+        snapshot_shard(&shard, &mut samples, |out, capacity| {
+            assert!(
+                shard.entries.try_lock().is_ok(),
+                "reserve outside the shard lock"
+            );
+            out.reserve(capacity);
+            reserved_capacity = out.capacity();
+        });
         assert_eq!(
             samples.len(),
             9,
@@ -420,12 +423,43 @@ mod tests {
         );
         assert_eq!(
             samples.capacity(),
-            capacity,
+            reserved_capacity,
             "copying must not grow storage"
         );
+        let entries = shard.entries.lock().unwrap();
         assert!(
             entries.samples[&0].reallocating,
             "keep pending realloc state"
         );
+        drop(entries);
+
+        samples.clear();
+        snapshot_shard(&shard, &mut samples, |_, _| {
+            panic!("a preallocated snapshot must use the fast path")
+        });
+        assert_eq!(samples.len(), 8);
+
+        // A churned table may have less insertion capacity than its logical
+        // limit. Force a rebuild and admit another entry during the unlocked gap.
+        shard.entries.lock().unwrap().capacity = 32;
+        samples.clear();
+        snapshot_shard(&shard, &mut samples, |out, capacity| {
+            let mut entries = shard.entries.try_lock().expect("rebuild outside the lock");
+            entries.samples.insert(
+                99,
+                LiveEntry {
+                    sample,
+                    reallocating: true,
+                },
+            );
+            drop(entries);
+            out.reserve(capacity);
+            reserved_capacity = out.capacity();
+        });
+        assert_eq!(samples.len(), 9);
+        assert_eq!(samples.capacity(), reserved_capacity);
+        let entries = shard.entries.lock().unwrap();
+        assert!(entries.samples.capacity() >= 32);
+        assert!(entries.samples[&0].reallocating && entries.samples[&99].reallocating);
     }
 }
