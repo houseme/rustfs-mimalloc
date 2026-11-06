@@ -498,8 +498,8 @@ mod tests {
     fn version_is_v3() {
         assert_eq!(
             MiMalloc::version(),
-            30601,
-            "expected pinned V3.6.1 snapshot"
+            30602,
+            "expected pinned V3.6.2 development snapshot"
         );
     }
 

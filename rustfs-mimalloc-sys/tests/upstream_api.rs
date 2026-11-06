@@ -398,6 +398,7 @@ fn new_option_ids_match_upstream_header() {
     assert_eq!(mi_option_t::mi_option_stats_merge_on_collect as i32, 47);
     assert_eq!(mi_option_t::mi_option_stats_merge_threshold as i32, 52);
     assert_eq!(mi_option_t::mi_option_arena_purge_immediate_size as i32, 53);
+    assert_eq!(mi_option_t::mi_option_mte as i32, 54);
     assert_eq!(
         mi_option_t::mi_option_minimal_purge_size as i32,
         mi_option_t::mi_option_arena_purge_min_size as i32

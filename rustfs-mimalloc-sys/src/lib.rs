@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream release v3.6.1, commit 56dc5eb8.
+//! Pinned to upstream v3.6.2 development commit ea136f74 (not a release tag).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -114,6 +114,10 @@ pub enum mi_option_t {
     /// statistics sooner at the cost of more frequent merges.
     mi_option_stats_merge_threshold = 52,
     mi_option_arena_purge_immediate_size = 53,
+    /// Memory tagging mode (default 1). Effective only in a native MTE build
+    /// on supported hardware/OS; setting this option does not enable MI_MTE.
+    /// Linux modes: 2 = synchronous, 3 = asynchronous, 4 = preferred checks.
+    mi_option_mte = 54,
 }
 
 impl mi_option_t {
@@ -422,6 +426,8 @@ unsafe extern "C" {
     /// This does not preserve freed objects: free-list metadata can overwrite them.
     /// `heap` must stay alive; null selects the main heap.
     pub fn mi_heap_set_debug_fill_preserve(heap: *mut mi_heap_t, preserve: size_t);
+    /// Never returns null. On initialization failure or after thread teardown,
+    /// returns an empty context whose allocations fail. Owner-thread use only.
     pub fn mi_heap_theap(heap: *mut mi_heap_t) -> *mut mi_theap_t;
 
     pub fn mi_heap_malloc(heap: *mut mi_heap_t, size: size_t) -> *mut c_void;
@@ -513,6 +519,22 @@ unsafe extern "C" {
     pub fn mi_theap_zalloc_aligned(
         theap: *mut mi_theap_t,
         size: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    /// Owner-thread aligned reallocation. On failure, non-null `p` stays valid.
+    /// `alignment` must be a nonzero power of two; keep the context initialized.
+    pub fn mi_theap_realloc_aligned(
+        theap: *mut mi_theap_t,
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+    ) -> *mut c_void;
+    /// As `mi_theap_realloc_aligned`, for null or originally zero-initialized
+    /// blocks only. Preserves existing contents and zeroes growth.
+    pub fn mi_theap_rezalloc_aligned(
+        theap: *mut mi_theap_t,
+        p: *mut c_void,
+        newsize: size_t,
         alignment: size_t,
     ) -> *mut c_void;
     pub fn mi_theap_realloc(theap: *mut mi_theap_t, p: *mut c_void, newsize: size_t)

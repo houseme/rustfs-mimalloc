@@ -8,6 +8,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [0.7.4] - 2026-11-06
+
+### Changed
+
+- Pin pristine mimalloc source to v3.6.2 development commit `ea136f74`, 161
+  commits after the previous v3.6.1 release pin. Numeric version is 30602;
+  upstream's latest official release at review time remains v3.6.1.
+- Synchronize all three published crate versions and internal requirements at
+  0.7.4, including lockfile and installation examples. Consolidate this update
+  in one shared 0.7.4 section; prepare source commit/push without publication.
+- Inherit native secure free-list, reuse-delay and reciprocal-division changes,
+  sealed process metadata, and experimental MTE/PAC implementations. Preserve
+  MI_SECURE=4 for `secure`; default native MTE/PAC remain disabled. Document
+  numeric target-CFLAGS controls and hardware/OS requirements; no speedup claim.
+- Remove the now-unused FreeBSD/DragonFly libutil link dependency, retaining
+  libexecinfo for native backtraces.
+
+### Added
+
+- Raw `mi_theap_realloc_aligned` / `mi_theap_rezalloc_aligned` and unsafe
+  `ThreadHeap::realloc_aligned` / `rezalloc_aligned`, following upstream PR
+  #1477. Cached per-worker contexts support aligned buffer growth without
+  another heap TLS lookup. Zeroed reallocation requires original zero
+  initialization; failed reallocation preserves the original block.
+- `mi_option_mte` at ID 54, available through the existing option APIs. This
+  runtime control is effective only in a native MTE build on supported systems;
+  it does not turn on MTE in default Cargo builds.
+
+### Fixed
+
+- Inherit upstream #1479's small-alignment realloc correction for offset
+  pointers, pthread-key creation race correction, subprocess-destruction TLS
+  cleanup fix, and heap-visitor page claiming before collection. Also inherit
+  32-bit arena bounds, wasm32 page sizing and DragonFly mapping fixes.
+- Correct `Heap::thread_local` and raw lookup documentation: upstream never
+  returns null and can return an empty, unavailable context. `Some` does not
+  imply allocation readiness. Deprecated upstream options have no effect in v3.
+
+### Validation
+
+- Audit all four public header diffs and merged PR metadata. API/ABI controls
+  cover 137 bound functions, 46 option IDs, 128 extern signatures, nine callbacks
+  and three layouts; existing option IDs and exposed layouts are retained.
+- Add aligned reallocation null/grow/shrink/zeroing/alignment/failure contracts,
+  an offset-pointer regression, C++ linkage coverage for both new exports and
+  independent-process numeric/symbolic MTE option parsing checks.
+- Retain the guarded standalone QSBR header correction, Windows static CRT
+  compatibility, native parser/THP probes, isolated providers and package gates.
+  See `UPSTREAM_REVIEW.md` and `REVIEW_0.7.4.md` for results, optimization
+  priorities and target/hardware validation limits.
+
 ## [0.7.3] - 2026-11-02
 
 ### Changed

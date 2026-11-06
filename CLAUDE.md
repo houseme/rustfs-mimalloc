@@ -3,7 +3,7 @@
 ## Project
 
 rustfs-mimalloc: high-performance mimalloc V3 bindings for Rust, pinned to
-V3.6.1 release commit `56dc5eb8`.
+V3.6.2 development commit `ea136f74` (not a release tag), numeric version 30602.
 The sys build exports a generated public include tree with a guarded QSBR
 header correction. ABI checks share that transformation; keep upstream source
 pristine and use DEP_MIMALLOC_INCLUDE for downstream C/C++ consumers.

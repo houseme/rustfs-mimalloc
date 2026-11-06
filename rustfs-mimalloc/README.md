@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.3"
+rustfs-mimalloc = "0.7.4"
 ```
 
 ```rust
@@ -50,7 +50,7 @@ APIs, while deallocation uses the general `mi_free` path.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30601 = V3.6.1 release source line
+let version = MiMalloc::version();       // 30602 = V3.6.2 development snapshot
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -72,8 +72,8 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.1 release (`56dc5eb8`)**.
-The numeric C version is 30601. QSBR's experimental constructor is raw sys FFI
+The submodule is pinned to upstream **V3.6.2 development (`ea136f74`)**, not a
+release tag. The numeric C version is 30602. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has
 the same ID and retains the old Rust variant. Preserve alignment requirements.
@@ -153,7 +153,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.3", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.4", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
@@ -210,3 +210,17 @@ Apache-2.0.
 
 Release notes are maintained in the shared
 [workspace changelog](https://github.com/houseme/rustfs-mimalloc/blob/main/CHANGELOG.md).
+
+### Cached aligned buffer growth
+
+`ThreadHeap::realloc_aligned` and `rezalloc_aligned` use the cached worker
+context without another heap TLS lookup. Both require a live, exclusively owned
+mimalloc block (or null), a nonzero power-of-two alignment, and an initialized
+calling-thread context. Failure preserves the original block. `rezalloc_aligned`
+requires original zero initialization and zeroes growth. Keep the borrowed heap
+alive and free successful results through mimalloc.
+
+`Heap::thread_local()` retains its `Option` return type. Upstream now documents
+that its context lookup never returns null: it can return an empty context on
+initialization failure or after thread teardown. `Some` therefore does not
+establish allocation readiness; always check allocation results for null.

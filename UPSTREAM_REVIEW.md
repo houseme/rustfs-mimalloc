@@ -1,3 +1,73 @@
+# 0.7.4 upstream and API audit — 2026-11-06
+
+Project base after `git pull --ff-only`: `ddde603` (already current, clean).
+The workspace actually started at 0.7.3, with no existing 0.7.4 or Unreleased
+section. This preparation synchronizes the three crates to the requested
+**0.7.4**, with one shared changelog section and no tag or publication.
+
+The selected upstream revision is
+[`ea136f74031c0d954df7b609a6ede97c23cc81c2`](https://github.com/microsoft/mimalloc/commit/ea136f74031c0d954df7b609a6ede97c23cc81c2),
+161 reachable commits after `56dc5eb8`. This is **v3.6.2 development**, C version
+30602. The latest official release checked through GitHub is still
+[v3.6.1](https://github.com/microsoft/mimalloc/releases/tag/v3.6.1).
+The source remains a pristine submodule at an immutable commit.
+
+## Merged PR audit
+
+Read the live closed-PR collection and separately verify `merged_at`, base
+branch and merge commit. Closure or a commit's PR number is not merge evidence.
+
+| Item | Verified status and effect |
+| --- | --- |
+| [#1477](https://github.com/microsoft/mimalloc/pull/1477) | Merged into dev3 on November 3, `02225869`: public thread-heap aligned realloc/rezalloc. Add both raw bindings and unsafe cached-context wrappers. |
+| [#1480](https://github.com/microsoft/mimalloc/pull/1480) | Merged into dev3 on November 6, `1edf6f09`: abandoned-visit option is v1/v2 only; no new Rust control. |
+| [#1481](https://github.com/microsoft/mimalloc/pull/1481) | Merged into dev3 on November 6, `ab6f975b`: deprecated options have no effect. |
+| [#1483](https://github.com/microsoft/mimalloc/pull/1483) | Merged into dev3 on November 6, `7b2faabc`: context lookup never returns null; empty contexts fail allocations. Correct Rust docs while retaining the existing Option signature. |
+| [#1475](https://github.com/microsoft/mimalloc/pull/1475), [#1486](https://github.com/microsoft/mimalloc/pull/1486) | Closed without GitHub merges, targeting main3. Direct commits `3126e001` / `ec1b9d7b` address the corresponding CI-version / C++ ternary topics; do not count them as merged PRs. |
+| [#1485](https://github.com/microsoft/mimalloc/pull/1485) | Closed without a GitHub merge, targeting dev2; no v3 API inferred. |
+
+Post-tag release integration PRs #1471/#1472 were already audited in the
+November 2 report below; they target main3, not new dev3 API work.
+
+## Direct native changes and API decisions
+
+Read the full diff of `mimalloc.h`, `mimalloc-profile.h`, `mimalloc-stats.h` and
+`mimalloc/qsbr.h`. Only the base public header changes: two functions, one active
+option, version and option documentation. Expose `mi_option_mte = 54` through
+the existing runtime option surface. Existing IDs, callback signatures and
+three public layouts are unchanged. Coverage is 137 bound Rust functions,
+46 option IDs, 128 extern signatures, nine callbacks and three layouts.
+The 96 remaining unbound exports stay outside the established binding scope.
+
+- `ea136f74` fixes the small-alignment shortcut retaining misaligned offset
+  pointers (#1479); the regression starts with a real offset allocation and
+  requires word-aligned realloc output with preserved bytes.
+- `8091fc4a` corrects pthread-key creation; `1f4e7ab8` limits caller TLS/global
+  fast-key cleanup to main-subprocess destruction. `35c5f492` claims visited
+  pages before collection. These are inherited native fixes.
+- `528d3133` limits arena size on 32-bit; `00f7efff` aligns wasm32 slices with
+  pages; `113d8a93` and `e354c486` fix DragonFly mapping support and eliminate
+  the libutil dependency. Mirror that link removal in our build script.
+- `24274846` ignores option environment input for elevated processes;
+  `d6716d33` warns about unknown option names. Default startup option parsing
+  remains covered in separate ordinary-process executions.
+- Native MTE/PAC, sealed process areas, improved checked-free paths and randomized
+  free-list reuse are included. The final revision's policy supersedes temporary
+  intermediate levels. Keep default MTE/PAC off and `secure` at MI_SECURE=4.
+  Advanced numeric target-CFLAGS controls are documented; no Cargo hardware
+  feature, automatic architecture uplift or hardware execution claim is added.
+
+QSBR's standalone-header defect is unchanged. Retain the generated correction
+and shared ABI transformation. Windows static-CRT patch anchors and entropy
+controls still pass on the host; actual Windows startup remains target CI work.
+
+See [the project review](REVIEW_0.7.4.md) for functional review, prioritized
+performance work, executed validation and remaining platform boundaries.
+
+---
+
+Earlier reviews retain their historical revisions and validation results.
+
 # 0.7.3 release-readiness review — 2026-11-02
 
 The current update selects the official

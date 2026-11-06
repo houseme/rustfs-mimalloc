@@ -294,7 +294,6 @@ fn windows_static_source() -> PathBuf {
 fn link_system_libs(target: &TargetCfg) {
     if matches!(target.os.as_str(), "freebsd" | "dragonfly") {
         println!("cargo:rustc-link-lib=execinfo");
-        println!("cargo:rustc-link-lib=util");
     }
     if target.is_windows() {
         // Windows: required for crypto (BCryptGenRandom), process info (psapi),

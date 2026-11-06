@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.1 release commit `56dc5eb8`.
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.2 development commit `ea136f74` (not a release tag).
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.7.3"
+rustfs-mimalloc-sys = "0.7.4"
 ```
 
 ```rust
@@ -92,14 +92,17 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The V3.6.1 release pin adds 25 commits after our previous development pin,
-reviewed on 2026-11-02. It includes PR #1455's Emscripten backend selection, compiler-unwinder
-fallback fixes, CHERI/provenance work, deferred fork-child cleanup (#1456) and
-a 4 MiB default stats merge threshold (#1458), macOS fork-zone handling, and
-guarded metadata/process state in secure mode. C23 `mi_free_sized` and
-`mi_free_aligned_sized` are newly bound; alignment precedes size in the latter.
+The V3.6.2 development pin adds 161 commits after v3.6.1, reviewed on
+2026-11-06. New bindings are `mi_theap_realloc_aligned`,
+`mi_theap_rezalloc_aligned` and `mi_option_mte` (ID 54). Existing option IDs,
+callback signatures and public layouts are unchanged. The native range fixes
+pthread-key creation, subprocess TLS teardown, heap-visitor page ownership and
+small-alignment realloc of offset allocations. Unneeded libutil linking is
+removed for FreeBSD/DragonFly; native pprof still links libexecinfo there.
+C23 `mi_free_sized` / `mi_free_aligned_sized` remain available, with alignment
+before size in the latter.
 
-The upstream release still has a standalone QSBR header defect. Build scripts
+The pinned upstream source still has a standalone QSBR header defect. Build scripts
 export a corrected include tree through `DEP_MIMALLOC_INCLUDE`, using a guarded
 copy that adds the base public header and standard C++ C-linkage guards. Use
 that include path for downstream C/C++; the vendored originals remain pristine.
@@ -115,8 +118,9 @@ The previously added `mi_thread_id_of`,
 invalidates cached aliases. Foreign-context abandonment requires a quiescent
 owner outside mimalloc and no concurrent heap/context deletion. Reclaim on free
 defaults to originating-context-only (`0`) again; configure before heap creation
-to opt into cross-context reclaim (`1`) or disallow it (`-1`). No option IDs
-or profiler ABI fields change. This release also exposes existing `mi_expand`, zero-initialized
+to opt into cross-context reclaim (`1`) or disallow it (`-1`). Existing option
+IDs and profiler ABI fields are retained. Earlier updates also exposed `mi_expand`,
+zero-initialized
 reallocation, checked heap array allocation, and heap small-allocation APIs.
 Run `cargo xtask check-api` from the repository root to audit
 binding names and option IDs; integration tests cover linkage and behavior.
@@ -185,3 +189,25 @@ Apache-2.0. The vendored mimalloc C library is MIT-licensed.
 
 Release notes are maintained in the shared
 [workspace changelog](https://github.com/houseme/rustfs-mimalloc/blob/main/CHANGELOG.md).
+
+## Native MTE and PAC controls
+
+Default Cargo builds leave upstream's experimental memory tagging (MTE) and
+pointer authentication (PAC) disabled. `mi_option_mte` and `MIMALLOC_MTE` do not
+change that build choice. The runtime MTE option accepts off/on or 0/1 and, on
+Linux, sync/async/preferred (2/3/4). Its configured default is 1.
+
+Advanced native builds can pass numeric definitions through target-specific
+`CFLAGS`: `-DMI_MTE=1` prefers MTE where available, `-DMI_MTE=2` requires it;
+`-DMI_PAC=1` selects software pointer signing, `-DMI_PAC=2` requires arm64
+hardware PAC with GCC/Clang. These are C definitions, not CMake string values.
+MTE is arm64-only and needs OS support (including appropriate Apple process
+entitlements). Required hardware modes fail when support is unavailable.
+These modes can change default native security checks and allocation costs.
+Hardware-enabled execution is outside this update's validation; no Cargo
+feature or automatic CPU tuning is added. Target CFLAGS configure native C;
+RUSTFLAGS alone do not configure its compiler.
+
+Deprecated upstream options have no effect in v3. `mi_heap_theap` never returns
+null; a failed or torn-down thread context is represented by an empty context
+whose allocations fail. A non-null context is not proof of allocation readiness.

@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.1 release, commit `56dc5eb8`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.2 development snapshot, commit `ea136f74`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -30,7 +30,7 @@ Repository maintenance and release validation use the unpublished Rust
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.3"
+rustfs-mimalloc = "0.7.4"
 ```
 
 ```rust
@@ -88,7 +88,7 @@ Implements `GlobalAlloc` with aligned allocation/reallocation and general
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30601 = V3.6.1 release
+// Version: 30602 = V3.6.2 development snapshot
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -154,18 +154,29 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 56dc5eb8](https://github.com/microsoft/mimalloc/commit/56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c),
-at the official **v3.6.1 release**, 25 commits after the previous validated pin.
-The numeric C version remains **30601**.
+The submodule pins [upstream commit ea136f74](https://github.com/microsoft/mimalloc/commit/ea136f74031c0d954df7b609a6ede97c23cc81c2),
+a **v3.6.2 development snapshot**, 161 commits after the previous v3.6.1 release
+pin. The numeric C version is **30602**; the latest official upstream release
+at review time remains v3.6.1.
 
-The update defers fork-child cleanup until normal allocation, so an uncoordinated
-multithreaded fork followed only by `exec` or `_exit` avoids traversing another
-thread's inconsistent allocator state. The default stats merge threshold rises
-from 512 KiB to 4 MiB, reducing merge frequency while delaying parent-heap
-statistics. Set `MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for the
-previous frequency, or `0` to disable threshold-based merges. The existing
-option APIs retain their IDs and units. This release adds C23 sized-free APIs;
-option IDs, callback signatures and exposed layouts are unchanged.
+This update adds raw `mi_theap_realloc_aligned` / `mi_theap_rezalloc_aligned`
+and `ThreadHeap::{realloc_aligned,rezalloc_aligned}`. Cache a context once per
+heap/worker to avoid repeated TLS heap lookup, including aligned buffer growth.
+The methods preserve content and alignment; zeroed reallocation requires an
+originally zero-initialized block. Failure leaves the original allocation valid.
+These remain unsafe pointer APIs. No measured throughput improvement is claimed.
+
+The public `mi_option_mte` (ID 54) controls native memory tagging only when
+mimalloc was compiled with MTE and the hardware/OS supports it. Default Cargo
+builds keep native MTE/PAC disabled; changing this option cannot enable them.
+See the [sys build controls](rustfs-mimalloc-sys/README.md#native-mte-and-pac-controls).
+The upstream range also fixes pthread-key creation, subprocess TLS destruction,
+small-alignment realloc of offset pointers, and heap-visitor page ownership.
+Existing option IDs, callback signatures and exposed layouts remain unchanged.
+
+Earlier updates added deferred fork-child cleanup and the 4 MiB stats merge
+threshold. Configure `MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for
+more frequent parent-heap statistics, or `0` to disable threshold-based merging.
 
 `MiMalloc::free_sized(ptr, size)` and
 `MiMalloc::free_aligned_sized(ptr, alignment, size)` expose these unsafe APIs.
@@ -185,7 +196,7 @@ verification results, and remaining optimization opportunities.
 - `MiMalloc::rezalloc{,_aligned}` and `Heap::rezalloc{,_aligned}` preserve
   existing content and zero growth for blocks originally zero-initialized.
   `Heap::calloc` and `recalloc` check multiplication overflow.
-- `ThreadHeap::{calloc,malloc_csize,zalloc_csize,realloc,rezalloc}` extend cached
+- `ThreadHeap::{calloc,malloc_csize,zalloc_csize,realloc,rezalloc,realloc_aligned,rezalloc_aligned}` extend cached
   worker contexts. They remain unsafe raw allocation operations with the same
   parent-heap and thread-context lifetime requirements.
 
@@ -370,7 +381,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.1 release, commit `56dc5eb8`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.2 development snapshot, commit `ea136f74`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
@@ -430,7 +441,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.3", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.4", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

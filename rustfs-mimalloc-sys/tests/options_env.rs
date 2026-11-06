@@ -46,6 +46,7 @@ fn main() {
                 "bytes" => mi_option_get_size(mi_option_t::mi_option_stats_merge_threshold) as i64,
                 "kib" => mi_option_get_size(mi_option_t::mi_option_arena_purge_min_size) as i64,
                 "reclaim" => mi_option_get(mi_option_t::mi_option_page_reclaim_on_free) as i64,
+                "mte" => mi_option_get(mi_option_t::mi_option_mte) as i64,
                 _ => panic!("unknown option case"),
             }
         };
@@ -100,6 +101,15 @@ fn main() {
         ("reclaim", "-1".to_owned(), -1),
         ("reclaim", "0".to_owned(), 0),
         ("reclaim", "1".to_owned(), 1),
+        // Parsing the public control does not establish hardware MTE support.
+        ("mte", "0".to_owned(), 0),
+        ("mte", "1".to_owned(), 1),
+        ("mte", "2".to_owned(), 2),
+        ("mte", "3".to_owned(), 3),
+        ("mte", "4".to_owned(), 4),
+        ("mte", "sync".to_owned(), 2),
+        ("mte", "ASYNC".to_owned(), 3),
+        ("mte", "preferred".to_owned(), 4),
     ];
     let executable = std::env::current_exe().unwrap();
     for (kind, value, expected) in &cases {
@@ -108,6 +118,7 @@ fn main() {
             "bytes" => "MIMALLOC_STATS_MERGE_THRESHOLD",
             "kib" => "MIMALLOC_ARENA_PURGE_MIN_SIZE",
             "reclaim" => "MIMALLOC_PAGE_RECLAIM_ON_FREE",
+            "mte" => "MIMALLOC_MTE",
             _ => unreachable!(),
         };
         let mut command = std::process::Command::new(&executable);
