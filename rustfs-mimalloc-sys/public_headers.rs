@@ -34,6 +34,7 @@ pub fn qsbr(source: &str) -> io::Result<String> {
 
 /// Prepare a disjoint export tree. Validate the correction before touching output,
 /// then preserve unchanged files so downstream compiler caches remain valid.
+/// The destination is an owned generated tree, including any obsolete entries.
 pub fn prepare(source: &Path, destination: &Path) -> io::Result<()> {
     let source = fs::canonicalize(source)?;
     let destination = resolve_destination(destination)?;
@@ -88,6 +89,27 @@ fn copy_tree(
     corrected: &[u8],
 ) -> io::Result<()> {
     fs::create_dir_all(destination)?;
+    // Reconcile each generated directory before copying. In particular, remove
+    // renamed headers and handle file/directory transitions across upstream pins.
+    // Use entry types so a destination symlink is unlinked rather than followed.
+    for entry in fs::read_dir(destination)? {
+        let entry = entry?;
+        let actual = entry.file_type()?;
+        let matches_source = match fs::symlink_metadata(source.join(entry.file_name())) {
+            Ok(expected) => {
+                (actual.is_dir() && expected.is_dir()) || (actual.is_file() && expected.is_file())
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error),
+        };
+        if !matches_source {
+            if actual.is_dir() {
+                fs::remove_dir_all(entry.path())?;
+            } else {
+                fs::remove_file(entry.path())?;
+            }
+        }
+    }
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let path = entry.path();

@@ -174,10 +174,22 @@ pub fn inventory(header: &str, bindings: &str) -> Result<serde_json::Value> {
         .captures(header)
         .context("missing MI_MALLOC_VERSION")?[1]
         .parse::<u32>()?;
+    let unbound: BTreeSet<_> = exported.difference(&bound).map(String::as_str).collect();
+    let reviewed: BTreeSet<_> = include_str!("../unbound-exports.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let added: Vec<_> = unbound.difference(&reviewed).copied().collect();
+    let stale: Vec<_> = reviewed.difference(&unbound).copied().collect();
+    ensure!(
+        added.is_empty() && stale.is_empty(),
+        "public API scope changed: unreviewed exports {added:?}; stale exclusions {stale:?}. Review bindings and xtask/unbound-exports.txt"
+    );
     Ok(json!({
         "source_version": version,
         "bound_functions": bound,
-        "unbound_exports": exported.difference(&bound).collect::<Vec<_>>(),
+        "unbound_exports": unbound,
         "option_ids": options(header, bindings)?,
         "scope": "names and numeric option IDs; ABI and link behavior require runtime tests"
     }))
@@ -220,6 +232,29 @@ mod tests {
         );
         Ok(())
     }
+    #[test]
+    fn newly_exported_function_requires_an_explicit_binding_decision() -> Result<()> {
+        let header = format!("{}\nmi_decl_export void mi_future_api(void);", headers()?);
+        assert!(
+            inventory(&header, &bindings()?)
+                .unwrap_err()
+                .to_string()
+                .contains("mi_future_api")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn newly_bound_function_requires_removing_its_exclusion() -> Result<()> {
+        let source = format!(
+            "{}\nunsafe extern \"C\" {{ pub fn mi__expand(p: *mut c_void, size: size_t) -> *mut c_void; }}",
+            bindings()?
+        );
+        let error = inventory(&headers()?, &source).unwrap_err().to_string();
+        assert!(error.contains("stale exclusions [\"mi__expand\"]"));
+        Ok(())
+    }
+
     #[test]
     fn absent_public_header_function_fails_inventory() -> Result<()> {
         let source = format!("{}\npub unsafe fn mi_nonexistent() {{}}", bindings()?);

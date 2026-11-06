@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.4] - 2026-11-06
+## [0.7.4] - 2026-11-07
 
 ### Changed
 
@@ -38,6 +38,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Reconcile generated include directories when upstream headers are renamed,
+  removed or change between files and directories. Replace generated symlinks
+  without modifying their targets. Preserve unchanged header timestamps for
+  incremental downstream builds.
+- Require an explicit binding decision for every new public C export. Check
+  the reviewed unbound-export list and reject stale exclusions when functions
+  are bound or removed, preventing silent API omissions during upstream updates.
 - Inherit upstream #1479's small-alignment realloc correction for offset
   pointers, pthread-key creation race correction, subprocess-destruction TLS
   cleanup fix, and heap-visitor page claiming before collection. Also inherit
@@ -48,6 +55,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
+- Refresh upstream on November 7 and confirm dev3 at `ea136f74`. The previous
+  source commit `475aac0` passes all 48 CI jobs, including Windows static CRT,
+  clang-cl, Linux/musl, macOS and Rust 1.95 compatibility.
+- Add failing-before/passing-after header-layout and new-export regressions,
+  plus generated-symlink isolation and stale API-exclusion checks.
 - Audit all four public header diffs and merged PR metadata. API/ABI controls
   cover 137 bound functions, 46 option IDs, 128 extern signatures, nine callbacks
   and three layouts; existing option IDs and exposed layouts are retained.

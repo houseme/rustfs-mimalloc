@@ -1,3 +1,24 @@
+# 0.7.4 upstream refresh — 2026-11-07
+
+After `git pull --ff-only`, the project head is `475aac0`. A fresh dev3 fetch
+and the live GitHub branch response both resolve to `ea136f74`. The latest
+official release is v3.6.1. The live closed-PR collection confirms the merged
+dev3 changes in #1477, #1480, #1481 and #1483 already covered below.
+
+The 137-function, 46-option inventory matches the previous audit. The follow-up
+adds a reviewed list of 96 intentionally unbound C exports, so future new
+exports require an explicit binding decision and stale exclusions fail CI.
+It also reconciles exported header trees across upstream file moves, including
+the bits.h to arch.h transition in this development line.
+
+All 48 CI jobs for the previous source commit completed successfully.
+[CI evidence](https://github.com/houseme/rustfs-mimalloc/actions/runs/42242690498)
+
+See the November 7 follow-up in [REVIEW_0.7.4.md](REVIEW_0.7.4.md) for regression
+evidence, current validation and performance priorities.
+
+---
+
 # 0.7.4 upstream and API audit — 2026-11-06
 
 Project base after `git pull --ff-only`: `ddde603` (already current, clean).

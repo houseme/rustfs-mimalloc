@@ -24,6 +24,10 @@ fn unchanged_exports_keep_timestamps_and_changed_inputs_are_refreshed() {
         include_str!("../c_src/mimalloc/include/mimalloc/qsbr.h"),
     )
     .unwrap();
+    fs::write(source.join("mimalloc/bits.h"), "old architecture header").unwrap();
+    fs::create_dir(source.join("old-layout")).unwrap();
+    fs::write(source.join("old-layout/obsolete.h"), "obsolete").unwrap();
+    fs::write(source.join("becomes-directory"), "old file").unwrap();
     headers::prepare(&source, &output).unwrap();
     let old = SystemTime::UNIX_EPOCH + Duration::from_secs(3600);
     for header in ["mimalloc.h", "mimalloc/qsbr.h"] {
@@ -46,10 +50,40 @@ fn unchanged_exports_keep_timestamps_and_changed_inputs_are_refreshed() {
         );
     }
     fs::write(source.join("mimalloc.h"), "updated base header").unwrap();
+    fs::rename(
+        source.join("mimalloc/bits.h"),
+        source.join("mimalloc/arch.h"),
+    )
+    .unwrap();
+    fs::remove_dir_all(source.join("old-layout")).unwrap();
+    fs::write(source.join("old-layout"), "now a file").unwrap();
+    fs::remove_file(source.join("becomes-directory")).unwrap();
+    fs::create_dir(source.join("becomes-directory")).unwrap();
+    fs::write(source.join("becomes-directory/new.h"), "new header").unwrap();
     headers::prepare(&source, &output).unwrap();
     assert_eq!(
         fs::read_to_string(output.join("mimalloc.h")).unwrap(),
         "updated base header"
+    );
+    assert!(!output.join("mimalloc/bits.h").exists());
+    assert_eq!(
+        fs::read_to_string(output.join("mimalloc/arch.h")).unwrap(),
+        "old architecture header"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("old-layout")).unwrap(),
+        "now a file"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("becomes-directory/new.h")).unwrap(),
+        "new header"
+    );
+    assert_eq!(
+        fs::metadata(output.join("mimalloc/qsbr.h"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        old
     );
     fs::remove_dir_all(directory).unwrap();
 }
@@ -89,6 +123,58 @@ fn qsbr_correction_is_guarded_and_preserves_the_original() {
         "invalid headers must fail before creating output"
     );
     std::fs::remove_dir_all(copy).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_symlinks_are_replaced_without_touching_their_targets() {
+    use std::{fs, os::unix::fs::symlink, time::SystemTime};
+    let directory = std::env::temp_dir().join(format!(
+        "mimalloc-export-links-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let source = directory.join("source");
+    let output = directory.join("output");
+    let external = directory.join("external");
+    fs::create_dir_all(source.join("mimalloc")).unwrap();
+    fs::create_dir_all(&output).unwrap();
+    fs::create_dir_all(&external).unwrap();
+    fs::write(source.join("mimalloc.h"), "new header").unwrap();
+    fs::write(
+        source.join("mimalloc/qsbr.h"),
+        include_str!("../c_src/mimalloc/include/mimalloc/qsbr.h"),
+    )
+    .unwrap();
+    fs::write(external.join("sentinel"), "external data").unwrap();
+    symlink(external.join("sentinel"), output.join("mimalloc.h")).unwrap();
+    symlink(&external, output.join("mimalloc")).unwrap();
+    symlink(&external, output.join("obsolete")).unwrap();
+
+    headers::prepare(&source, &output).unwrap();
+    assert_eq!(
+        fs::read_to_string(external.join("sentinel")).unwrap(),
+        "external data"
+    );
+    assert_eq!(fs::read_dir(&external).unwrap().count(), 1);
+    assert!(!output.join("obsolete").exists());
+    assert!(
+        fs::symlink_metadata(output.join("mimalloc"))
+            .unwrap()
+            .is_dir()
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("mimalloc.h")).unwrap(),
+        "new header"
+    );
+    assert_eq!(
+        fs::read_to_string(output.join("mimalloc/qsbr.h")).unwrap(),
+        headers::qsbr(include_str!("../c_src/mimalloc/include/mimalloc/qsbr.h")).unwrap()
+    );
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

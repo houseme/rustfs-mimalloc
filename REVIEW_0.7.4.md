@@ -1,3 +1,61 @@
+# 0.7.4 follow-up review — 2026-11-07
+
+Project base `475aac0` is current after `git pull --ff-only`. A fresh upstream
+fetch confirms dev3 at `ea136f74`, and the live release/PR metadata confirms
+the v3.6.1 release and the previously reviewed merges. All 48 CI jobs for
+`475aac0` passed, covering Windows static CRT, clang-cl, Linux/musl, macOS,
+Rust 1.95 compatibility, native tests and profiling providers.
+[CI evidence](https://github.com/houseme/rustfs-mimalloc/actions/runs/42242690498)
+
+## Confirmed findings and fixes
+
+| Finding | Trigger and impact | Fix and evidence |
+| --- | --- | --- |
+| Generated header tree drift, minor | `public_headers::copy_tree` copied source entries but retained obsolete output entries. A rename such as bits.h to arch.h left old exported files available to downstream compilers. File/directory transitions failed with an OS path-type error. | Reconcile each generated directory before copying. Remove obsolete entries, replace changed types and unlink generated symlinks. Preserve unchanged file timestamps. The new layout regression failed with `IsADirectory` before the fix and passes after it. |
+| Newly exported APIs could escape review, minor | `api::inventory` classified any new C export as unbound and allowed `check-api` to succeed. A synthetic `mi_future_api` reproduced the omission. | Compare the unbound set with `xtask/unbound-exports.txt`. Reject new exports and stale exclusions, requiring an explicit binding decision. The new-export negative test failed before the fix and passes afterward. |
+
+The header test also covers renamed and removed paths, directory/file
+transitions and unchanged QSBR timestamps. A Unix symlink regression checks
+that generated links can be replaced while external sentinel data survives.
+The API test also requires removal of an exclusion after adding its binding.
+Public API coverage is 137 bound functions and 46 options, with 96 explicit
+unbound exports. Host ABI checks cover 128 signatures, nine callbacks and
+three layouts.
+
+## Performance and remaining work
+
+Header reconciliation retains content-aware writes, keeping unchanged header
+timestamps available to downstream compiler caches. Runtime optimization
+priorities from the November 6 review continue to apply. Aligned growth through
+cached `ThreadHeap` contexts is the first workload to measure, followed by
+active stack capture/live tracking and report allocation/symbolization costs.
+Reclaim and purge tuning requires throughput, tail-latency and RSS measurements
+together. The existing ABBA tools and profiler quality counters provide the
+acceptance criteria. Throughput impact has yet to be measured.
+
+## Follow-up validation
+
+Local checks pass on macOS arm64 with stable Rust 1.99.1. They include workspace
+tests, five public-header tests with C/C++ compile/link coverage, 17 xtask tests,
+API inventory, ABI projection and all seven ABI/option controls. All-target and
+all-feature Clippy, rustdoc with warnings denied, formatting, sys archive
+verification, normalized profiling archive/provider verification and the 0.7.4
+release consistency check also pass. The before/after API JSON files are
+byte-identical.
+
+The failing-before regression logs are saved under
+`target/review-0.7.4-{header,api}-before.log`. Current validation output uses
+`target/review-0.7.4-followup-*.log` and
+`target/upstream-api-2026-11-07-final.json`.
+
+This follow-up consolidates its entries into the existing 0.7.4 changelog and
+uses the synchronized 0.7.4 workspace version for source commit/push.
+
+---
+
+The following November 6 report records the original upstream synchronization
+and its local validation.
+
 # 0.7.4 functional and performance review — 2026-11-06
 
 The source preparation updates mimalloc and its Rust API coverage, keeping the

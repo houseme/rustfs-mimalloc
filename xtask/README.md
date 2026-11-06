@@ -20,7 +20,11 @@ macOS, Linux and Rust 1.95 compatibility checks.
 
 ## Gates
 
-The API inventory checks public names and numeric option IDs. The ABI checker
+The API inventory checks public names and numeric option IDs. Public C exports
+outside the bindings are listed in `unbound-exports.txt`. New exports require
+an explicit binding decision. Remove exclusions when binding or removing an
+export. Scope drift fails `check-api` and is covered by mutation tests.
+The ABI checker
 uses the Rust syntax tree to project the supported extern-C declarations,
 callbacks and repr(C) layouts into a C compiler probe. It rejects unsupported
 types/conventions rather than silently omitting them. Seven matching/mutation
