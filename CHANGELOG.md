@@ -19,8 +19,7 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   commits after the previous v3.6.1 release pin. Numeric version is 30602;
   upstream's latest official release at review time remains v3.6.1.
 - Synchronize all three published crate versions and internal requirements at
-  0.7.4, including lockfile and installation examples. Consolidate this update
-  in one shared 0.7.4 section; prepare source commit/push without publication.
+  0.7.4, including lockfile and installation examples.
 - Inherit native secure free-list, reuse-delay and reciprocal-division changes,
   sealed process metadata, and experimental MTE/PAC implementations. Preserve
   MI_SECURE=4 for `secure`; default native MTE/PAC remain disabled. Document
