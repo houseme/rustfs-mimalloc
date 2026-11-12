@@ -23,6 +23,7 @@ int main() {
   p = mi_theap_realloc_aligned(local, p, 8192, 4096);
   if (!p) return 6;
   mi_free(p);
+  mi_thread_heap_release(heap);
   mi_heap_delete(heap);
   return 0;
 }

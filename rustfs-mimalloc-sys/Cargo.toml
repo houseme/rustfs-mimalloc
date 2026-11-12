@@ -19,6 +19,7 @@ include = [
     "build.rs",
     "windows_static_crt.rs",
     "public_headers.rs",
+    "no_profile.rs",
     "src/**",
     "tests/**",
     "c_src/mimalloc/LICENSE",

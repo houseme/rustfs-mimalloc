@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.2 development commit `ea136f74` (not a release tag).
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.2 development commit `07db29aa` (not a release tag).
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -12,7 +12,7 @@ For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/
 
 ```toml
 [dependencies]
-rustfs-mimalloc-sys = "0.7.4"
+rustfs-mimalloc-sys = "0.7.5"
 ```
 
 ```rust
@@ -44,9 +44,11 @@ is disabled. Statistics, guarded debug allocations and secure checks are retaine
 Raw profiler control/snapshot symbols remain linked: explicit snapshot callbacks
 can still execute, but there are no sampled allocations to report.
 
-The pinned upstream source supports `MI_PROFILE=0` directly, including the
-profiler stubs' ABI. The build retains the built-in pprof implementation so
-explicit raw snapshot calls remain functional while sampling stays disabled.
+The build generates a guarded sampler correction for `no_profile`, forcing its
+profile rate to zero and disabling enabled-profiler lookup. This addresses an
+upstream MI_PROFILE=0 regression with explicit profiler registration. Explicit
+raw snapshots and the built-in pprof implementation remain available. Both
+ordinary and Windows static-CRT builds use the same correction.
 
 ## Windows Static CRT
 
@@ -92,15 +94,19 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The V3.6.2 development pin adds 161 commits after v3.6.1, reviewed on
-2026-11-06. New bindings are `mi_theap_realloc_aligned`,
-`mi_theap_rezalloc_aligned` and `mi_option_mte` (ID 54). Existing option IDs,
-callback signatures and public layouts are unchanged. The native range fixes
-pthread-key creation, subprocess TLS teardown, heap-visitor page ownership and
-small-alignment realloc of offset allocations. Unneeded libutil linking is
-removed for FreeBSD/DragonFly; native pprof still links libexecinfo there.
-C23 `mi_free_sized` / `mi_free_aligned_sized` remain available, with alignment
-before size in the latter.
+The V3.6.2 development pin adds 110 commits after the 0.7.4 native pin,
+reviewed on 2026-11-12. Raw `mi_thread_heap_release` releases a calling-thread
+context while preserving live blocks and permanently disabling that thread's
+future allocations in the heap. Cached aliases must be discarded first.
+The current deprecated precise option spelling is
+`mi_option_deprecated_unsafe_guarded_precise` at ID 31, with older Rust names
+retained. Public callbacks and exposed layouts retain their signatures.
+
+Native fixes cover concurrent heap deletion and remote frees, profiler attachment
+generations and stopped-profiler free callbacks, pprof writes without stdio,
+Linux pprof mapping offsets, arena/purge accounting and QSBR retention. Native
+aligned-allocation fast paths, bitmap updates, huge searches and realloc shrinking
+also change. Measure service throughput, RSS and tail latency for these policies.
 
 The pinned upstream source still has a standalone QSBR header defect. Build scripts
 export a corrected include tree through `DEP_MIMALLOC_INCLUDE`, using a guarded
@@ -139,8 +145,8 @@ a delayed abandoned page can create a same-heap context and initialize its
 receiving thread, independently of nonempty reclaim limits. Exclude late TLS
 destructor frees after mimalloc shutdown. Allocation retries when an empty
 reclaimed page was released; the changed helper is internal, not new raw FFI.
-The new `mi_option_unsafe_guarded_precise` associated constant retains ID 31 and
-the old Rust variant. Precise placement must preserve the caller's alignment
+The deprecated precise option retains ID 31 and the old Rust names.
+The MI_UNSAFE_GUARDED_PRECISE build control must preserve the caller's alignment
 contract. Reclaim-on-free policy is captured at heap creation in this pin.
 
 The latest native changes add a bounded internal integer parser and correct
@@ -211,3 +217,18 @@ RUSTFLAGS alone do not configure its compiler.
 Deprecated upstream options have no effect in v3. `mi_heap_theap` never returns
 null; a failed or torn-down thread context is represented by an empty context
 whose allocations fail. A non-null context is not proof of allocation readiness.
+
+## Secure environment policy
+
+With the `secure` feature, native `MI_SECURE_ENV` defaults to 1. Only
+`MIMALLOC_SHOW_STATS`, `MIMALLOC_VERBOSE` and `MIMALLOC_ALLOW_THP` environment
+options are applied. Automatic `MIMALLOC_PROFILE` startup is restricted.
+Programmatic option APIs remain available with their initialization/synchronization
+requirements. Target CFLAGS may select `-DMI_SECURE_ENV=0`; native secure mode
+still restricts large-page, MTE, destroy-on-exit and precise-placement controls.
+`MI_UNSAFE_GUARDED_PRECISE=1` is a separate compile-time opt-in that can violate
+Rust alignment contracts. The runtime precise option is deprecated.
+
+Native profiler attachment establishes a fresh generation and stops sampling.
+`on_free` continues after `mi_profiler_stop` for sampled blocks until detachment.
+Detach and quiesce every callback before destroying profiler state.

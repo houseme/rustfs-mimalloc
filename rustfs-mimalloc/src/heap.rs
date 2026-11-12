@@ -37,6 +37,7 @@ unsafe impl Sync for Heap {}
 /// any thread using `mi_free`. Dropping this view does not free allocations.
 /// Do not use cached views from thread-local destructors: mimalloc's own thread
 /// teardown can invalidate its context before the parent heap is deleted.
+/// Explicit [`Heap::release_current_thread`] also invalidates this view.
 ///
 /// The view cannot outlive its borrowed heap:
 /// ```compile_fail
@@ -242,6 +243,22 @@ impl ThreadHeap<'_> {
 }
 
 impl Heap {
+    /// Release this heap's context on the calling thread.
+    ///
+    /// Subsequent heap allocations on this thread return null. Existing blocks
+    /// remain valid and may be freed from any thread. Repeated calls are allowed.
+    /// Main heaps ignore this operation. Workers can release their contexts
+    /// before the parent heap is deleted while other threads finish freeing blocks.
+    ///
+    /// # Safety
+    /// Discard every cached [`ThreadHeap`] and raw context alias for this heap
+    /// on the calling thread before the call. Released aliases must never be
+    /// used again. Exclude concurrent deletion of the heap during this operation.
+    #[inline]
+    pub unsafe fn release_current_thread(&self) {
+        unsafe { rustfs_mimalloc_sys::mi_thread_heap_release(self.ptr.as_ptr()) }
+    }
+
     /// Create a new heap. Returns `None` on OOM.
     pub fn new() -> Option<Self> {
         NonNull::new(unsafe { rustfs_mimalloc_sys::mi_heap_new() }).map(Self::owned)
@@ -825,6 +842,57 @@ mod tests {
             assert!((0..256).all(|i| *ptr.add(i) == 0));
             rustfs_mimalloc_sys::mi_free(ptr.cast());
         }
+    }
+
+    #[test]
+    fn thread_release_preserves_blocks_and_only_disables_the_releasing_worker() {
+        let heap = Heap::new().unwrap();
+        let address = std::thread::scope(|scope| {
+            scope
+                .spawn(|| unsafe {
+                    let ptr = {
+                        let local = heap.thread_local().unwrap();
+                        let ptr = local.malloc(256);
+                        assert!(!ptr.is_null());
+                        ptr.write_bytes(0xA5, 256);
+                        ptr
+                    };
+                    heap.release_current_thread();
+                    heap.release_current_thread();
+                    assert!(heap.malloc(64).is_null());
+                    assert!(heap.thread_local().unwrap().malloc(64).is_null());
+                    ptr as usize
+                })
+                .join()
+                .unwrap()
+        });
+        unsafe {
+            let fresh = heap.malloc(64);
+            assert!(!fresh.is_null());
+            rustfs_mimalloc_sys::mi_free(fresh.cast());
+        }
+        heap.delete();
+        std::thread::spawn(move || unsafe {
+            let ptr = address as *mut u8;
+            assert!((0..256).all(|i| *ptr.add(i) == 0xA5));
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn releasing_an_unused_heap_is_also_permanent_on_that_worker() {
+        let heap = Heap::new().unwrap();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| unsafe {
+                    heap.release_current_thread();
+                    assert!(heap.malloc(64).is_null());
+                })
+                .join()
+                .unwrap();
+        });
     }
 
     #[test]

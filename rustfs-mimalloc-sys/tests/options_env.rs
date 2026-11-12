@@ -35,6 +35,12 @@ fn main() {
                 mi_option_get_size(mi_option_t::mi_option_profile_alloc_interval),
                 1024 * 1024 * 1024
             );
+            // Programmatic controls stay available with secure environment policy.
+            rustfs_mimalloc_sys::mi_option_set(mi_option_t::mi_option_stats_merge_threshold, 32768);
+            assert_eq!(
+                mi_option_get_size(mi_option_t::mi_option_stats_merge_threshold),
+                32768
+            );
         }
         return;
     }
@@ -113,6 +119,19 @@ fn main() {
     ];
     let executable = std::env::current_exe().unwrap();
     for (kind, value, expected) in &cases {
+        // Native MI_SECURE_ENV defaults on for the secure feature. These
+        // environment controls retain their defaults, while the API remains usable.
+        let expected = if cfg!(feature = "secure") {
+            match *kind {
+                "integer" => 32,
+                "bytes" => 4 * 1024 * 1024,
+                "kib" | "reclaim" => 0,
+                "mte" => 1,
+                _ => unreachable!(),
+            }
+        } else {
+            *expected
+        };
         let variable = match *kind {
             "integer" => "MIMALLOC_MAX_WARNINGS",
             "bytes" => "MIMALLOC_STATS_MERGE_THRESHOLD",

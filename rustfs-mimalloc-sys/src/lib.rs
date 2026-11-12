@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream v3.6.2 development commit ea136f74 (not a release tag).
+//! Pinned to upstream v3.6.2 development commit 07db29aa.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -85,7 +85,8 @@ pub enum mi_option_t {
     mi_option_retry_on_oom = 27,
     mi_option_guarded_min = 29,
     mi_option_guarded_max = 30,
-    /// Legacy spelling; disregards minimal alignment and can violate Rust allocation contracts.
+    /// Legacy ID 31. The upstream runtime control is deprecated.
+    /// Precise placement is selected with the native MI_UNSAFE_GUARDED_PRECISE build control.
     mi_option_guarded_precise = 31,
     mi_option_guarded_sample_rate = 32,
     mi_option_guarded_sample_seed = 33,
@@ -125,6 +126,10 @@ impl mi_option_t {
     /// The old enum variant remains available, including through glob imports.
     #[allow(non_upper_case_globals)]
     pub const mi_option_unsafe_guarded_precise: Self = Self::mi_option_guarded_precise;
+
+    /// Current upstream spelling of the deprecated option at ID 31.
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_deprecated_unsafe_guarded_precise: Self = Self::mi_option_guarded_precise;
 
     /// Deprecated upstream alias for [`Self::mi_option_arena_purge_min_size`].
     #[allow(non_upper_case_globals)]
@@ -413,6 +418,11 @@ unsafe extern "C" {
     /// no owning `Heap` wrapper for them.
     pub fn mi_heap_new_qsbr() -> *mut mi_heap_t;
     pub fn mi_heap_delete(heap: *mut mi_heap_t);
+    /// Release the calling thread's context and permanently disable its heap
+    /// allocations. Existing blocks remain valid and may be freed on any thread.
+    /// Discard all cached contexts for this heap on the caller before calling.
+    /// Main heaps ignore this operation. Keep the heap alive during the call.
+    pub fn mi_thread_heap_release(heap: *mut mi_heap_t);
     pub fn mi_heap_destroy(heap: *mut mi_heap_t);
     /// Collects this heap's context on the caller, not all of its worker contexts.
     pub fn mi_heap_collect(heap: *mut mi_heap_t, force: bool);
@@ -424,7 +434,7 @@ unsafe extern "C" {
     pub fn mi_heap_set_numa_affinity(heap: *mut mi_heap_t, numa_node: c_int);
     /// Atomically preserve up to 1 MiB of each block from debug-pattern filling.
     /// This does not preserve freed objects: free-list metadata can overwrite them.
-    /// `heap` must stay alive; null selects the main heap.
+    /// `heap` must be a live non-null handle. Obtain the main handle with `mi_heap_main`.
     pub fn mi_heap_set_debug_fill_preserve(heap: *mut mi_heap_t, preserve: size_t);
     /// Never returns null. On initialization failure or after thread teardown,
     /// returns an empty context whose allocations fail. Owner-thread use only.
@@ -665,11 +675,15 @@ unsafe extern "C" {
 // ── Experimental profiling ─────────────────────────────────────────────────
 
 unsafe extern "C" {
+    /// Attach and stop the profiler. Free callbacks cover samples from this
+    /// attachment generation. Detach and quiesce callbacks before deletion.
     pub fn mi_heap_profile(heap: *mut mi_heap_t, profiler: *mut mi_profiler_t) -> bool;
     pub fn mi_heap_profile_disable(heap: *mut mi_heap_t);
     pub fn mi_subproc_profile(subproc_id: mi_subproc_id_t, profiler: *mut mi_profiler_t) -> bool;
     pub fn mi_profile(profiler: *mut mi_profiler_t) -> bool;
     pub fn mi_profiler_start(profiler: *mut mi_profiler_t) -> bool;
+    /// Stop allocation sampling, returning the previous running state.
+    /// Free callbacks continue for sampled blocks until the profiler is detached.
     pub fn mi_profiler_stop(profiler: *mut mi_profiler_t) -> bool;
     /// Invokes the snapshot callback; callback state must remain alive and must not unwind.
     pub fn mi_profiler_snapshot(profiler: *mut mi_profiler_t);

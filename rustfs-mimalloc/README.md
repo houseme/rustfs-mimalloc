@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.4"
+rustfs-mimalloc = "0.7.5"
 ```
 
 ```rust
@@ -72,13 +72,14 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.2 development (`ea136f74`)**, not a
+The submodule is pinned to upstream **V3.6.2 development (`07db29aa`)**, not a
 release tag. The numeric C version is 30602. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
-no owning `Heap` wrapper. The guarded-precise option's new unsafe spelling has
-the same ID and retains the old Rust variant. Preserve alignment requirements.
+no owning `Heap` wrapper. The deprecated guarded-precise control retains ID 31
+and the old Rust names. Precise placement is selected by the native
+`MI_UNSAFE_GUARDED_PRECISE=1` build control. Preserve alignment requirements.
 Reclaim-on-free options now affect heaps created after configuration; use the
-environment before startup to affect the main heap's policy.
+environment in environment-enabled builds to configure the main heap at startup.
 Allocation helpers match this snapshot. `MiMalloc::expand` can reuse a
 block's existing capacity without moving it; padding-enabled builds can reject
 the request. `MiMalloc::rezalloc{,_aligned}`, `Heap::rezalloc{,_aligned}` and
@@ -153,7 +154,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.4", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.5", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
@@ -224,3 +225,15 @@ alive and free successful results through mimalloc.
 that its context lookup never returns null: it can return an empty context on
 initialization failure or after thread teardown. `Some` therefore does not
 establish allocation readiness; always check allocation results for null.
+
+### Releasing a worker heap
+
+`unsafe Heap::release_current_thread()` releases the caller's context and makes
+future allocations from that heap on the caller return null. Discard all cached
+`ThreadHeap` aliases on that thread first. Live blocks remain valid for frees on
+any thread. The operation is idempotent and main heaps ignore it. Release worker
+contexts before deleting a heap that still has remote frees in flight.
+
+With `secure`, native environment options are limited to `show_stats`, `verbose`
+and `allow_thp` by default. Use the programmatic option APIs before concurrent
+allocation to configure other settings.

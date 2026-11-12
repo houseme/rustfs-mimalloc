@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.2 development snapshot, commit `ea136f74`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.2 development snapshot, commit `07db29aa`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -30,7 +30,7 @@ Repository maintenance and release validation use the unpublished Rust
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.4"
+rustfs-mimalloc = "0.7.5"
 ```
 
 ```rust
@@ -154,9 +154,9 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit ea136f74](https://github.com/microsoft/mimalloc/commit/ea136f74031c0d954df7b609a6ede97c23cc81c2),
-a **v3.6.2 development snapshot**, 161 commits after the previous v3.6.1 release
-pin. The numeric C version is **30602**; the latest official upstream release
+The submodule pins [upstream commit 07db29aa](https://github.com/microsoft/mimalloc/commit/07db29aa986bb7cf57077e7017596afb6380572e),
+a **v3.6.2 development snapshot**, 110 commits after the 0.7.4 native pin.
+The numeric C version is **30602**; the latest official upstream release
 at review time remains v3.6.1.
 
 This update adds raw `mi_theap_realloc_aligned` / `mi_theap_rezalloc_aligned`
@@ -175,7 +175,8 @@ small-alignment realloc of offset pointers, and heap-visitor page ownership.
 Existing option IDs, callback signatures and exposed layouts remain unchanged.
 
 Earlier updates added deferred fork-child cleanup and the 4 MiB stats merge
-threshold. Configure `MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for
+threshold. With native environment controls enabled, configure
+`MIMALLOC_STATS_MERGE_THRESHOLD=512KiB` before startup for
 more frequent parent-heap statistics, or `0` to disable threshold-based merging.
 
 `MiMalloc::free_sized(ptr, size)` and
@@ -212,12 +213,13 @@ Audit the binding names and option IDs against the pinned C headers with
 `cargo xtask check-api --json target/upstream-api-audit.json`.
 The inventory records unbound C exports; name parity does not verify the ABI.
 
-V3.6 migration also exposes `mi_option_t::mi_option_unsafe_guarded_precise`
-while preserving `mi_option_guarded_precise`, including existing glob imports.
-Do not enable precise guarded placement for Rust allocations requiring alignment.
+The current option spelling is
+`mi_option_t::mi_option_deprecated_unsafe_guarded_precise` at ID 31. The older
+Rust names remain available. Precise placement uses the native build control
+`MI_UNSAFE_GUARDED_PRECISE=1` and can violate Rust alignment requirements.
 `mi_option_page_reclaim_on_free` now initializes each heap's policy; configure it
-before creating a heap. Use the environment before process startup to affect the
-main heap, which can exist before Rust `main` runs. The default is `0`, meaning
+before creating a heap. Environment-enabled builds can configure the main
+heap before process startup, which can exist before Rust `main` runs. The default is `0`, meaning
 reclaim into the originating thread context only; `1` enables reclaim across
 contexts and `-1` disables reclaim on free.
 
@@ -381,7 +383,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.2 development snapshot, commit `ea136f74`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.2 development snapshot, commit `07db29aa`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
@@ -441,7 +443,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.4", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.5", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables
@@ -516,3 +518,20 @@ dependencies may have their own requirements.
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 
 The mimalloc C library is licensed under the MIT License. See [rustfs-mimalloc-sys/c_src/mimalloc/LICENSE](rustfs-mimalloc-sys/c_src/mimalloc/LICENSE).
+
+### Worker heap release and environment policy
+
+`unsafe Heap::release_current_thread()` exposes upstream `mi_thread_heap_release`.
+It permanently disables allocations from that heap on the caller. Discard every
+cached `ThreadHeap` and raw context alias on that thread before calling it.
+Existing blocks stay valid and can be freed from any thread. Workers can release
+contexts before heap deletion while remote frees finish. Main heaps ignore the
+operation. For temporary idleness, `ThreadHeap::quiescent_abandon` retains a
+usable context.
+
+The `secure` feature inherits upstream's `MI_SECURE_ENV=1` default. Environment
+options are restricted to `show_stats`, `verbose` and `allow_thp`, and automatic
+native profiling startup is restricted. Configure other options programmatically
+before concurrent allocator use. Advanced target `CFLAGS` can set
+`MI_SECURE_ENV=0`, with native secure-mode restrictions still applied.
+The allocator-neutral Rust profiler starts through its existing Rust session API.

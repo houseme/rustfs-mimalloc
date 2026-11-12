@@ -1,3 +1,66 @@
+# 0.7.5 upstream/API review — 2026-11-12
+
+After `git pull --ff-only`, project base `0c9a24a` is current. It contains
+0.7.4 and no pending Unreleased/0.7.5 section. This preparation synchronizes
+all three crates to the requested 0.7.5 source version.
+
+The selected upstream revision is
+[`07db29aa986bb7cf57077e7017596afb6380572e`](https://github.com/microsoft/mimalloc/commit/07db29aa986bb7cf57077e7017596afb6380572e),
+110 commits after `ea136f74`. It is a v3.6.2 development snapshot, C version
+30602. The latest official upstream release is
+[v3.6.1](https://github.com/microsoft/mimalloc/releases/tag/v3.6.1).
+
+## PR metadata and direct commits
+
+The live closed-PR collection and individual PR responses were checked for
+merged_at and base branch.
+
+| Item | Verified result |
+| --- | --- |
+| [#1487](https://github.com/microsoft/mimalloc/pull/1487) | Merged into dev3 on November 8 as `36e29b80`. CMake detects 32-bit ARM userlands before arm64. Our cc build uses the Cargo target architecture. |
+| [#1489](https://github.com/microsoft/mimalloc/pull/1489) | Closed without a GitHub merge, targeting main3. Direct dev3 `23fced33` incorporates its backtrace declaration/link capability check. Update our CMake fallback CI cache variable accordingly. |
+
+Other recently updated PRs #1477/#1480/#1481/#1483 and #1432 were reviewed in
+0.7.4 and are historical merges. Direct native work in the current range
+includes heap-deletion lifetime synchronization (`3463e132`), profiler attachment
+and stop fixes (`a9344371`, `30e301ac`, `46806c96`), stdio-free snapshots
+(`615c0d47`), mapping offsets (`16c92711`), commit/purge accounting, aligned
+allocation (`c50ee5cc`), bitmap/search improvements, environment parsing and
+QSBR retention (`7f615b54`, `07db29aa`).
+
+## Public API and compatibility
+
+The full diff of mimalloc.h, mimalloc-profile.h, mimalloc-stats.h and
+mimalloc/qsbr.h adds one public function, `mi_thread_heap_release`, and renames
+option 31 to the deprecated precise spelling. Add its raw binding and an unsafe
+Heap wrapper, plus a current option alias preserving older Rust names. The
+callback header clarifies attachment generations and free callbacks after stop.
+Public layouts and callback signatures retain their existing shape. Controls
+pass for 138 Rust function names, 46 IDs, 129 FFI signatures, nine callbacks and
+three layouts. The reviewed unbound-export set still has 96 entries.
+
+Upstream's default secure environment policy accepts only show_stats, verbose
+and allow_thp. Tests verify ignored environment overrides and programmatic
+configuration. Native profiling startup through MIMALLOC_PROFILE is restricted
+in secure/elevated builds. Document MI_SECURE_ENV and the compile-time precise
+placement control. Cargo secure continues to select native level 4.
+
+A no_profile regression was reproduced by the existing integration test:
+MI_PROFILE=0 with an explicitly attached raw profiler produced 64 allocation
+callbacks. Generate a guarded sampler correction in OUT_DIR for the no_profile
+feature, forcing zero sample rate and a disabled-profiler lookup. Keep native
+sources pristine, explicit snapshot symbols available, and native guarded
+checks enabled. This composes with the Windows static-CRT generated source.
+Source-anchor changes fail the build and have a drift regression test.
+
+The existing QSBR standalone-header export correction and Windows CRT guards
+continue to be exercised. The source-only delivery is validated by the checks
+recorded in [REVIEW_0.7.5.md](REVIEW_0.7.5.md).
+
+---
+
+Earlier reports retain their original pins and validation evidence.
+
 # 0.7.4 upstream refresh — 2026-11-07
 
 After `git pull --ff-only`, the project head is `475aac0`. A fresh dev3 fetch

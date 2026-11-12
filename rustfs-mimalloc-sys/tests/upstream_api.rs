@@ -86,11 +86,13 @@ fn profiler_callbacks_match_upstream_abi() {
             assert!(!ptr.is_null());
             allocations.push(ptr);
         }
+        mi_profiler_snapshot(&mut profiler.hooks);
+        assert!(mi_profiler_stop(&mut profiler.hooks));
+        // Stopping sampling keeps on_free active until detachment, so retained
+        // native profiler records can still be reclaimed.
         for ptr in allocations.drain(..) {
             mi_free(ptr);
         }
-        mi_profiler_snapshot(&mut profiler.hooks);
-        assert!(mi_profiler_stop(&mut profiler.hooks));
         assert!(mi_heap_profile(heap, std::ptr::null_mut()));
     }
     if MI_PROFILE_ENABLED {

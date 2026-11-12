@@ -5,6 +5,7 @@
 
 use std::{env, fs, path::PathBuf};
 
+mod no_profile;
 mod public_headers;
 mod windows_static_crt;
 
@@ -73,6 +74,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=windows_static_crt.rs");
     println!("cargo:rerun-if-changed=public_headers.rs");
+    println!("cargo:rerun-if-changed=no_profile.rs");
     // static.c includes these files; cc cannot discover that dependency tree.
     println!("cargo:rerun-if-changed=c_src/mimalloc/include");
     println!("cargo:rerun-if-changed=c_src/mimalloc/src");
@@ -94,11 +96,34 @@ fn main() {
         // Use the same CRT decision for C flags and startup compatibility.
         build.static_crt(static_crt);
     }
-    let static_source = if target.is_windows() && static_crt {
+    let mut static_source = if target.is_windows() && static_crt {
         windows_static_source()
     } else {
         PathBuf::from("c_src/mimalloc/src/static.c")
     };
+    if env::var_os("CARGO_FEATURE_NO_PROFILE").is_some() {
+        let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
+        let sampler = fs::read_to_string("c_src/mimalloc/src/profile/sample-profile.c")
+            .expect("upstream sampler source is missing");
+        fs::write(
+            out.join("mimalloc-no-profile.c"),
+            no_profile::patch(&sampler),
+        )
+        .expect("failed to prepare MI_PROFILE=0 sampler");
+        let source = fs::read_to_string(&static_source).expect("static source is missing");
+        let include = "#include \"profile/sample-profile.c\"";
+        assert_eq!(
+            source.matches(include).count(),
+            1,
+            "upstream sampler include changed"
+        );
+        static_source = out.join("mimalloc-no-profile-static.c");
+        fs::write(
+            &static_source,
+            source.replacen(include, "#include \"mimalloc-no-profile.c\"", 1),
+        )
+        .expect("failed to prepare MI_PROFILE=0 static source");
+    }
     build.file(static_source);
     build.include("c_src/mimalloc/include");
     build.include("c_src/mimalloc/src");

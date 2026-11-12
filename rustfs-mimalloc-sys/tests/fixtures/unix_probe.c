@@ -1,6 +1,7 @@
 /* Controlled host-C probe of the pinned parser, PMD detector and mmap advice.
    Source placeholders are filled from the vendored implementation by the test. */
 #define _DEFAULT_SOURCE
+#include <errno.h>
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,6 +28,7 @@
 #define MI_UNIX_MAX_THP_PAGE_SIZE (8 * MI_MiB)
 #define MI_OS_HAS_HUGE_PAGES 0
 #define MI_UNUSED(x) ((void)(x))
+#define mi_assert_internal(x) assert(x)
 #define mi_option_allow_thp 1
 
 static const char* pmd_text;

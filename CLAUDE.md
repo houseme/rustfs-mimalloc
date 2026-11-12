@@ -3,10 +3,11 @@
 ## Project
 
 rustfs-mimalloc: high-performance mimalloc V3 bindings for Rust, pinned to
-V3.6.2 development commit `ea136f74` (not a release tag), numeric version 30602.
+V3.6.2 development commit `07db29aa` (not a release tag), numeric version 30602.
 The sys build exports a generated public include tree with a guarded QSBR
-header correction. ABI checks share that transformation; keep upstream source
-pristine and use DEP_MIMALLOC_INCLUDE for downstream C/C++ consumers.
+header correction shared by ABI checks. The no_profile build also generates a
+guarded sampler correction for upstream MI_PROFILE=0 activation. Keep upstream
+source pristine and use DEP_MIMALLOC_INCLUDE for downstream C/C++ consumers.
 Cargo manifests intentionally omit `rust-version`. CI checks stable and Rust
 1.95.0 compatibility; this is not a declared minimum supported Rust version.
 Edition 2024 alone does not prove compiler or dependency compatibility. Lint

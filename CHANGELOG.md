@@ -8,6 +8,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
+## [0.7.5] - 2026-11-12
+
+### Changed
+
+- Advance pristine mimalloc source to v3.6.2 development commit `07db29aa`,
+  110 commits after the 0.7.4 pin. Numeric C version is 30602; the latest
+  official upstream release at review time is v3.6.1.
+- Synchronize the allocator, sys and profiling crates, lockfile, internal
+  requirements and installation examples at 0.7.5. Consolidate this work into
+  one shared version section.
+- Inherit native aligned-allocation fast paths, bounded huge-allocation search,
+  reduced bitmap writes, one-pass environment parsing and revised realloc
+  shrinking/tail reset behavior. Throughput and RSS effects require workload
+  measurements.
+- Inherit `MI_SECURE_ENV=1` for secure builds, restricting environment options
+  to show_stats, verbose and allow_thp, with programmatic option APIs available.
+  Document target-CFLAGS controls and automatic native profiler restrictions.
+
+### Added
+
+- Raw `mi_thread_heap_release` and unsafe `Heap::release_current_thread()`.
+  Workers can release contexts before heap deletion while live blocks remain
+  valid for frees. Further allocations from that heap on the releasing thread
+  return null. Cached thread-heap aliases must be discarded before release.
+- `mi_option_deprecated_unsafe_guarded_precise` at ID 31, preserving older Rust
+  spellings. Precise placement uses the native MI_UNSAFE_GUARDED_PRECISE build
+  control and requires alignment-contract care.
+
+### Fixed
+
+- Preserve `no_profile` when the latest upstream sampler is explicitly enabled
+  through raw profiler APIs. Generate a source-checked MI_PROFILE=0 correction
+  that forces the sample rate to zero and excludes enabled-profiler lookup,
+  while retaining explicit snapshots and guarded allocation checks.
+- Inherit heap-delete/remote-free lifetime fixes, failed thread/page-map
+  initialization handling, profiler attachment generations and stopped-profiler
+  free callbacks, pprof writes without stdio, Linux mapping offsets, commit/purge
+  accounting corrections and QSBR page-retention fixes.
+- Adapt native parser probes to upstream assertion/errno requirements. Match
+  secure environment defaults in isolated-process option tests and verify
+  programmatic configuration. Select the current CMake backtrace capability
+  switch for the compiler-unwinder fallback CI check.
+
+### Validation
+
+- Audit merged PR #1487 and direct incorporation of unmerged PR #1489. Read all
+  four public-header diffs and verify 138 bound functions, 46 option IDs,
+  129 extern signatures, nine callbacks, three layouts and seven ABI/option
+  controls.
+- Cover releasing used/unused worker heaps, idempotence, subsequent allocation
+  failure, unaffected caller threads and live blocks freed after heap deletion.
+  Exercise the new C export through C++ linkage and native on_free after stop.
+- Add native secure-protection CI coverage and retain default/secure/debug,
+  no_profile/no_hooks, override, provider and normalized archive checks. Record
+  results and performance priorities in `REVIEW_0.7.5.md` and `UPSTREAM_REVIEW.md`.
+
 ## [0.7.4] - 2026-11-07
 
 ### Changed

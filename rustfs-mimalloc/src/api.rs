@@ -392,8 +392,8 @@ impl MiMalloc {
     /// # Safety
     /// Upstream option storage is not atomic. Configure options before starting
     /// other threads, or otherwise exclude every concurrent mimalloc access.
-    /// Values must preserve active allocation contracts: do not enable
-    /// `mi_option_unsafe_guarded_precise` for Rust allocations requiring alignment.
+    /// Values must preserve active allocation contracts and alignment.
+    /// Precise guarded placement is controlled by the native build configuration.
     #[inline]
     pub unsafe fn option_set(
         option: rustfs_mimalloc_sys::mi_option_t,
@@ -407,8 +407,8 @@ impl MiMalloc {
     /// # Safety
     /// Upstream option storage is not atomic. Configure options before starting
     /// other threads, or otherwise exclude every concurrent mimalloc access.
-    /// Values must preserve active allocation contracts: do not enable
-    /// `mi_option_unsafe_guarded_precise` for Rust allocations requiring alignment.
+    /// Values must preserve active allocation contracts and alignment.
+    /// Precise guarded placement is controlled by the native build configuration.
     #[inline]
     pub unsafe fn option_enable(option: rustfs_mimalloc_sys::mi_option_t) {
         unsafe { rustfs_mimalloc_sys::mi_option_enable(option) }
@@ -419,8 +419,8 @@ impl MiMalloc {
     /// # Safety
     /// Upstream option storage is not atomic. Configure options before starting
     /// other threads, or otherwise exclude every concurrent mimalloc access.
-    /// Values must preserve active allocation contracts: do not enable
-    /// `mi_option_unsafe_guarded_precise` for Rust allocations requiring alignment.
+    /// Values must preserve active allocation contracts and alignment.
+    /// Precise guarded placement is controlled by the native build configuration.
     #[inline]
     pub unsafe fn option_disable(option: rustfs_mimalloc_sys::mi_option_t) {
         unsafe { rustfs_mimalloc_sys::mi_option_disable(option) }
@@ -431,8 +431,8 @@ impl MiMalloc {
     /// # Safety
     /// Upstream option storage is not atomic. Configure options before starting
     /// other threads, or otherwise exclude every concurrent mimalloc access.
-    /// Values must preserve active allocation contracts: do not enable
-    /// `mi_option_unsafe_guarded_precise` for Rust allocations requiring alignment.
+    /// Values must preserve active allocation contracts and alignment.
+    /// Precise guarded placement is controlled by the native build configuration.
     #[inline]
     pub unsafe fn option_set_default(
         option: rustfs_mimalloc_sys::mi_option_t,
@@ -446,8 +446,8 @@ impl MiMalloc {
     /// # Safety
     /// Upstream option storage is not atomic. Configure options before starting
     /// other threads, or otherwise exclude every concurrent mimalloc access.
-    /// Values must preserve active allocation contracts: do not enable
-    /// `mi_option_unsafe_guarded_precise` for Rust allocations requiring alignment.
+    /// Values must preserve active allocation contracts and alignment.
+    /// Precise guarded placement is controlled by the native build configuration.
     #[inline]
     pub unsafe fn option_set_enabled(option: rustfs_mimalloc_sys::mi_option_t, enabled: bool) {
         unsafe { rustfs_mimalloc_sys::mi_option_set_enabled(option, enabled) }
@@ -458,8 +458,8 @@ impl MiMalloc {
     /// # Safety
     /// Upstream option storage is not atomic. Configure options before starting
     /// other threads, or otherwise exclude every concurrent mimalloc access.
-    /// Values must preserve active allocation contracts: do not enable
-    /// `mi_option_unsafe_guarded_precise` for Rust allocations requiring alignment.
+    /// Values must preserve active allocation contracts and alignment.
+    /// Precise guarded placement is controlled by the native build configuration.
     #[inline]
     pub unsafe fn option_set_enabled_default(
         option: rustfs_mimalloc_sys::mi_option_t,
