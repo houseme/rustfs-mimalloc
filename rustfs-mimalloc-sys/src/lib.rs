@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream v3.6.2 development commit 07db29aa.
+//! Pinned to upstream v3.6.2 development commit 80899607.
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!

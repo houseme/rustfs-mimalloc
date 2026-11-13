@@ -1,3 +1,77 @@
+# 0.7.5 follow-up review — 2026-11-13
+
+The current base is `96ea497`, verified with `git pull --ff-only`. All published
+crates and internal requirements already use 0.7.5. The existing 0.7.5 section
+contains the pending release notes, and this follow-up consolidates its changes
+there. The selected native source is now `80899607`, one commit after the
+previous pin. It remains a v3.6.2 development snapshot with C version 30602.
+The upstream/API audit is in [UPSTREAM_REVIEW.md](UPSTREAM_REVIEW.md).
+
+## Functional review
+
+| Area | Current result |
+| --- | --- |
+| GlobalAlloc | Allocation, zeroing and realloc forward size/alignment directly to native aligned APIs. The wrapper adds no runtime dispatch or per-allocation Rust state. Layout/content/zeroing contracts are exercised by the allocator suite. |
+| First-class heaps | The native acquire-bitmap correction synchronizes deletion with concurrent page release. Add a 16-round, four-worker regression using 64-byte, 16-KiB and 2-MiB blocks. Release the allocating context before deletion, verify payload endpoints, and retain one block per size per worker until deletion completes. |
+| Cached contexts | ThreadHeap's borrow prevents parent deletion while a safe cached view exists. Thread affinity and unsafe explicit-release requirements remain documented. The new regression transfers block ownership without sharing cached contexts. |
+| Arena lifecycle | Arena reservations remain process-lifetime resources. Native API, arena and bitmap tests exercise allocation and page traversal after the update. The generated standalone QSBR header and C++ linkage remain covered. |
+| Profiling | Native no_profile, custom callback ABI and Rust no_hooks contracts retain their coverage. The Rust live map keeps bounded admission, blocking removal and pending-realloc reservations. Reporting reserves replacement storage outside shard locks. |
+| API exposure | Public headers are identical to the previous pin. Revalidate the existing 138-function inventory, 46 option IDs, 129 extern signatures, nine callbacks, three layouts and seven controls. |
+
+## Performance improvements to pursue
+
+| Priority | Evidence and proposed work | Acceptance measurements |
+| --- | --- | --- |
+| 1 | GlobalAlloc dealloc currently calls `mi_free` and discards Layout. Existing size/alignment-aware native frees offer a candidate fast path. Benchmark the existing wrappers against general free before changing forwarding. | Cover ordinary and over-aligned small objects, large/singleton blocks, remote frees, native profiling, secure/debug and custom tracking. Record throughput, tail latency and RSS. |
+| 1 | `Heap::thread_local()` caches a native context. `ThreadHeap::{malloc_aligned,realloc_aligned}` reuse it across allocations and buffer growth. Use the existing heap ABBA runner to quantify the benefit for multi-heap workers. | Measure heap lookup versus cached contexts, worker scaling and retirement, with identical layout mix and allocator options. |
+| 1 | Sampling hits call `StackKey::capture`, while each report creates stack aggregation and frame caches in `build_memory_samples_with_resolver`. Reusable report storage could reduce allocation churn. Symbol lifetime must account for dynamic image unloads. | Compare sample interval, stack depth and report frequency. Record total report time, pending/dropped samples, retained metadata and profile stack quality. |
+| 2 | Live-map insertions use try_lock and may drop under snapshot contention. `snapshot_shard` copies a shard under its mutex. Shard sizing and copy time merit targeted measurement. | Compare throughput with live tracking on/off, snapshot p95/p99, live drops and metadata size under same-thread and remote-free workloads. |
+| 2 | Native aligned paths, realloc retention and purge/reclaim policies influence copy volume and resident memory. They are already available through native APIs/options. | Separate shrink/grow and ordinary/singleton cases. Measure requested/usable bytes, in-place ratio, RSS, faults and latency with fixed option provenance. |
+
+The bitmap update adds acquire semantics to page traversal. Performance effects
+for this pin have yet to be measured. The existing ABBA tools enforce drift
+and profile-quality checks. Measurements require reserved resources, frozen
+binaries and a same-binary control before attributing throughput differences.
+
+## Validation
+
+Current local validation uses stable Rust 1.100.0 on macOS arm64 and serial
+libtest execution. The following checks pass.
+
+- Workspace default, no_profile, secure/debug/no_profile,
+  secure/debug/override and all-feature suites, plus the profiling
+  no_hooks/rustfs-allocator suite.
+- The new four-worker heap-deletion regression in debug, release and
+  secure/debug/no_profile configurations.
+- The API inventory, ABI projection and all seven mutation/option controls.
+  C/C++ header/linkage, Unix option parser, Windows source/entropy controls
+  and checked-source drift tests run through the workspace suite.
+- Eight native debug C tests covering API, API-fill, arena, bitmap, fork,
+  QSBR, profile and pprof. Four native secure tests cover API, arena, QSBR
+  and memory protection.
+- Both isolated allocator providers in debug and release. Both ignored
+  release pressure tests pass with System and the updated RustFS provider.
+  The optimized profile lifecycle/quality suite also passes.
+- All-target/all-feature Clippy with denied warnings, rustdoc with denied
+  warnings, benchmark compilation, formatting and diff checks.
+- Normalized profiling archive validation with local dependencies, sys and
+  allocator archive creation, and extracted sys no_profile API execution.
+  The allocator archive uses an explicit local sys dependency patch because
+  the requested 0.7.5 source version is being prepared together.
+- Version, edition, internal dependency and changelog consistency for 0.7.5.
+
+Cargo 1.100 emits two workspace-manifest warnings for the dynamically consumed
+provider dependency and unused workspace package description. Logs and API
+inventory are retained under ignored `target/review-0.7.5-refresh-*` and
+`target/api-0.7.5-refresh.json`.
+
+The baseline `96ea497` CI run is successful. Current Windows static CRT,
+clang-cl, Linux/musl and Rust 1.95 execution results come from CI for the pushed
+commit. Hardware MTE/PAC and workload performance require target measurements.
+[Baseline CI](https://github.com/houseme/rustfs-mimalloc/actions/runs/43358553143)
+
+---
+
 # 0.7.5 functional and upstream review — 2026-11-12
 
 The clean project base after `git pull --ff-only` is `0c9a24a`. That revision

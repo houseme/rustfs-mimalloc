@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.2 development snapshot, commit `07db29aa`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.2 development snapshot, commit `80899607`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -154,10 +154,17 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 07db29aa](https://github.com/microsoft/mimalloc/commit/07db29aa986bb7cf57077e7017596afb6380572e),
-a **v3.6.2 development snapshot**, 110 commits after the 0.7.4 native pin.
+The submodule pins [upstream commit 80899607](https://github.com/microsoft/mimalloc/commit/80899607d249f07d0fcf328da11e5176ad40a8f7),
+a **v3.6.2 development snapshot**, 111 commits after the 0.7.4 native pin.
 The numeric C version is **30602**; the latest official upstream release
 at review time remains v3.6.1.
+
+The November 13 refresh inherits acquire bitmap loads that synchronize heap
+deletion with concurrent page releases. Its four public headers have identical
+contents to the previous pin. The 0.7.5 API additions include
+`mi_thread_heap_release` and unsafe `Heap::release_current_thread()`, allowing
+workers to retire their heap contexts while outstanding blocks remain valid
+for frees. Discard the worker's cached contexts before release.
 
 This update adds raw `mi_theap_realloc_aligned` / `mi_theap_rezalloc_aligned`
 and `ThreadHeap::{realloc_aligned,rezalloc_aligned}`. Cache a context once per
@@ -383,7 +390,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.2 development snapshot, commit `07db29aa`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (V3.6.2 development snapshot, commit `80899607`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

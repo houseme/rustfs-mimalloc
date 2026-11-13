@@ -8,12 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.5] - 2026-11-12
+## [0.7.5] - 2026-11-13
 
 ### Changed
 
-- Advance pristine mimalloc source to v3.6.2 development commit `07db29aa`,
-  110 commits after the 0.7.4 pin. Numeric C version is 30602; the latest
+- Advance pristine mimalloc source to v3.6.2 development commit `80899607`,
+  111 commits after the 0.7.4 pin. Numeric C version is 30602; the latest
   official upstream release at review time is v3.6.1.
 - Synchronize the allocator, sys and profiling crates, lockfile, internal
   requirements and installation examples at 0.7.5. Consolidate this work into
@@ -38,6 +38,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Inherit acquire bitmap loads that synchronize heap deletion with concurrent
+  page releases, including observations of cleared bits before heap metadata
+  is reclaimed.
 - Preserve `no_profile` when the latest upstream sampler is explicitly enabled
   through raw profiler APIs. Generate a source-checked MI_PROFILE=0 correction
   that forces the sample rate to zero and excludes enabled-profiler lookup,
@@ -53,6 +56,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
+- Refresh upstream and merged-PR metadata on November 13. The additional
+  commit has no associated PR or public-header changes. Exercise heap deletion
+  against four remote-free workers across small, large and singleton blocks,
+  preserving outstanding allocations across deletion for later frees.
 - Audit merged PR #1487 and direct incorporation of unmerged PR #1489. Read all
   four public-header diffs and verify 138 bound functions, 46 option IDs,
   129 extern signatures, nine callbacks, three layouts and seven ABI/option

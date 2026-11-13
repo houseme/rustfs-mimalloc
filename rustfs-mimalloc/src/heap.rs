@@ -896,6 +896,70 @@ mod tests {
     }
 
     #[test]
+    fn heap_deletion_synchronizes_with_remote_page_releases() {
+        use std::sync::Barrier;
+
+        for _ in 0..16 {
+            let heap = Heap::new().unwrap();
+            let batches: Vec<_> = (0..4)
+                .map(|_| {
+                    let mut blocks = Vec::new();
+                    let mut retained = Vec::new();
+                    for (size, count) in [(64, 2048), (16 * 1024, 16), (2 * 1024 * 1024, 8)] {
+                        for _ in 0..=count {
+                            unsafe {
+                                let pointer = heap.malloc(size);
+                                assert!(!pointer.is_null());
+                                pointer.write(0xA5);
+                                pointer.add(size - 1).write(0x5A);
+                                blocks.push((pointer as usize, size));
+                            }
+                        }
+                        retained.push(blocks.pop().unwrap());
+                    }
+                    (blocks, retained)
+                })
+                .collect();
+            // Abandon the allocating context before deletion. From here workers
+            // only free their exclusively owned blocks, without heap handles.
+            unsafe { heap.release_current_thread() };
+            let start = Barrier::new(batches.len() + 1);
+            std::thread::scope(|scope| {
+                let mut workers = Vec::new();
+                for (batch, retained) in batches {
+                    let start = &start;
+                    workers.push(scope.spawn(move || {
+                        // Keep one allocation from each size class across deletion.
+                        start.wait();
+                        for (address, size) in batch {
+                            unsafe {
+                                let pointer = address as *mut u8;
+                                assert_eq!(pointer.read(), 0xA5);
+                                assert_eq!(pointer.add(size - 1).read(), 0x5A);
+                                rustfs_mimalloc_sys::mi_free(pointer.cast());
+                            }
+                            std::thread::yield_now();
+                        }
+                        retained
+                    }));
+                }
+                start.wait();
+                heap.delete();
+                for worker in workers {
+                    for (address, size) in worker.join().unwrap() {
+                        unsafe {
+                            let pointer = address as *mut u8;
+                            assert_eq!(pointer.read(), 0xA5);
+                            assert_eq!(pointer.add(size - 1).read(), 0x5A);
+                            rustfs_mimalloc_sys::mi_free(pointer.cast());
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
     fn cached_aligned_reallocation_preserves_contents_zeroing_and_failed_blocks() {
         let heap = Heap::new().unwrap();
         let local = heap.thread_local().unwrap();

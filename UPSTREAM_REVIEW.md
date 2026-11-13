@@ -1,3 +1,54 @@
+# 0.7.5 upstream/API refresh — 2026-11-13
+
+`git pull --ff-only` confirms project base `96ea497` is current. The workspace
+already uses 0.7.5 and has a single 0.7.5 changelog section. The follow-up is
+collected into that section, dated November 13.
+
+The live dev3 branch and fetched commit agree on
+[`80899607d249f07d0fcf328da11e5176ad40a8f7`](https://github.com/microsoft/mimalloc/commit/80899607d249f07d0fcf328da11e5176ad40a8f7).
+This adds one commit to the previous pin and brings the total since the 0.7.4
+native pin to 111. Upstream continues to report C version 30602. The latest
+official release checked through the release API is v3.6.1.
+[Release metadata](https://github.com/microsoft/mimalloc/releases/tag/v3.6.1)
+
+## Commit and PR audit
+
+The new commit changes two bitmap reads from relaxed to acquire in
+`_mi_bitmap_forall_set`. Heap deletion uses this traversal to move surviving
+arena pages. A cleared bit can represent a page concurrently released by a
+freeing thread, so deletion also needs to acquire that observation before
+reclaiming heap metadata. This is a concurrency correctness update.
+[Native diff](https://github.com/microsoft/mimalloc/commit/80899607d249f07d0fcf328da11e5176ad40a8f7)
+
+The commit-associated PR endpoint returns an empty list. The closed-PR
+collection and merged-since-November-12 search show no additional merges.
+The metadata recheck confirms #1487 merged into dev3 and #1489 closed without
+a GitHub merge. #1489's backtrace capability check was incorporated directly
+in the earlier pin. The table below preserves the original audit.
+[PR #1487](https://github.com/microsoft/mimalloc/pull/1487),
+[PR #1489](https://github.com/microsoft/mimalloc/pull/1489)
+
+## API and build compatibility
+
+All four public headers are byte-identical between the old and new pins.
+The API inventory passes with 138 Rust function names, 46 numeric option IDs
+and 96 reviewed unbound C exports. The ABI projection passes with 129 extern
+signatures, nine callbacks and three repr(C) layouts. All seven ABI/option
+controls pass. Existing 0.7.5 bindings include `mi_thread_heap_release`,
+`Heap::release_current_thread()` and the option-31 deprecated precise alias.
+
+The native submodule is pristine. Generated QSBR, no_profile and Windows
+static-CRT compatibility transformations continue to use their checked source
+anchors. The new regression releases the allocating context, races heap
+deletion with four remote-free workers and checks surviving allocations after
+deletion across three sizes. It exercises concurrent schedules, with execution
+on each target providing the corresponding memory-model coverage.
+
+Current validation and optimization priorities are recorded in the November 13
+section of [REVIEW_0.7.5.md](REVIEW_0.7.5.md).
+
+---
+
 # 0.7.5 upstream/API review — 2026-11-12
 
 After `git pull --ff-only`, project base `0c9a24a` is current. It contains
