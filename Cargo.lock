@@ -81,7 +81,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "miniz_oxide",
- "object",
+ "object 0.40.0",
  "rustc-demangle",
  "windows-link",
 ]
@@ -624,6 +624,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11dbdb66876026054e4ffc8d757d862bdf5df5aebd5c0b95a41f17832a94f7d2"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -824,7 +833,7 @@ dependencies = [
  "libc",
  "libflate",
  "log",
- "object",
+ "object 0.41.0",
  "prost",
  "rustfs-mimalloc",
 ]
