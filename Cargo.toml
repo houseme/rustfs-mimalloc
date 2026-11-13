@@ -27,7 +27,7 @@ libflate = "2.3"
 # Test-provider requirement used only by isolated consumer workspaces.
 mimalloc = "0.1.52"
 log = "0.4"
-object = { version = "0.40", default-features = false }
+object = { version = "0.41", default-features = false }
 prost = "0.14"
 
 # Development tooling only; these do not enter the published allocator graphs.
