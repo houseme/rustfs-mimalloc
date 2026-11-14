@@ -8,12 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.5] - 2026-11-13
+## [0.7.5] - 2026-11-15
 
 ### Changed
 
-- Advance pristine mimalloc source to v3.6.2 development commit `80899607`,
-  111 commits after the 0.7.4 pin. Numeric C version is 30602; the latest
+- Advance pristine mimalloc source to v3.6.2 development commit `9548089b`,
+  117 commits after the 0.7.4 pin. Numeric C version is 30602; the latest
   official upstream release at review time is v3.6.1.
 - Synchronize the allocator, sys and profiling crates, lockfile, internal
   requirements and installation examples at 0.7.5. Consolidate this work into
@@ -38,6 +38,15 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Inherit integer-based page metadata lookup that removes ARM64 null-pointer
+  arithmetic, incorporated directly from PR #1491. Validate the current native
+  API, alignment and QSBR paths with Clang UBSan.
+- Inherit native QSBR's per-heap delayed-singleton queue. Huge allocations
+  and periodic maintenance poll bounded batches outside the queue lock,
+  reclaiming pages left by exited threads after their grace periods complete.
+  This applies to native host-adapted QSBR heaps through existing raw APIs.
+- Inherit case-normalized ARM64EC CMake generator selection and matching
+  redirect-DLL installation, addressing upstream issue #1492.
 - Inherit acquire bitmap loads that synchronize heap deletion with concurrent
   page releases, including observations of cleared bits before heap metadata
   is reclaimed.
@@ -56,6 +65,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
+- Refresh the six new dev3 commits and live PR metadata on November 15.
+  Public API additions in this interval total zero. Recheck all four public
+  API headers and the complete binding inventory.
+- Include the upstream QSBR no-retention regression in native CI and add
+  Clang UBSan API/alignment/QSBR tests on Linux and macOS.
 - Refresh upstream and merged-PR metadata on November 13. The additional
   commit has no associated PR or public-header changes. Exercise heap deletion
   against four remote-free workers across small, large and singleton blocks,

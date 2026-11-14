@@ -1,3 +1,93 @@
+# 0.7.5 follow-up review — 2026-11-15
+
+`git pull --ff-only` confirms base `ad3dae6` is current. The workspace,
+lockfile and internal requirements use 0.7.5. Its single changelog section
+collects this follow-up with the prior pending notes and is dated November 15.
+The native pin advances by six commits to `9548089b`, a v3.6.2 development
+snapshot with C version 30602. The upstream audit and individual PR status
+are recorded in [UPSTREAM_REVIEW.md](UPSTREAM_REVIEW.md).
+
+## Functional and performance assessment
+
+| Area | Reviewed result and follow-up |
+| --- | --- |
+| Ordinary allocation and free | The ARM64 page-metadata path now uses integer arithmetic. Native null-free and aligned allocation pass UBSan. GlobalAlloc still forwards allocation/reallocation layouts directly and uses `mi_free` for deallocation. Sized-free forwarding remains a candidate for measured optimization. |
+| Heap lifecycle | The prior acquire-bitmap fix and four-worker release/deletion regression continue to pass. Heap/Theap remain opaque Rust handles across the private native state changes. Cached ThreadHeap continues to avoid repeated worker heap lookup. |
+| Native QSBR | The heap-delayed singleton queue permits collection after owner exit through later huge allocation and periodic maintenance. The regression bounds retained pages at 16 after ten rounds of four worker exits, each allocating/freeing two 2-MiB singletons. It also covers a busy queue lock, unfinished head goals, mixed arena/OS pages, concurrent enqueue/collection and terminal destruction. This behavior applies to host-adapted native QSBR heaps. |
+| Ordinary heap builds | MI_QSBR guards the shared queue implementation and storage. Existing default raw QSBR-constructor failure and ordinary heap allocation/free contracts pass. |
+| Windows/build integration | Inherit ARM64EC CMake target/DLL selection. The sys crate builds a static library through cc with Cargo target metadata. Windows static-CRT source anchors and entropy controls continue to pass locally. ARM64EC execution requires its target environment. |
+| Profiling | Existing native callback/no_profile contracts and Rust no_hooks, bounded live tracking, realloc rollback and session teardown remain covered. Current report aggregation and symbol caches are rebuilt per report. Live-map snapshot copying still holds each shard mutex during the copy. |
+| API exposure | Four public API header diffs are empty. The 138-name/46-option inventory and complete C ABI controls pass. Private QSBR queue helpers are implemented inside the native library. |
+
+The implemented memory-reclamation improvement is exercised by native QSBR
+tests. Production throughput and RSS effects require workload measurements.
+The PR's earlier-compiler instruction counts are upstream observations.
+
+Further optimization priorities are ordered as follows.
+
+1. Benchmark existing size/alignment-aware frees before changing GlobalAlloc
+   deallocation. Cover ordinary and over-aligned sizes, remote frees,
+   secure/debug, native profiling and custom tracking.
+2. Measure cached ThreadHeap use for multi-heap workers with the existing heap
+   ABBA runner, including aligned buffer growth and worker retirement.
+3. Reduce profiling report allocation churn through reusable aggregation
+   capacity. Keep symbol lifetime tied to current image mappings. Measure total
+   report latency, metadata size, pending/dropped records and stack quality.
+4. Measure live-map shard copy duration and contention under periodic snapshots
+   before changing shard layout or locking. Track p95/p99, record loss and RSS.
+5. For native QSBR integrations, measure singleton churn and grace-period
+   progress together with retained pages, collection work and huge-allocation
+   latency. Ordinary heap benchmarks exercise a separate configuration.
+
+The detailed acceptance cases from the November 13 review remain applicable.
+The existing ABBA tools enforce drift and profile-quality checks. A reserved
+environment and same-binary control support attributable performance results.
+
+## Validation
+
+Local validation uses stable Rust 1.100.0 and Apple Clang 21 on macOS arm64,
+with serial libtest execution. The following checks pass.
+
+- Workspace default, no_profile, secure/debug, secure/debug/no_profile,
+  secure/debug/override and all-feature suites. The profiling
+  no_hooks/rustfs-allocator suite passes separately.
+- The API inventory, C ABI projection and all seven mutation/option controls.
+  Existing C/C++ header/linkage, native parser/THP, checked-source drift and
+  Windows startup/entropy controls pass through the workspace suite.
+- Nine native debug C tests, including the new no-retention QSBR configuration,
+  and four native secure tests. Four Clang UBSan C++ tests cover API, API-fill,
+  QSBR and QSBR no-retention.
+- Both isolated allocator providers in debug and release. Both ignored release
+  pressure tests pass with System and the updated RustFS provider. The
+  four-worker heap deletion/remote-free regression also passes in release.
+- All-target/all-feature Clippy and rustdoc with denied warnings, benchmark
+  compilation, formatting and diff checks.
+- Normalized profiling archive verification with local dependencies, sys and
+  allocator archive creation, and extracted sys no_profile API execution.
+  The allocator archive uses an explicit local sys dependency patch.
+- 0.7.5 version/internal-dependency/changelog consistency and release-note
+  extraction from the single version section.
+
+Cargo 1.100 emits the two existing workspace-manifest warnings for the
+dynamically consumed provider dependency and unused package description.
+Logs, the full native diff and API inventory remain under ignored
+`target/review-0.7.5-nov15-*` and `target/api-0.7.5-nov15.json`.
+
+The updated native source passes UBSan API, API-fill, QSBR and no-retention
+tests. A separate C probe checks null free and 64-byte aligned allocation.
+Replacing only the current include tree's page-map header with the previous
+pin's header produced no diagnostic with this compiler in C at O0/O1 or C++
+at O1. The earlier Apple Clang 17 diagnostic is documented in PR #1491.
+[Upstream reproducer](https://github.com/microsoft/mimalloc/pull/1491)
+
+The previous commit's cross-platform CI completed successfully. Current Windows
+static CRT, clang-cl, Linux/musl and Rust 1.95 results come from CI for the
+pushed commit. ARM64EC, hardware MTE/PAC and production throughput/RSS require
+their respective target environments.
+[Baseline CI](https://github.com/houseme/rustfs-mimalloc/actions/runs/43436155219)
+
+---
+
 # 0.7.5 follow-up review — 2026-11-13
 
 The current base is `96ea497`, verified with `git pull --ff-only`. All published

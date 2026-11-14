@@ -1,3 +1,57 @@
+# 0.7.5 upstream/API refresh — 2026-11-15
+
+After `git pull --ff-only`, project base `ad3dae6` is current and clean.
+The fetched dev3 branch and live branch API agree on
+[`9548089b0495da279d580e547e23ae1322100bbd`](https://github.com/microsoft/mimalloc/commit/9548089b0495da279d580e547e23ae1322100bbd).
+This adds six commits to the previous pin and brings the total after the
+0.7.4 native pin to 117. C version is 30602. The latest official release
+verified through the release API is v3.6.1.
+[Official release](https://github.com/microsoft/mimalloc/releases/tag/v3.6.1)
+
+## Native changes and PR status
+
+| Commit | Reviewed effect |
+| --- | --- |
+| `9108cd8a` | Reclaim QSBR-delayed empty singleton pages after their owners exit. Maintain a per-heap FIFO with a try-lock, detach at most eight pages per routine pass, poll/free outside the queue lock and rotate unfinished pages. Full stopped-heap collection and terminal destruction handle the whole queue. |
+| `37b64096` | Use a word-sized atomic producer flag in the new native QSBR test for MSVC C atomics. |
+| `e090e937`, `26cbbd24` | Update upstream Alpine setup handling and replace qemu-user-static with qemu-user for the MTE CI paths. |
+| `9743b258` | Compute aligned page metadata through integer arithmetic on all applicable architectures, removing ARM64's null-pointer arithmetic. |
+| `9548089b` | Prioritize and case-normalize the CMake generator platform, including ARM64EC architecture selection and its redirect DLL. |
+
+The closed-PR collection, individual PR metadata and merged-since-November-13
+search show zero new GitHub PR merges in this interval. PR #1491 has
+`merged=false` and `merged_at=null`. Its maintainer comment confirms direct
+incorporation, represented by `9743b258`. Issue #1492 is closed and its DLL
+selection problem is addressed in `9548089b`.
+[PR #1491](https://github.com/microsoft/mimalloc/pull/1491),
+[maintainer reply](https://github.com/microsoft/mimalloc/pull/1491#issuecomment-6865520820),
+[issue #1492](https://github.com/microsoft/mimalloc/issues/1492)
+
+## Public API decisions
+
+The complete diffs of `mimalloc.h`, `mimalloc-profile.h`, `mimalloc-stats.h`
+and `mimalloc/qsbr.h` are empty. The inventory passes for 138 Rust function
+names, 46 option IDs and 96 reviewed unbound C exports. The C ABI projection
+passes for 129 extern signatures, nine callbacks and three repr(C) layouts.
+All seven mutation/option controls pass.
+
+The new QSBR queue fields are private heap/theap state behind opaque Rust
+handles. Existing raw `mi_heap_new_qsbr` remains the public constructor for
+host adapters. The standard Cargo build uses ordinary heaps and the default
+constructor's null/ENOSYS contract stays covered. The new native queue body is
+guarded by MI_QSBR. Cargo's static sys library uses cc and Cargo target
+metadata, while the ARM64EC generator/DLL changes apply to upstream CMake.
+
+The submodule is pristine. The checked QSBR header export, native no_profile
+sampler correction and Windows static-CRT transformations pass their existing
+tests against this source. Native CI now includes `test-qsbr-noretain` and
+Clang UBSan API, aligned-allocation and QSBR checks on Linux and macOS.
+
+Current functional results, performance priorities and compiler-specific
+validation limits are in [REVIEW_0.7.5.md](REVIEW_0.7.5.md).
+
+---
+
 # 0.7.5 upstream/API refresh — 2026-11-13
 
 `git pull --ff-only` confirms project base `96ea497` is current. The workspace
