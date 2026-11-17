@@ -53,6 +53,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Added
 
+- RAII `rustfs_mimalloc::pprof::PprofProfiler` over the native pprof
+  profiler (`mi_pprof_profiler_new`/`start`/`stop`/`snapshot`/`delete`):
+  C-side sampled pprof snapshots at a fraction of the Rust unwinder cost,
+  with `PprofConfig` (Poisson threshold and periodic snapshot intervals,
+  zero disables) and drop ordering that stops sampling and detaches before
+  deleting. Covered by a dedicated integration test binary so snapshot
+  deletion honors the native callback-quiescence contract.
 - Safe process-wide callback registration in the new `rustfs_mimalloc::callback`
   module and crate-root re-exports: `register_error`/`clear_error`,
   `register_output`/`clear_output` and

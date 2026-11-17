@@ -12,6 +12,7 @@ pub mod callback;
 mod ffi;
 
 pub mod heap;
+pub mod pprof;
 
 pub use api::{ProcessInfo, set_current_thread_in_threadpool};
 pub use callback::{

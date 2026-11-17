@@ -41,8 +41,25 @@ fn main() {
 
 ### Allocator
 
-`MiMalloc` implements `GlobalAlloc`; allocations and reallocations use aligned
-APIs, while deallocation uses the general `mi_free` path.
+`MiMalloc` implements `GlobalAlloc` with upstream-mirroring dispatch: layouts
+that fit mimalloc's native guarantees take the ordinary `mi_malloc`/
+`mi_zalloc`/`mi_realloc` fast path, genuinely over-aligned layouts use the
+aligned APIs, and `dealloc` routes through `mi_free_size_aligned` so small
+frees hit the page-metadata fast path.
+
+### Native pprof profiler
+
+`rustfs_mimalloc::pprof::PprofProfiler` wraps the native pprof profiler
+(`mi_pprof_profiler_new`) with RAII start/stop/snapshot/drop ordering, writing
+C-side sampled protobuf or text snapshots at a fraction of the cost of
+Rust-side unwinding. See the module documentation.
+
+### Callback registration
+
+`rustfs_mimalloc::callback` offers safe `register_error`/`register_output`/
+`register_deferred_free` (plus `clear_*` restores) over the raw
+`mi_register_*` APIs, accepting `&'static` closures with panics contained and
+re-registration races eliminated.
 
 ### Stats & Options
 
