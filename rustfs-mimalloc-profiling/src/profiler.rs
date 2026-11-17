@@ -569,6 +569,7 @@ impl SamplingAllocator<rustfs_mimalloc::MiMalloc> {
 // SAFETY: Every allocation operation is forwarded to the same A with the exact
 // pointer/layout contract. Recorder bookkeeping never substitutes an allocator.
 unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
+    #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         mark_allocator_seen();
         // SAFETY: `SamplingAllocator` preserves the caller's `GlobalAlloc`
@@ -581,6 +582,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
         ptr
     }
 
+    #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         mark_allocator_seen();
         // SAFETY: The caller provided a valid `GlobalAlloc` layout; this wrapper
@@ -592,6 +594,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
         ptr
     }
 
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // Remove before freeing: another thread may immediately reuse this
         // address once the provider receives it.
@@ -603,6 +606,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SamplingAllocator<A> {
         unsafe { self.inner.dealloc(ptr, layout) };
     }
 
+    #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         mark_allocator_seen();
         // Keep the metadata slot reserved before the provider can recycle the old
@@ -826,6 +830,7 @@ const fn hooks_enabled() -> bool {
     cfg!(not(feature = "no_hooks"))
 }
 
+#[inline]
 fn mark_allocator_seen() {
     if !hooks_enabled() {
         return;
@@ -837,14 +842,15 @@ fn mark_allocator_seen() {
     }
 }
 
-// Keep TLS suppression and table lookups out of the default allocator's
-// deallocation body, including their stack/register requirements.
+// Keep table lookups out of the default allocator's deallocation body, including
+// their stack/register requirements. `live::remove` never allocates, captures or
+// records, so it needs no recursion suppression of its own.
 #[inline(never)]
 fn remove_live_allocation(pointer: usize) {
     if !hooks_enabled() {
         return;
     }
-    with_profiler_suppressed(|| live::remove(pointer));
+    live::remove(pointer);
 }
 
 fn with_profiler_suppressed<R>(f: impl FnOnce() -> R) -> R {
@@ -919,6 +925,7 @@ fn with_recording_guard<R>(f: impl FnOnce(&Cell<SamplerState>) -> R) -> Option<R
         .flatten()
 }
 
+#[inline]
 fn record_allocation(ptr: *mut u8, size: u64) {
     if size == 0
         || !hooks_enabled()
@@ -936,40 +943,56 @@ fn record_allocation(ptr: *mut u8, size: u64) {
         }
 
         // The common unsampled allocation touches only its byte countdown.
-        // Enter recursion suppression only when resetting or
-        // capturing a sample: those operations can allocate or call the unwinder.
+        // Interval expiry, recursion suppression, unwinding and ring maintenance
+        // stay in the cold tail below.
         if size < state.remaining_bytes && state.remaining_config_generation == generation {
             state.remaining_bytes -= size;
             sampler.set(state);
             return;
         }
 
-        state.in_profiler = true;
         sampler.set(state);
-        let _guard = ProfilerReentryGuard { sampler };
-        let interval = SAMPLE_INTERVAL_BYTES.load(Ordering::Relaxed).max(1);
-        let mut current = state.remaining_bytes;
-        if state.remaining_config_generation != generation || current == 0 {
-            state.rng_state = next_thread_rng_seed();
-            current = next_poisson_interval(interval, &mut state.rng_state);
-            state.remaining_config_generation = generation;
-        }
-
-        if size < current {
-            state.remaining_bytes = current - size;
-            sampler.set(state);
-        } else {
-            // Exponential intervals are memoryless. Start at the end of the
-            // allocation; counting all crossed intervals is unnecessary.
-            state.remaining_bytes = next_poisson_interval(interval, &mut state.rng_state);
-            sampler.set(state);
-            record_sample(
-                ptr,
-                SampleWeight::for_allocation(size, interval),
-                generation,
-            );
-        }
+        record_allocation_interval_end(sampler, ptr, size, generation);
     });
+}
+
+/// Interval expiry and sample capture: the slow tail of sampled allocations.
+/// Keeping it out of the inlined countdown leaves the common allocation path
+/// with a single TLS read-modify-write.
+#[cold]
+#[inline(never)]
+fn record_allocation_interval_end(
+    sampler: &Cell<SamplerState>,
+    ptr: *mut u8,
+    size: u64,
+    generation: u64,
+) {
+    let mut state = sampler.get();
+    state.in_profiler = true;
+    sampler.set(state);
+    let _guard = ProfilerReentryGuard { sampler };
+    let interval = SAMPLE_INTERVAL_BYTES.load(Ordering::Relaxed).max(1);
+    let mut current = state.remaining_bytes;
+    if state.remaining_config_generation != generation || current == 0 {
+        state.rng_state = next_thread_rng_seed();
+        current = next_poisson_interval(interval, &mut state.rng_state);
+        state.remaining_config_generation = generation;
+    }
+
+    if size < current {
+        state.remaining_bytes = current - size;
+        sampler.set(state);
+    } else {
+        // Exponential intervals are memoryless. Start at the end of the
+        // allocation; counting all crossed intervals is unnecessary.
+        state.remaining_bytes = next_poisson_interval(interval, &mut state.rng_state);
+        sampler.set(state);
+        record_sample(
+            ptr,
+            SampleWeight::for_allocation(size, interval),
+            generation,
+        );
+    }
 }
 
 fn next_thread_rng_seed() -> u64 {
@@ -1029,9 +1052,17 @@ fn record_live_reallocation(
     }
 }
 
+/// Sample-hit tail: unwinding, ring maintenance and live recording. Cold
+/// because only sampled allocations reach it.
+#[cold]
+#[inline(never)]
 fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
     let tracking_live = live::enabled() && !ptr.is_null();
-    let mut stack = None;
+    // Capture before taking the ring lock: unwinding is the slowest step of a
+    // sample and a concurrent report() drain may be waiting on the same TLS
+    // ring. The under-lock session check still rejects stacks captured for a
+    // stale session, so capture-before-lock cannot admit foreign samples.
+    let captured = StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed));
     let dropped = TLS_SAMPLE_BUFFER
         .try_with(|buffer| {
             let Some(mut buffer) = buffer.try_lock() else {
@@ -1054,8 +1085,6 @@ fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
                 return true;
             }
 
-            let captured = StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed));
-            stack = Some(captured);
             let sample = RecordedAllocationSample {
                 stack: captured,
                 weighted_objects: weight.weighted_objects,
@@ -1078,9 +1107,7 @@ fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
     // The allocation event queue and live table have independent budgets.
     // Dropping an interval event must not suppress an otherwise valid live hit.
     if tracking_live && session_is_current(generation) {
-        let stack =
-            stack.unwrap_or_else(|| StackKey::capture(CAPTURE_DEPTH.load(Ordering::Relaxed)));
-        live::record(ptr as usize, stack, weight, generation);
+        live::record(ptr as usize, captured, weight, generation);
     }
 }
 

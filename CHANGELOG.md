@@ -12,6 +12,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Tighten the profiling allocation hooks: `SamplingAllocator`'s `GlobalAlloc`
+  methods, the allocator-seen marker and the sampler countdown now inline into
+  caller allocation sites, interval expiry and sample capture moved to a cold
+  non-inlined tail, the deallocation live-table removal drops its redundant
+  recursion-suppression guard (`live::remove` never allocates, captures or
+  records), and stack capture happens before taking the TLS sample ring lock
+  so a concurrent report drain no longer waits for the unwinder.
 - Advance pristine mimalloc source to the official v3.7.0 release tag
   `1ed67b51`, superseding the interim v3.6.2 development pin `9548089b`.
   Numeric C version is 30700; v3.7.0 is the latest official upstream release.
