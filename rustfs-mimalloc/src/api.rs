@@ -496,11 +496,7 @@ mod tests {
 
     #[test]
     fn version_is_v3() {
-        assert_eq!(
-            MiMalloc::version(),
-            30700,
-            "expected pinned v3.7.0 release"
-        );
+        assert_eq!(MiMalloc::version(), 30700, "expected pinned v3.7.0 release");
     }
 
     #[test]

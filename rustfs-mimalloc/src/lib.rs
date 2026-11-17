@@ -20,34 +20,81 @@ use core::ffi::c_void;
 
 /// The mimalloc global allocator.
 ///
-/// Drop-in replacement for the system allocator. Always uses `mi_malloc_aligned`
-/// internally to guarantee correct alignment for all layouts.
+/// Drop-in replacement for the system allocator. Ordinary allocations take
+/// mimalloc's native fast path; only layouts that genuinely need more than
+/// the native guarantees route to the aligned-allocation APIs, mirroring
+/// upstream's own dispatch guards.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MiMalloc;
+
+/// mimalloc's `MI_MAX_ALIGN_SIZE` (`max_align_t`): blocks of at least this
+/// size are aligned to it by ordinary allocations.
+const MI_MAX_ALIGN_SIZE: usize = 16;
+
+/// Word alignment is guaranteed for every mimalloc block, however small.
+const MI_WORD_ALIGN: usize = core::mem::size_of::<usize>();
+
+/// Mirror upstream's `mi_theap_malloc_zero_aligned_at` fast-path guard:
+/// ordinary allocation already provides the requested alignment when the
+/// alignment fits the native guarantees.
+#[inline(always)]
+const fn ordinary_alloc_covers(align: usize, size: usize) -> bool {
+    align <= MI_MAX_ALIGN_SIZE && (align <= MI_WORD_ALIGN || size >= align)
+}
 
 // ── GlobalAlloc: hot path — zero indirection ────────────────────────────────
 
 unsafe impl GlobalAlloc for MiMalloc {
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { rustfs_mimalloc_sys::mi_malloc_aligned(layout.size(), layout.align()) as *mut u8 }
+        unsafe {
+            if ordinary_alloc_covers(layout.align(), layout.size()) {
+                rustfs_mimalloc_sys::mi_malloc(layout.size()) as *mut u8
+            } else {
+                rustfs_mimalloc_sys::mi_malloc_aligned(layout.size(), layout.align()) as *mut u8
+            }
+        }
     }
 
     #[inline(always)]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        unsafe { rustfs_mimalloc_sys::mi_zalloc_aligned(layout.size(), layout.align()) as *mut u8 }
+        unsafe {
+            if ordinary_alloc_covers(layout.align(), layout.size()) {
+                rustfs_mimalloc_sys::mi_zalloc(layout.size()) as *mut u8
+            } else {
+                rustfs_mimalloc_sys::mi_zalloc_aligned(layout.size(), layout.align()) as *mut u8
+            }
+        }
     }
 
     #[inline(always)]
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
-        unsafe { rustfs_mimalloc_sys::mi_free(ptr as *mut c_void) };
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // `mi_free_size_aligned` routes small frees to the page-metadata fast
+        // path and degrades to plain `mi_free` for over-aligned allocations,
+        // mirroring upstream's own sizing rules.
+        unsafe {
+            rustfs_mimalloc_sys::mi_free_size_aligned(
+                ptr as *mut c_void,
+                layout.size(),
+                layout.align(),
+            )
+        };
     }
 
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         unsafe {
-            rustfs_mimalloc_sys::mi_realloc_aligned(ptr as *mut c_void, new_size, layout.align())
-                as *mut u8
+            if ordinary_alloc_covers(layout.align(), new_size)
+                && (ptr as usize).is_multiple_of(layout.align())
+            {
+                rustfs_mimalloc_sys::mi_realloc(ptr as *mut c_void, new_size) as *mut u8
+            } else {
+                rustfs_mimalloc_sys::mi_realloc_aligned(
+                    ptr as *mut c_void,
+                    new_size,
+                    layout.align(),
+                ) as *mut u8
+            }
         }
     }
 }
@@ -120,6 +167,43 @@ mod tests {
                 assert!(!ptr.is_null());
                 assert_eq!(ptr as usize % 4096, 0);
                 GLOBAL.dealloc(ptr, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn size_below_alignment_stays_aligned() {
+        // size < align must take the aligned path: ordinary blocks smaller
+        // than the alignment only carry word alignment.
+        for &(size, align) in &[(1usize, 16usize), (4, 16), (1, 8), (2, 8), (8, 16)] {
+            let layout = Layout::from_size_align(size, align).unwrap();
+            unsafe {
+                let ptr = GLOBAL.alloc(layout);
+                assert!(!ptr.is_null(), "size={size} align={align}");
+                assert_eq!(ptr as usize % align, 0, "alloc size={size} align={align}");
+                let zeroed = GLOBAL.alloc_zeroed(layout);
+                assert!(!zeroed.is_null());
+                assert_eq!(
+                    zeroed as usize % align,
+                    0,
+                    "zeroed size={size} align={align}"
+                );
+                assert!((0..size).all(|i| *zeroed.add(i) == 0));
+                // Growing to or from below-alignment sizes keeps the contract.
+                let grown = GLOBAL.realloc(ptr, layout, align * 2);
+                assert_eq!(grown as usize % align, 0, "grow size={size} align={align}");
+                let shrunk = GLOBAL.realloc(
+                    grown,
+                    Layout::from_size_align(align * 2, align).unwrap(),
+                    size,
+                );
+                assert_eq!(
+                    shrunk as usize % align,
+                    0,
+                    "shrink size={size} align={align}"
+                );
+                GLOBAL.dealloc(shrunk, layout);
+                GLOBAL.dealloc(zeroed, layout);
             }
         }
     }

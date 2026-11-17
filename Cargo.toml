@@ -10,7 +10,6 @@ license = "Apache-2.0"
 homepage = "https://houseme.github.io/rustfs-mimalloc"
 repository = "https://github.com/houseme/rustfs-mimalloc"
 authors = ["houseme <housemecn@gmail.com>"]
-description = "High-performance mimalloc V3 bindings for Rust"
 keywords = ["allocator", "mimalloc", "memory"]
 categories = ["memory-management", "no-std"]
 
@@ -19,26 +18,24 @@ rustfs-mimalloc = { path = "rustfs-mimalloc", version = "0.7.5" }
 rustfs-mimalloc-sys = { path = "rustfs-mimalloc-sys", version = "0.7.5" }
 
 backtrace = "0.3"
-cc = "1.11.0"
+cc = "1.11.2"
 criterion = "0.8.2"
 findshlibs = "0.10"
 libc = "0.2"
 libflate = "2.3"
-# Test-provider requirement used only by isolated consumer workspaces.
-mimalloc = "0.1.52"
 log = "0.4"
-object = { version = "0.40", default-features = false }
+object = { version = "0.41", default-features = false }
 prost = "0.14"
 
 # Development tooling only; these do not enter the published allocator graphs.
 anyhow = "1.0.104"
-flate2 = "1.1.10"
+flate2 = "1.1.11"
 regex = "1.13.1"
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 shlex = "2.0.1"
-syn = { version = "3.0.9", features = ["full"] }
+syn = { version = "3.0.10", features = ["full"] }
 tar = "0.4.46"
 tempfile = "3.27.0"
-toml = "1.2.0"
-ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
+toml = "1.2.1"
+ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }

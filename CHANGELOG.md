@@ -41,6 +41,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Added
 
+- Global-allocator fast-path dispatch in `MiMalloc`: ordinary allocation,
+  zeroed allocation and reallocation route to the native `mi_malloc`,
+  `mi_zalloc` and `mi_realloc` entry points when the layout fits mimalloc's
+  native guarantees (alignment within `MI_MAX_ALIGN_SIZE` and at least the
+  requested size), mirroring upstream's own guards. The aligned APIs remain
+  for genuinely over-aligned layouts, which previously also paid an extra
+  call chain on every allocation.
+- Sized free in the global `dealloc`: route through `mi_free_size_aligned`
+  so small frees take mimalloc's page-metadata fast path and over-aligned
+  small frees degrade safely to plain `mi_free`.
 - Raw `mi_thread_heap_release` and unsafe `Heap::release_current_thread()`.
   Workers can release contexts before heap deletion while live blocks remain
   valid for frees. Further allocations from that heap on the releasing thread
