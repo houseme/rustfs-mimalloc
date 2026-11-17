@@ -88,7 +88,7 @@ Implements `GlobalAlloc` with aligned allocation/reallocation and general
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-// Version: 30602 = V3.6.2 development snapshot
+// Version: 30700 = v3.7.0
 let version = MiMalloc::version();
 
 // Stats as JSON
@@ -154,18 +154,21 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream commit 9548089b](https://github.com/microsoft/mimalloc/commit/9548089b0495da279d580e547e23ae1322100bbd),
-a **v3.6.2 development snapshot**, 117 commits after the 0.7.4 native pin.
-The numeric C version is **30602**; the latest official upstream release
-at review time remains v3.6.1.
+The submodule pins [upstream tag v3.7.0](https://github.com/microsoft/mimalloc/releases/tag/v3.7.0)
+(commit `1ed67b51`), the latest official upstream release, superseding the
+previous v3.6.2 development pin. The numeric C version is **30700**.
 
-The November 15 refresh includes integer-based page metadata lookup that fixes
-null-pointer arithmetic on ARM64, plus native ARM64EC CMake target selection.
-Native QSBR integrations gain a per-heap delayed-singleton queue, with bounded
-collection during huge allocation and periodic maintenance. This requires a
-host QSBR adapter through the existing experimental raw constructor. The
-standard Cargo build uses ordinary heaps. The four public API headers match
-the previous pin.
+The v3.7.0 refresh keeps the complete public API compatible: no exported
+function, option ID, or layout changed. Native improvements inherited in this
+release include lock-free bitmap updates for common page operations, free-list
+extension without touching beyond the requested size, exact-fit block offsets,
+a medium-size bin boundary, doubled page retire cycles (16 to 32), large pages
+disabled by default, atomic option state for concurrent readers, and
+concurrent-safe callback registration (deferred-free, output, error) with
+documented re-registration semantics. Windows startup and ARM64EC CMake fixes
+from the previous pin remain included, as do integer-based page metadata
+lookup on ARM64 and native QSBR's per-heap delayed-singleton queue (host
+QSBR adapter still required through the experimental raw constructor).
 
 The 0.7.5 source also includes acquire bitmap loads that synchronize heap
 deletion with concurrent page releases. Its API additions include
@@ -397,7 +400,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (V3.6.2 development snapshot, commit `9548089b`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (v3.7.0 release, tag `1ed67b51`) | V2/V3 (configurable) |
 | Alignment | Always aligned | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |

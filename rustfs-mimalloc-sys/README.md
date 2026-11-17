@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to V3.6.2 development commit `9548089b` (not a release tag).
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to the v3.7.0 release tag `1ed67b51`.
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -94,8 +94,9 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The V3.6.2 development pin adds 110 commits after the 0.7.4 native pin,
-reviewed on 2026-11-12. Raw `mi_thread_heap_release` releases a calling-thread
+The v3.7.0 release pin supersedes the 0.7.4 native pin and was reviewed on
+2026-11-18 with no public API changes: all exported functions, option IDs and
+layouts match the previous pin. Raw `mi_thread_heap_release` releases a calling-thread
 context while preserving live blocks and permanently disabling that thread's
 future allocations in the heap. Cached aliases must be discarded first.
 The current deprecated precise option spelling is

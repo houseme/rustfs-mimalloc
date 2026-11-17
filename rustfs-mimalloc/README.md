@@ -50,7 +50,7 @@ APIs, while deallocation uses the general `mi_free` path.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30602 = V3.6.2 development snapshot
+let version = MiMalloc::version();       // 30700 = v3.7.0
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -72,8 +72,8 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **V3.6.2 development (`9548089b`)**, not a
-release tag. The numeric C version is 30602. QSBR's experimental constructor is raw sys FFI
+The submodule is pinned to upstream **v3.7.0 (tag `1ed67b51`)**, the latest
+official release. The numeric C version is 30700. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The deprecated guarded-precise control retains ID 31
 and the old Rust names. Precise placement is selected by the native

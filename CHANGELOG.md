@@ -8,13 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.5] - 2026-11-15
+## [0.7.5] - 2026-11-18
 
 ### Changed
 
-- Advance pristine mimalloc source to v3.6.2 development commit `9548089b`,
-  117 commits after the 0.7.4 pin. Numeric C version is 30602; the latest
-  official upstream release at review time is v3.6.1.
+- Advance pristine mimalloc source to the official v3.7.0 release tag
+  `1ed67b51`, superseding the interim v3.6.2 development pin `9548089b`.
+  Numeric C version is 30700; v3.7.0 is the latest official upstream release.
+- Re-verify the complete public API against v3.7.0: zero exported function,
+  option ID, callback or layout changes across all four public headers, so all
+  bindings stay unchanged. The version expectation test now asserts 30700.
 - Synchronize the allocator, sys and profiling crates, lockfile, internal
   requirements and installation examples at 0.7.5. Consolidate this work into
   one shared version section.
@@ -22,6 +25,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   reduced bitmap writes, one-pass environment parsing and revised realloc
   shrinking/tail reset behavior. Throughput and RSS effects require workload
   measurements.
+- Inherit v3.7.0 native improvements: lock-free atomic updates for common
+  bitmap operations, free-list extension that stops touching beyond the
+  requested size, cache offsets for exact-fitting blocks, a dedicated maximum
+  medium-object bin, doubled page retire cycles (16 to 32), large pages
+  disabled by default, and atomic option state so options can be set
+  concurrently with readers (upstream issues #1494/#1495).
+- Callback registration (`mi_register_deferred_free`, `mi_register_output`,
+  `mi_register_error`) is now concurrent-safe upstream; signatures are
+  unchanged but re-registration may briefly route other threads to the
+  previously registered callback, which raw-API consumers must tolerate.
 - Inherit `MI_SECURE_ENV=1` for secure builds, restricting environment options
   to show_stats, verbose and allow_thp, with programmatic option APIs available.
   Document target-CFLAGS controls and automatic native profiler restrictions.
@@ -65,6 +78,15 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
+- Verify the November 17 v3.7.0 release (47 upstream commits since the prior
+  pin, merged through PRs #1499/#1500) against every guarded build patch
+  anchor: QSBR header correction, MI_PROFILE=0 sampler guards and the Windows
+  static-CRT startup compatibility sources all still apply unchanged.
+- Confirm the v3.7.0 public header surface matches the previous pin: the only
+  main-header delta is `MI_MALLOC_VERSION` 30602 → 30700 and a callback
+  re-registration note; internal headers refactored page-map, bitmap and
+  option-state plumbing without ABI impact. Recheck merged PRs #1471–#1500:
+  no new exported APIs to bind.
 - Refresh the six new dev3 commits and live PR metadata on November 15.
   Public API additions in this interval total zero. Recheck all four public
   API headers and the complete binding inventory.
