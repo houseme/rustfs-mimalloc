@@ -442,6 +442,153 @@ impl Heap {
         }
     }
 
+    /// Allocate with the byte at `offset` `alignment`-aligned.
+    ///
+    /// This is the offset-aligned family for blocks that store an inline
+    /// header before an aligned payload: the header occupies the first
+    /// `offset` bytes and the payload starts at `offset` with the requested
+    /// alignment.
+    ///
+    /// # Safety
+    /// [`Self::malloc_aligned`]'s requirements apply; `offset` must leave room
+    /// for the requested payload (`size` is the whole block including the
+    /// offset portion).
+    pub unsafe fn malloc_aligned_at(
+        &self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_malloc_aligned_at(
+                self.ptr.as_ptr(),
+                size,
+                alignment,
+                offset,
+            )
+            .cast()
+        }
+    }
+
+    /// Allocate zeroed memory with the byte at `offset` `alignment`-aligned.
+    ///
+    /// # Safety
+    /// [`Self::malloc_aligned_at`]'s requirements apply.
+    pub unsafe fn zalloc_aligned_at(
+        &self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_zalloc_aligned_at(
+                self.ptr.as_ptr(),
+                size,
+                alignment,
+                offset,
+            )
+            .cast()
+        }
+    }
+
+    /// Allocate zeroed array memory with the byte at `offset` aligned.
+    ///
+    /// # Safety
+    /// [`Self::calloc`]'s checked-multiplication requirements and
+    /// [`Self::malloc_aligned_at`]'s offset requirements apply.
+    pub unsafe fn calloc_aligned_at(
+        &self,
+        count: usize,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_calloc_aligned_at(
+                self.ptr.as_ptr(),
+                count,
+                size,
+                alignment,
+                offset,
+            )
+            .cast()
+        }
+    }
+
+    /// Reallocate while keeping the byte at `offset` `alignment`-aligned.
+    ///
+    /// # Safety
+    /// [`Self::realloc_aligned`]'s requirements apply; `offset` must match the
+    /// original allocation's offset contract.
+    pub unsafe fn realloc_aligned_at(
+        &self,
+        ptr: *mut u8,
+        new_size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_realloc_aligned_at(
+                self.ptr.as_ptr(),
+                ptr.cast(),
+                new_size,
+                alignment,
+                offset,
+            )
+            .cast()
+        }
+    }
+
+    /// Reallocate a zero-initialized block keeping the byte at `offset` aligned.
+    ///
+    /// # Safety
+    /// [`Self::rezalloc_aligned`]'s initialization requirements and
+    /// [`Self::realloc_aligned_at`]'s offset requirements apply.
+    pub unsafe fn rezalloc_aligned_at(
+        &self,
+        ptr: *mut u8,
+        new_size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_rezalloc_aligned_at(
+                self.ptr.as_ptr(),
+                ptr.cast(),
+                new_size,
+                alignment,
+                offset,
+            )
+            .cast()
+        }
+    }
+
+    /// Reallocate a zero-initialized array keeping the byte at `offset` aligned.
+    ///
+    /// # Safety
+    /// [`Self::recalloc`]'s checked-multiplication requirements and
+    /// [`Self::realloc_aligned_at`]'s offset requirements apply.
+    pub unsafe fn recalloc_aligned_at(
+        &self,
+        ptr: *mut u8,
+        new_count: usize,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> *mut u8 {
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_recalloc_aligned_at(
+                self.ptr.as_ptr(),
+                ptr.cast(),
+                new_count,
+                size,
+                alignment,
+                offset,
+            )
+            .cast()
+        }
+    }
+
     /// Reallocate memory from this heap.
     ///
     /// # Safety
@@ -1009,22 +1156,12 @@ mod tests {
 
     #[test]
     fn cached_aligned_reallocation_repairs_small_alignment_of_offset_blocks() {
-        unsafe extern "C" {
-            // Test setup only: offset allocation is intentionally outside the
-            // wrapper API, but is accepted by the new aligned realloc entry.
-            fn mi_heap_malloc_aligned_at(
-                heap: *mut rustfs_mimalloc_sys::mi_heap_t,
-                size: usize,
-                alignment: usize,
-                offset: usize,
-            ) -> *mut c_void;
-        }
         let heap = Heap::new().unwrap();
         let local = heap.thread_local().unwrap();
         unsafe {
             // Regression for upstream #1479: an offset allocation can be
             // misaligned even when requesting only machine-word alignment.
-            let ptr = mi_heap_malloc_aligned_at(heap.ptr.as_ptr(), 73, 64, 1).cast::<u8>();
+            let ptr = heap.malloc_aligned_at(73, 64, 1);
             assert!(!ptr.is_null());
             assert_eq!((ptr as usize + 1) % 64, 0);
             ptr.write_bytes(0x5A, 73);
@@ -1033,6 +1170,98 @@ mod tests {
             assert_eq!(ptr as usize % size_of::<usize>(), 0);
             assert!((0..73).all(|i| *ptr.add(i) == 0x5A));
             rustfs_mimalloc_sys::mi_free(ptr.cast());
+        }
+    }
+
+    #[test]
+    fn offset_aligned_allocation_preserves_payload_alignment_and_content() {
+        let heap = Heap::new().unwrap();
+        unsafe {
+            // The byte at `offset` carries the alignment; the block starts
+            // unaligned by construction.
+            let ptr = heap.malloc_aligned_at(129, 64, 1);
+            assert!(!ptr.is_null());
+            assert_eq!((ptr as usize + 1) % 64, 0);
+            ptr.write_bytes(0x5A, 129);
+            let zeroed = heap.zalloc_aligned_at(129, 64, 1);
+            assert!(!zeroed.is_null());
+            assert_eq!((zeroed as usize + 1) % 64, 0);
+            assert!((0..129).all(|i| *zeroed.add(i) == 0));
+            let grown = heap.rezalloc_aligned_at(ptr, 257, 64, 1);
+            assert!(!grown.is_null());
+            assert_eq!((grown as usize + 1) % 64, 0);
+            assert!((0..129).all(|i| *grown.add(i) == 0x5A));
+            assert!((129..257).all(|i| *grown.add(i) == 0));
+            rustfs_mimalloc_sys::mi_free(grown.cast());
+            rustfs_mimalloc_sys::mi_free(zeroed.cast());
+        }
+    }
+
+    #[test]
+    fn heap_block_visitor_sees_live_blocks() {
+        use rustfs_mimalloc_sys::{mi_block_visit_fun, mi_heap_area_t};
+
+        unsafe extern "C" fn count_blocks(
+            _heap: *const rustfs_mimalloc_sys::mi_heap_t,
+            _area: *const mi_heap_area_t,
+            _block: *mut c_void,
+            _block_size: usize,
+            arg: *mut c_void,
+        ) -> bool {
+            unsafe { (*(arg as *mut usize)) += 1 };
+            true
+        }
+
+        let heap = Heap::new().unwrap();
+        let mut seen = 0usize;
+        unsafe {
+            let a = heap.malloc(64);
+            let b = heap.malloc(640);
+            assert!(!a.is_null() && !b.is_null());
+            let visited = rustfs_mimalloc_sys::mi_heap_visit_blocks(
+                heap.ptr.as_ptr(),
+                true,
+                Some(count_blocks as mi_block_visit_fun),
+                core::ptr::addr_of_mut!(seen).cast(),
+            );
+            assert!(visited);
+            assert!(seen >= 2, "both live blocks must be visited, saw {seen}");
+            // Area-level visits (no per-block callback) still report the areas.
+            let mut areas = 0usize;
+            assert!(rustfs_mimalloc_sys::mi_heap_visit_blocks(
+                heap.ptr.as_ptr(),
+                false,
+                Some(count_blocks as mi_block_visit_fun),
+                core::ptr::addr_of_mut!(areas).cast(),
+            ));
+            assert!(areas >= 1);
+        }
+    }
+
+    #[test]
+    fn subproc_lifecycle_visits_heaps() {
+        use rustfs_mimalloc_sys::mi_heap_visit_fun;
+
+        unsafe extern "C" fn stop_on_first(
+            _heap: *mut rustfs_mimalloc_sys::mi_heap_t,
+            _arg: *mut c_void,
+        ) -> bool {
+            false
+        }
+
+        unsafe {
+            // The main subprocess always owns at least the main heap, so a
+            // visitor that stops on the first heap ends the walk early and the
+            // call reports it did not complete.
+            let main = rustfs_mimalloc_sys::mi_subproc_main();
+            let stopped_early = rustfs_mimalloc_sys::mi_subproc_visit_heaps(
+                main,
+                Some(stop_on_first as mi_heap_visit_fun),
+                core::ptr::null_mut(),
+            );
+            assert!(!stopped_early, "a stop-on-first visitor cannot complete");
+            // The current subprocess handle is valid for the calling thread.
+            let _current = rustfs_mimalloc_sys::mi_subproc_current();
         }
     }
 

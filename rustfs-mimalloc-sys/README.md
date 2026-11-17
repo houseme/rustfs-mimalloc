@@ -89,6 +89,11 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
 - `mi_free_small_local{,_nonnull}` for small pages still owned by the calling thread
 - `mi_arena_area` and `mi_arena_contains` query reserved regions and membership
 - Raw error, output and deferred-free callback registration APIs
+- Offset-aligned allocation families (`mi_{malloc,zalloc,calloc,realloc,rezalloc,recalloc}_aligned_at`
+  and their `mi_heap_*` variants) for payload-after-header layouts
+- Subprocess lifecycle and visiting (`mi_subproc_{main,current,new,destroy,add_current_thread,visit_heaps}`)
+  and heap block visitors (`mi_heap_visit_blocks`, `mi_heap_visit_abandoned_blocks`,
+  `mi_theap_visit_blocks`) for heap introspection
 - `mi_arenas_purge`, `mi_option_stats_merge_threshold`, and
   `mi_option_arena_purge_immediate_size`, plus all `mi_option_profile_*`
   controls, default/clamped option APIs, aligned

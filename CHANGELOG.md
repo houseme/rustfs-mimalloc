@@ -53,6 +53,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Added
 
+- Bind the offset-aligned allocation families for payload-after-header
+  layouts (`mi_{malloc,zalloc,calloc,realloc,rezalloc,recalloc}_aligned_at`
+  global and heap variants), the subprocess lifecycle and heap visiting
+  (`mi_subproc_{main,current,new,destroy,add_current_thread,visit_heaps}`),
+  and the heap block visitors (`mi_heap_visit_blocks`,
+  `mi_heap_visit_abandoned_blocks`, `mi_theap_visit_blocks`), completing the
+  previously unreachable `mi_subproc_profile` and `mi_block_visit_fun` FFI.
+  The safe `Heap` wrapper gains the matching `*_aligned_at` methods; cached
+  `ThreadHeap` contexts use the same entry points through their parent heap.
+  Binding inventory grows to 159 bound functions and 150 FFI signatures.
 - Global-allocator fast-path dispatch in `MiMalloc`: ordinary allocation,
   zeroed allocation and reallocation route to the native `mi_malloc`,
   `mi_zalloc` and `mi_realloc` entry points when the layout fits mimalloc's

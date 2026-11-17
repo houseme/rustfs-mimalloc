@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream v3.6.2 development commit 9548089b.
+//! Pinned to the upstream v3.7.0 release (tag `1ed67b51`).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -382,6 +382,44 @@ unsafe extern "C" {
     pub fn mi_realloc_aligned(p: *mut c_void, newsize: size_t, alignment: size_t) -> *mut c_void;
 }
 
+// ── Offset-aligned allocation (payload after an in-block header) ───────────
+
+unsafe extern "C" {
+    /// Allocate with the byte at `offset` guaranteed `alignment`-aligned.
+    /// Useful when a block stores an inline header before the aligned payload.
+    pub fn mi_malloc_aligned_at(size: size_t, alignment: size_t, offset: size_t) -> *mut c_void;
+    pub fn mi_zalloc_aligned_at(size: size_t, alignment: size_t, offset: size_t) -> *mut c_void;
+    pub fn mi_calloc_aligned_at(
+        count: size_t,
+        size: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    /// As `mi_realloc_aligned`, keeping the byte at `offset` aligned.
+    pub fn mi_realloc_aligned_at(
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    /// Only valid for null or originally zero-initialized blocks.
+    pub fn mi_rezalloc_aligned_at(
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    /// As `mi_rezalloc_aligned_at`, with checked multiplication of `newcount`
+    /// and `size`.
+    pub fn mi_recalloc_aligned_at(
+        p: *mut c_void,
+        newcount: size_t,
+        size: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+}
+
 // ── Process & thread lifecycle ──────────────────────────────────────────────
 
 unsafe extern "C" {
@@ -501,6 +539,53 @@ unsafe extern "C" {
         count: size_t,
         size: size_t,
         alignment: size_t,
+    ) -> *mut c_void;
+
+    /// Allocate from this heap with the byte at `offset` `alignment`-aligned.
+    pub fn mi_heap_malloc_aligned_at(
+        heap: *mut mi_heap_t,
+        size: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    pub fn mi_heap_zalloc_aligned_at(
+        heap: *mut mi_heap_t,
+        size: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    pub fn mi_heap_calloc_aligned_at(
+        heap: *mut mi_heap_t,
+        count: size_t,
+        size: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    /// As `mi_heap_realloc_aligned`, keeping the byte at `offset` aligned.
+    pub fn mi_heap_realloc_aligned_at(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    /// Only valid for null or originally zero-initialized blocks.
+    pub fn mi_heap_rezalloc_aligned_at(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+        offset: size_t,
+    ) -> *mut c_void;
+    /// As `mi_heap_rezalloc_aligned_at`, with checked multiplication of
+    /// `newcount` and `size`.
+    pub fn mi_heap_recalloc_aligned_at(
+        heap: *mut mi_heap_t,
+        p: *mut c_void,
+        newcount: size_t,
+        size: size_t,
+        alignment: size_t,
+        offset: size_t,
     ) -> *mut c_void;
 }
 
@@ -726,4 +811,59 @@ unsafe extern "C" {
         arg: *mut c_void,
     );
     pub fn mi_theap_stats_merge_to_heap(theap: *mut mi_theap_t);
+}
+
+// ── Subprocesses ────────────────────────────────────────────────────────────
+
+unsafe extern "C" {
+    /// The initial subprocess containing the main thread's heaps.
+    pub fn mi_subproc_main() -> mi_subproc_id_t;
+    /// The subprocess that owns the calling thread.
+    pub fn mi_subproc_current() -> mi_subproc_id_t;
+    /// Create a new subprocess. Call `mi_subproc_add_current_thread` on a
+    /// freshly created thread before it allocates.
+    pub fn mi_subproc_new() -> mi_subproc_id_t;
+    /// Destroy a subprocess created with `mi_subproc_new`. Its heaps must no
+    /// longer be used; live blocks move to the main subprocess.
+    pub fn mi_subproc_destroy(subproc: mi_subproc_id_t);
+    /// Attach the calling thread to `subproc`. Call right after thread creation,
+    /// before the thread allocates.
+    pub fn mi_subproc_add_current_thread(subproc: mi_subproc_id_t);
+    /// Visit all heaps of `subproc`. Return `false` from `visitor` to stop
+    /// early. Only valid while subprocess threads are quiescent.
+    pub fn mi_subproc_visit_heaps(
+        subproc: mi_subproc_id_t,
+        visitor: Option<mi_heap_visit_fun>,
+        arg: *mut c_void,
+    ) -> bool;
+}
+
+// ── Heap block visitors ─────────────────────────────────────────────────────
+
+unsafe extern "C" {
+    /// Visit the live blocks of `heap`. With `visit_blocks`, the visitor also
+    /// receives each block; otherwise it is called once per heap area. Only
+    /// valid while no thread allocates in or frees from `heap`.
+    pub fn mi_heap_visit_blocks(
+        heap: *mut mi_heap_t,
+        visit_blocks: bool,
+        visitor: Option<mi_block_visit_fun>,
+        arg: *mut c_void,
+    ) -> bool;
+    /// As `mi_heap_visit_blocks`, additionally visiting abandoned heaps.
+    /// Blocks in abandoned heaps are not owned by any live thread context.
+    pub fn mi_heap_visit_abandoned_blocks(
+        heap: *mut mi_heap_t,
+        visit_blocks: bool,
+        visitor: Option<mi_block_visit_fun>,
+        arg: *mut c_void,
+    ) -> bool;
+    /// Visit the live blocks of a cached thread-local context. Owner-thread
+    /// or quiescent-context use only, like the other `mi_theap_*` APIs.
+    pub fn mi_theap_visit_blocks(
+        theap: *const mi_theap_t,
+        visit_blocks: bool,
+        visitor: Option<mi_block_visit_fun>,
+        arg: *mut c_void,
+    ) -> bool;
 }
