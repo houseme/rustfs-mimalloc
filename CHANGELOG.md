@@ -53,6 +53,15 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Added
 
+- Safe process-wide callback registration in the new `rustfs_mimalloc::callback`
+  module and crate-root re-exports: `register_error`/`clear_error`,
+  `register_output`/`clear_output` and
+  `register_deferred_free`/`clear_deferred_free` accept `&'static` closures
+  instead of bare function pointer plus `arg` pairs. The trampolines keep the
+  registration lock alive for the whole C call so re-registration can never
+  race an in-flight invocation, contain panics with a loud abort instead of
+  unwinding into C, and route concurrent calls correctly under upstream's
+  v3.7.0 re-registration semantics.
 - Bind the offset-aligned allocation families for payload-after-header
   layouts (`mi_{malloc,zalloc,calloc,realloc,rezalloc,recalloc}_aligned_at`
   global and heap variants), the subprocess lifecycle and heap visiting
