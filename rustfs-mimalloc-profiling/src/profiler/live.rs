@@ -379,10 +379,7 @@ mod tests {
     #[test]
     fn snapshot_reserves_for_admissions_after_its_initial_estimate() {
         let sample = LiveAllocationSample {
-            stack: StackKey {
-                frames: [42; super::super::MAX_CAPTURE_DEPTH],
-                depth: 1,
-            },
+            stack: StackKey::from_parts([42; super::super::MAX_CAPTURE_DEPTH], 1),
             weighted_objects: 1.0,
             weighted_bytes: 1024.0,
         };

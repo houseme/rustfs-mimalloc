@@ -142,6 +142,20 @@ mod supported {
     fn load_elf_offsets(image: &mut Image) -> bool {
         use object::{Object, ObjectSegment};
 
+        // Images never change identity while loaded, so verified segment file
+        // offsets are cached per (path, build id) across reports. A repeated
+        // report then skips re-opening and re-parsing every involved image.
+        if let Some(offsets) = verified_offsets::lookup(&image.path, &image.build_id) {
+            image.segments.retain_mut(|segment| {
+                let Some(file_offset) = offsets.get(&segment.stated_address) else {
+                    return false;
+                };
+                segment.file_offset = *file_offset;
+                true
+            });
+            return !image.segments.is_empty();
+        }
+
         let Ok(file) = std::fs::File::open(&image.path) else {
             return false;
         };
@@ -157,6 +171,7 @@ mod supported {
         if image.build_id.is_empty() || disk_id.as_deref() != Some(&image.build_id) {
             return false;
         }
+        let mut offsets = std::collections::HashMap::new();
         image.segments.retain_mut(|segment| {
             let Some(disk_segment) = object
                 .segments()
@@ -164,10 +179,47 @@ mod supported {
             else {
                 return false;
             };
-            segment.file_offset = disk_segment.file_range().0;
+            let file_offset = disk_segment.file_range().0;
+            segment.file_offset = file_offset;
+            offsets.insert(segment.stated_address, file_offset);
             true
         });
+        if !image.segments.is_empty() {
+            verified_offsets::store(image.path.clone(), image.build_id.clone(), offsets);
+        }
         !image.segments.is_empty()
+    }
+
+    /// Process-lifetime cache of build-id-verified ELF segment file offsets.
+    /// A same-build-id file replacement has an identical segment layout, so
+    /// identity re-verification on disk is only required for cache misses.
+    #[cfg(target_os = "linux")]
+    mod verified_offsets {
+        use std::{collections::HashMap, path::PathBuf, sync::Mutex};
+
+        struct VerifiedImage {
+            build_id: String,
+            offsets: HashMap<u64, u64>,
+        }
+
+        fn entries() -> &'static Mutex<HashMap<PathBuf, VerifiedImage>> {
+            use std::sync::OnceLock;
+            static ENTRIES: OnceLock<Mutex<HashMap<PathBuf, VerifiedImage>>> = OnceLock::new();
+            ENTRIES.get_or_init(|| Mutex::new(HashMap::new()))
+        }
+
+        pub(super) fn lookup(path: &PathBuf, build_id: &str) -> Option<HashMap<u64, u64>> {
+            let entries = entries().lock().unwrap_or_else(|err| err.into_inner());
+            entries
+                .get(path)
+                .filter(|image| image.build_id == build_id)
+                .map(|image| image.offsets.clone())
+        }
+
+        pub(super) fn store(path: PathBuf, build_id: String, offsets: HashMap<u64, u64>) {
+            let mut entries = entries().lock().unwrap_or_else(|err| err.into_inner());
+            entries.insert(path, VerifiedImage { build_id, offsets });
+        }
     }
 
     #[cfg(test)]

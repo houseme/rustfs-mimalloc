@@ -19,6 +19,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   recursion-suppression guard (`live::remove` never allocates, captures or
   records), and stack capture happens before taking the TLS sample ring lock
   so a concurrent report drain no longer waits for the unwinder.
+- Speed up report generation: `StackKey` carries a capture-time hash of its
+  captured prefix, so aggregating large drains hashes one u64 per sample
+  instead of every captured frame, and Linux ELF segment file offsets are
+  cached per image identity across reports instead of re-opening and
+  re-parsing each involved binary on every report.
 - Advance pristine mimalloc source to the official v3.7.0 release tag
   `1ed67b51`, superseding the interim v3.6.2 development pin `9548089b`.
   Numeric C version is 30700; v3.7.0 is the latest official upstream release.

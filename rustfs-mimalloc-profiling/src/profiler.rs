@@ -120,6 +120,10 @@ thread_local! {
 struct StackKey {
     frames: [usize; MAX_CAPTURE_DEPTH],
     depth: usize,
+    /// Precomputed mix of `frames[..depth]`, fixed at capture. Report
+    /// aggregation then hashes one u64 per drained sample instead of running
+    /// a hasher over every captured frame of up to `MAX_CAPTURE_DEPTH` slots.
+    hash: u64,
 }
 
 impl PartialEq for StackKey {
@@ -132,13 +136,28 @@ impl Eq for StackKey {}
 
 impl Hash for StackKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Unused slots do not identify a stack. Hash only captured addresses,
-        // particularly for shallow stacks during report aggregation.
-        self.frames[..self.depth].hash(state);
+        // Unused slots do not identify a stack. Only the capture-time mix
+        // participates; equal stacks always share it.
+        state.write_u64(self.hash);
     }
 }
 
 impl StackKey {
+    /// Assemble a key from captured addresses. The caller fills
+    /// `frames[0..depth]`; the capture-time hash covers exactly that prefix.
+    fn from_parts(frames: [usize; MAX_CAPTURE_DEPTH], depth: usize) -> Self {
+        let depth = depth.min(MAX_CAPTURE_DEPTH);
+        let mut hash = 0_u64;
+        for &frame in frames[..depth].iter() {
+            hash = splitmix64(hash ^ splitmix64(frame as u64));
+        }
+        Self {
+            frames,
+            depth,
+            hash,
+        }
+    }
+
     fn capture(max_depth: usize) -> Self {
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         if NATIVE_STACK_CAPTURE.load(Ordering::Relaxed) {
@@ -148,44 +167,39 @@ impl StackKey {
     }
 
     fn capture_portable(max_depth: usize) -> Self {
-        let mut key = Self {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 0,
-        };
+        let mut frames = [0; MAX_CAPTURE_DEPTH];
+        let mut depth = 0;
         let max_depth = max_depth.min(MAX_CAPTURE_DEPTH);
 
         backtrace::trace(|frame| {
-            if key.depth >= max_depth {
+            if depth >= max_depth {
                 return false;
             }
-            key.frames[key.depth] = frame.ip() as usize;
-            key.depth += 1;
+            frames[depth] = frame.ip() as usize;
+            depth += 1;
             true
         });
 
-        key
+        Self::from_parts(frames, depth)
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     fn capture_native(max_depth: usize) -> Self {
         let limit = max_depth.min(MAX_CAPTURE_DEPTH);
-        let mut key = Self {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 0,
-        };
         if limit == 0 {
-            return key;
+            return Self::from_parts([0; MAX_CAPTURE_DEPTH], 0);
         }
         let mut addresses = [std::ptr::null_mut::<std::ffi::c_void>(); MAX_CAPTURE_DEPTH];
         // SAFETY: glibc backtrace is MT-Safe, writes at most limit pointers to
         // this writable array, and never retains it. No callback or symbols
         // are invoked here. Initialization warms its lazy unwinder loading.
         let count = unsafe { libc::backtrace(addresses.as_mut_ptr(), limit as libc::c_int) };
-        key.depth = usize::try_from(count).unwrap_or(0).min(limit);
-        for (output, address) in key.frames[..key.depth].iter_mut().zip(&addresses) {
+        let depth = usize::try_from(count).unwrap_or(0).min(limit);
+        let mut frames = [0; MAX_CAPTURE_DEPTH];
+        for (output, address) in frames[..depth].iter_mut().zip(&addresses) {
             *output = *address as usize;
         }
-        key
+        Self::from_parts(frames, depth)
     }
 
     fn iter(&self) -> impl Iterator<Item = usize> + '_ {
@@ -1984,10 +1998,7 @@ mod tests {
             .allocator_seen
             .swap(true, Ordering::Relaxed);
         let mut profiler = Profiler::start(MimallocConfig::default()).unwrap();
-        let stack = StackKey {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 0,
-        };
+        let stack = StackKey::from_parts([0; MAX_CAPTURE_DEPTH], 0);
         push_global_test_samples([test_sample(stack)]);
         assert!(mimalloc_stats().buffered_samples.unwrap() > 0);
         profiler.stop();
@@ -2039,10 +2050,7 @@ mod tests {
             ..MimallocConfig::default()
         });
         backend.initialize().unwrap();
-        let stack = StackKey {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 0,
-        };
+        let stack = StackKey::from_parts([0; MAX_CAPTURE_DEPTH], 0);
         push_global_test_samples([test_sample(stack), test_sample(stack)]);
         live::record(
             100,
@@ -2093,10 +2101,7 @@ mod tests {
             .store(true, Ordering::Release);
         let _active = RecorderActiveGuard;
         let empty = live::snapshot();
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         live::record(
             100,
             stack,
@@ -2134,10 +2139,7 @@ mod tests {
         let generation = HOT_ALLOCATION_STATE
             .sampling_config_generation
             .load(Ordering::Acquire);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         live::record(
             100,
             stack,
@@ -2164,10 +2166,7 @@ mod tests {
         let generation = HOT_ALLOCATION_STATE
             .sampling_config_generation
             .load(Ordering::Acquire);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let pointer = 100;
         let mut collisions = (101..)
             .filter(|other| splitmix64(*other as u64) % 4096 == splitmix64(pointer as u64) % 4096);
@@ -2206,10 +2205,7 @@ mod tests {
         let generation = HOT_ALLOCATION_STATE
             .sampling_config_generation
             .load(Ordering::Acquire);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let pointer = 100;
         let collision = (101..)
             .find(|other| splitmix64(*other as u64) % 64 == splitmix64(pointer as u64) % 64)
@@ -2250,10 +2246,7 @@ mod tests {
         let old_generation = HOT_ALLOCATION_STATE
             .sampling_config_generation
             .load(Ordering::Acquire);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         live::record(
             100,
             stack,
@@ -2294,14 +2287,8 @@ mod tests {
     fn report_with_one_sample_budget_alternates_tls_and_global_sources() {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
-        let global_stack = StackKey {
-            frames: [1; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        let tls_stack = StackKey {
-            frames: [2; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let global_stack = StackKey::from_parts([1; MAX_CAPTURE_DEPTH], 1);
+        let tls_stack = StackKey::from_parts([2; MAX_CAPTURE_DEPTH], 1);
         push_global_test_samples([test_sample(global_stack)]);
         TLS_SAMPLE_BUFFER.with(|buffer| {
             let mut buffer = buffer.try_lock().expect("lock TLS");
@@ -2317,10 +2304,7 @@ mod tests {
 
     #[test]
     fn memory_aggregation_combines_interval_and_live_values_by_stack() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let samples = build_memory_samples(
             vec![test_sample(stack)],
             vec![test_live_sample(stack), test_live_sample(stack)],
@@ -2339,10 +2323,7 @@ mod tests {
 
     #[test]
     fn live_object_weights_are_rounded_after_stack_aggregation() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let sample = live::LiveAllocationSample {
             stack,
             weighted_objects: 1.582,
@@ -2397,15 +2378,13 @@ mod tests {
 
     #[test]
     fn stack_identity_ignores_unused_capture_slots() {
-        let mut first = StackKey {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        first.frames[0] = 42;
-        let second = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        // Only the captured prefix identifies a stack: the same prefix with
+        // different tail junk is equal and shares one capture-time hash, so
+        // report aggregation merges them into a single sample.
+        let mut frames = [0; MAX_CAPTURE_DEPTH];
+        frames[0] = 42;
+        let first = StackKey::from_parts(frames, 1);
+        let second = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         assert_eq!(first, second);
         let samples =
             build_memory_samples(vec![test_sample(first), test_sample(second)], Vec::new(), 8);
@@ -2418,10 +2397,7 @@ mod tests {
         let _guard = TEST_LOCK.lock().expect("lock test");
         clear_test_buffers();
         MAX_RECORDED_SAMPLES.store(10, Ordering::Relaxed);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let mut buffer = TlsSampleBuffer::new();
         buffer.push(test_sample(stack));
         HOT_ALLOCATION_STATE
@@ -2446,10 +2422,7 @@ mod tests {
         let generation = HOT_ALLOCATION_STATE
             .sampling_config_generation
             .load(Ordering::Acquire);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         live::record(
             100,
             stack,
@@ -2475,10 +2448,7 @@ mod tests {
         let generation = HOT_ALLOCATION_STATE
             .sampling_config_generation
             .load(Ordering::Acquire);
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         for reentrant in [false, true] {
             // SAFETY: Allocate valid storage directly through the wrapped
             // allocator so the test can install an exact live sample.
@@ -2526,10 +2496,7 @@ mod tests {
             let generation = HOT_ALLOCATION_STATE
                 .sampling_config_generation
                 .load(Ordering::Acquire);
-            let stack = StackKey {
-                frames: [42; MAX_CAPTURE_DEPTH],
-                depth: 1,
-            };
+            let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
             live::record(
                 pointer as usize,
                 stack,
@@ -2581,10 +2548,7 @@ mod tests {
         // SAFETY: Valid layout, with ownership retained until the final dealloc.
         let pointer = unsafe { allocator.inner.alloc(layout) };
         assert!(!pointer.is_null());
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         live::record(
             pointer as usize,
             stack,
@@ -2654,10 +2618,7 @@ mod tests {
             if let Some(id) = registered.id.take() {
                 deregister_tls_sample_buffer(id);
             }
-            let stack = StackKey {
-                frames: [42; MAX_CAPTURE_DEPTH],
-                depth: 1,
-            };
+            let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
             registered
                 .buffer
                 .lock()
@@ -2679,10 +2640,7 @@ mod tests {
     #[test]
     fn mimalloc_stats_includes_current_thread_tls_samples() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         push_global_test_samples([test_sample(stack)]);
         TLS_SAMPLE_BUFFER.with(|buffer| {
@@ -2754,10 +2712,7 @@ mod tests {
 
     #[test]
     fn report_storage_growth_releases_source_lock_and_keeps_new_admissions() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let source = Mutex::new(VecDeque::from([test_sample(stack)]));
         let mut out = Vec::new();
         let mut reservations = 0;
@@ -2793,10 +2748,7 @@ mod tests {
 
     #[test]
     fn report_retry_clips_retained_shard_storage_to_the_session_quota() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let source = Mutex::new(VecDeque::with_capacity(128));
         source.lock().unwrap().push_back(test_sample(stack));
         let mut out = Vec::new();
@@ -2829,10 +2781,7 @@ mod tests {
 
     #[test]
     fn sparse_report_storage_uses_occupancy_and_empty_sources_reserve_nothing() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let source = Mutex::new(VecDeque::new());
         let mut out = Vec::new();
         drop(
@@ -2886,10 +2835,7 @@ mod tests {
     #[test]
     fn appending_global_samples_releases_only_the_moved_global_reservations() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         push_global_test_samples([test_sample(stack); 3]);
         let mut out = Vec::with_capacity(4);
@@ -2906,10 +2852,7 @@ mod tests {
     #[test]
     fn drain_recorded_samples_respects_limit_and_keeps_remaining_samples() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         push_global_test_samples([test_sample(stack), test_sample(stack), test_sample(stack)]);
 
@@ -2924,14 +2867,8 @@ mod tests {
     #[test]
     fn drain_recorded_samples_rotates_starting_shard() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let low_stack = StackKey {
-            frames: [1; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        let high_stack = StackKey {
-            frames: [2; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let low_stack = StackKey::from_parts([1; MAX_CAPTURE_DEPTH], 1);
+        let high_stack = StackKey::from_parts([2; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         push_global_test_samples_to_shard(0, [test_sample(low_stack)]);
         push_global_test_samples_to_shard(1, [test_sample(high_stack)]);
@@ -2971,10 +2908,7 @@ mod tests {
     #[test]
     fn prepare_sample_buffer_recounts_global_sample_slots_after_clear() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         push_global_test_samples([test_sample(stack), test_sample(stack)]);
         GLOBAL_BUFFERED_SAMPLE_COUNT.store(usize::MAX, Ordering::Relaxed);
@@ -2989,10 +2923,7 @@ mod tests {
 
     #[test]
     fn tls_sample_buffer_drain_into_respects_limit() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let mut buffer = TlsSampleBuffer::new();
         assert!(buffer.push(test_sample(stack)));
         assert!(buffer.push(test_sample(stack)));
@@ -3128,10 +3059,7 @@ mod tests {
     #[test]
     fn flush_tls_samples_moves_buffer_to_global_samples() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         MAX_RECORDED_SAMPLES.store(10, Ordering::Relaxed);
         FLUSH_COUNT.store(0, Ordering::Relaxed);
@@ -3155,10 +3083,7 @@ mod tests {
     #[test]
     fn flush_tls_samples_keeps_tls_samples_when_global_capacity_is_full() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
         MAX_RECORDED_SAMPLES.store(0, Ordering::Relaxed);
@@ -3177,10 +3102,7 @@ mod tests {
     #[test]
     fn flush_tls_samples_keeps_unflushed_tls_samples_after_partial_flush() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         DROPPED_SAMPLES.store(0, Ordering::Relaxed);
         FLUSH_COUNT.store(0, Ordering::Relaxed);
@@ -3205,14 +3127,8 @@ mod tests {
     #[test]
     fn report_tls_drain_bypasses_full_global_buffer() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let global_stack = StackKey {
-            frames: [1; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
-        let tls_stack = StackKey {
-            frames: [2; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let global_stack = StackKey::from_parts([1; MAX_CAPTURE_DEPTH], 1);
+        let tls_stack = StackKey::from_parts([2; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         MAX_RECORDED_SAMPLES.store(1, Ordering::Relaxed);
         FLUSH_COUNT.store(0, Ordering::Relaxed);
@@ -3249,10 +3165,7 @@ mod tests {
     #[test]
     fn tls_sample_buffer_flushes_on_thread_exit_when_recorder_is_active() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         MAX_RECORDED_SAMPLES.store(10, Ordering::Relaxed);
         FLUSH_COUNT.store(0, Ordering::Relaxed);
@@ -3290,10 +3203,7 @@ mod tests {
     #[test]
     fn tls_sample_buffer_counts_drop_when_thread_exit_flush_has_no_global_capacity() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         MAX_RECORDED_SAMPLES.store(0, Ordering::Relaxed);
         FLUSH_COUNT.store(0, Ordering::Relaxed);
@@ -3331,10 +3241,7 @@ mod tests {
     #[test]
     fn clear_registered_tls_samples_drains_all_live_thread_buffers() {
         let _guard = TEST_LOCK.lock().expect("lock test");
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         clear_test_buffers();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -3362,10 +3269,7 @@ mod tests {
 
     #[test]
     fn build_allocation_samples_groups_matching_stacks() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let samples = build_allocation_samples(
             vec![
                 RecordedAllocationSample {
@@ -3440,10 +3344,7 @@ mod tests {
 
     #[test]
     fn filtered_inline_frames_are_shared_and_resolved_once_per_report() {
-        let mut first = StackKey {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 2,
-        };
+        let mut first = StackKey::from_parts([0; MAX_CAPTURE_DEPTH], 2);
         first.frames[..2].copy_from_slice(&[1, 2]);
         let mut second = first;
         second.frames[1] = 3;
@@ -3489,10 +3390,7 @@ mod tests {
 
     #[test]
     fn unresolved_addresses_survive_depth_limits_and_profiler_filtering() {
-        let mut stack = StackKey {
-            frames: [0; MAX_CAPTURE_DEPTH],
-            depth: 2,
-        };
+        let mut stack = StackKey::from_parts([0; MAX_CAPTURE_DEPTH], 2);
         stack.frames[..2].copy_from_slice(&[7, 8]);
         let frames = resolve_stack_with(&stack, 1, |ip| {
             filter_profiler_frame(MemoryFrame {
@@ -3517,7 +3415,7 @@ mod tests {
     fn resolve_stack_applies_depth_after_profiler_frame_filtering() {
         let mut frames = [0; MAX_CAPTURE_DEPTH];
         frames[..4].copy_from_slice(&[1, 2, 3, 4]);
-        let stack = StackKey { frames, depth: 4 };
+        let stack = StackKey::from_parts(frames, 4);
 
         let resolved = resolve_stack_with(&stack, 1, |ip| {
             let name = match ip {
@@ -3548,7 +3446,7 @@ mod tests {
     fn resolve_stack_expands_inline_symbols_before_filtering() {
         let mut frames = [0; MAX_CAPTURE_DEPTH];
         frames[0] = 1;
-        let stack = StackKey { frames, depth: 1 };
+        let stack = StackKey::from_parts(frames, 1);
 
         let resolved = resolve_stack_with(&stack, 2, |ip| {
             assert_eq!(ip, 1);
@@ -3588,10 +3486,7 @@ mod tests {
 
     #[test]
     fn allocation_estimates_round_only_after_stack_aggregation() {
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let samples = vec![
             RecordedAllocationSample {
                 stack,
@@ -3609,10 +3504,7 @@ mod tests {
     #[test]
     fn tls_ring_wraps_and_partial_drains_preserve_fifo_without_compaction() {
         let mut ring = TlsSampleBuffer::new();
-        let stack = StackKey {
-            frames: [42; MAX_CAPTURE_DEPTH],
-            depth: 1,
-        };
+        let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         for value in 0..TLS_SAMPLE_RING_CAPACITY {
             let mut sample = test_sample(stack);
             sample.weighted_bytes = value as f64;
