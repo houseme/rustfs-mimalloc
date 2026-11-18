@@ -965,7 +965,7 @@ fn record_allocation(ptr: *mut u8, size: u64) {
             return;
         }
 
-        sampler.set(state);
+        // The tail re-reads the TLS cell itself; no store is needed here.
         record_allocation_interval_end(sampler, ptr, size, generation);
     });
 }
@@ -1072,6 +1072,13 @@ fn record_live_reallocation(
 #[inline(never)]
 fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
     let tracking_live = live::enabled() && !ptr.is_null();
+    // Skip the unwinder when the event's session already ended (for example a
+    // straggler racing a restart). This is advisory only: the authoritative
+    // check runs again under the ring lock below, so capture-before-lock
+    // cannot admit foreign samples.
+    if !session_is_current(generation) {
+        return;
+    }
     // Capture before taking the ring lock: unwinding is the slowest step of a
     // sample and a concurrent report() drain may be waiting on the same TLS
     // ring. The under-lock session check still rejects stacks captured for a
@@ -1095,9 +1102,8 @@ fn record_sample(ptr: *mut u8, weight: SampleWeight, generation: u64) {
             if buffer.is_full() {
                 flush_tls_samples(&mut buffer);
             }
-            if buffer.is_full() && !tracking_live {
-                return true;
-            }
+            // A still-full ring after the flush drops this sample; the
+            // push below rejects it the same way when tracking_live.
 
             let sample = RecordedAllocationSample {
                 stack: captured,
