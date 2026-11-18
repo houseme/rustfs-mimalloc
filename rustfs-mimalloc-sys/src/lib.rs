@@ -135,6 +135,26 @@ impl mi_option_t {
     #[allow(non_upper_case_globals)]
     pub const mi_option_minimal_purge_size: Self = Self::mi_option_arena_purge_min_size;
 
+    /// Upstream legacy spelling of [`Self::mi_option_allow_large_os_pages`].
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_large_os_pages: Self = Self::mi_option_allow_large_os_pages;
+
+    /// Upstream legacy spelling of [`Self::mi_option_arena_eager_commit`].
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_eager_region_commit: Self = Self::mi_option_arena_eager_commit;
+
+    /// Upstream legacy spelling of [`Self::mi_option_purge_decommits`].
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_reset_decommits: Self = Self::mi_option_purge_decommits;
+
+    /// Upstream legacy spelling of [`Self::mi_option_purge_delay`].
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_reset_delay: Self = Self::mi_option_purge_delay;
+
+    /// Upstream legacy spelling of [`Self::mi_option_disallow_os_alloc`].
+    #[allow(non_upper_case_globals)]
+    pub const mi_option_limit_os_alloc: Self = Self::mi_option_disallow_os_alloc;
+
     /// Compatibility alias for the former Rust binding name.
     #[allow(non_upper_case_globals)]
     pub const mi_option_collect_merges_stats: Self = Self::mi_option_stats_merge_on_collect;
@@ -766,6 +786,9 @@ unsafe extern "C" {
     pub fn mi_heap_profile_disable(heap: *mut mi_heap_t);
     pub fn mi_subproc_profile(subproc_id: mi_subproc_id_t, profiler: *mut mi_profiler_t) -> bool;
     pub fn mi_profile(profiler: *mut mi_profiler_t) -> bool;
+    /// Start sampling. Returns whether the profiler was already running —
+    /// this is **not** a success flag; starting an already-running profiler
+    /// returns early with `true` and changes nothing.
     pub fn mi_profiler_start(profiler: *mut mi_profiler_t) -> bool;
     /// Stop allocation sampling, returning the previous running state.
     /// Free callbacks continue for sampled blocks until the profiler is detached.
