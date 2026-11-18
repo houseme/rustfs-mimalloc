@@ -205,9 +205,14 @@ fn pprof_snapshot_matches_build_sampling_mode() {
     let profile = std::fs::read_to_string(&files[0]).unwrap();
     assert!(profile.starts_with("heap profile:"), "{profile}");
     assert!(profile.contains("MAPPED_LIBRARIES:"));
+    // Static musl binaries have no execinfo and the C code carries no unwind
+    // tables, so the native backtrace returns zero frames and the profiler
+    // drops every sample (see `mi_location_get`). Everywhere else, sample
+    // presence must match the build's sampling mode.
+    let capture_works = !cfg!(all(target_os = "linux", target_env = "musl"));
     assert_eq!(
         profile.lines().skip(1).any(|line| line.contains(" @")),
-        MI_PROFILE_ENABLED,
+        MI_PROFILE_ENABLED && capture_works,
         "snapshot sample presence differs from build mode"
     );
     std::fs::remove_dir_all(&dir).unwrap();
