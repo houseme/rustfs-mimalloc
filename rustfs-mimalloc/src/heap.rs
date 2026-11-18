@@ -1453,10 +1453,11 @@ mod tests {
             let visited = heap.visit_blocks(true, &mut |area, block, block_size| {
                 if block.is_none() {
                     area_calls += 1;
-                    // `used` counts this page's live bytes only; pages that
-                    // host our allocations must report a nonzero figure and
-                    // a plausible full block size.
-                    assert!(area.used > 0 && area.full_block_size >= area.block_size);
+                    // Pages are visited even when fully free (used == 0) —
+                    // the walk covers the whole arena page map — so only the
+                    // block-size plausibility is asserted here. `used` counts
+                    // this page's live bytes alone, never a heap total.
+                    assert!(area.full_block_size >= area.block_size);
                 } else {
                     block_calls += 1;
                     found.push(block_size);
