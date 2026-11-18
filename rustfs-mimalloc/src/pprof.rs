@@ -84,6 +84,10 @@ impl PprofProfiler {
     /// format; other extensions (or none) select protobuf. Returns `None`
     /// when the name contains an interior NUL or the native profiler cannot
     /// be created.
+    ///
+    /// The native copy strips any dot-extension from the base name (also
+    /// choosing the format) and truncates names beyond 1024 bytes;
+    /// [`Self::base_file_name`] returns the caller's original string.
     pub fn new(base_file_name: &str, config: PprofConfig) -> Option<Self> {
         let base_file_name = CString::new(base_file_name).ok()?;
         // SAFETY: `base_file_name` is a valid NUL-terminated string kept alive
@@ -105,8 +109,10 @@ impl PprofProfiler {
         })
     }
 
-    /// The base file name snapshots are written to (extension stripped by the
-    /// native profiler if present).
+    /// The base file name as passed to [`Self::new`]. Note that the native
+    /// profiler strips any dot-extension (also choosing the output format)
+    /// and truncates names beyond 1024 bytes, so snapshot file prefixes may
+    /// differ from this string for long or extension-carrying names.
     #[inline]
     pub fn base_file_name(&self) -> &str {
         self.base_file_name
@@ -115,16 +121,15 @@ impl PprofProfiler {
     }
 
     /// Attach to all current and future heaps in the main subprocess.
-    /// Returns `true` when the profiler is attached. Attaching stops the
-    /// profiler; call [`Self::start`] to begin sampling.
+    /// Returns `true` when the profiler is attached. Attaching stops a
+    /// running profiler first; call [`Self::start`] to begin sampling.
     pub fn attach(&mut self) -> bool {
         // SAFETY: `self.ptr` is a live profiler handle; attaching routes
-        // sampled allocations to the native callbacks until detach.
+        // sampled allocations to the native callbacks until detach. The
+        // native attach stops the profiler, so mirror that in the flag.
         let attached = unsafe { rustfs_mimalloc_sys::mi_profile(self.ptr.as_ptr()) };
         self.attached = attached;
-        if !attached {
-            self.started = false;
-        }
+        self.started = false;
         attached
     }
 
@@ -147,8 +152,9 @@ impl PprofProfiler {
         was_running
     }
 
-    /// Stop sampling. Returns whether the profiler was running. The profiler
-    /// must be re-attached before sampling can resume.
+    /// Stop sampling. Returns whether the profiler was running. Sampling can
+    /// resume with [`Self::start`] alone; re-attaching is only needed after
+    /// [`Self::detach`].
     pub fn stop(&mut self) -> bool {
         // SAFETY: `self.ptr` is a live profiler handle.
         let was_running = unsafe { rustfs_mimalloc_sys::mi_profiler_stop(self.ptr.as_ptr()) };

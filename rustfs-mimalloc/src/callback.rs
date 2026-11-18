@@ -14,7 +14,17 @@
 //! replaced another one is guaranteed not to race with calls still running in
 //! the previous callback: readers hold the registration lock for the whole
 //! call.
+//!
+//! # Re-entrancy
+//! A registered callback must never call [`register_error`],
+//! [`register_output`], [`register_deferred_free`] or their `clear_*`
+//! counterparts — directly or transitively. Trampolines hold the registration
+//! lock for the whole call while registration takes the write side, so a
+//! re-entrant call from the callback's own thread would deadlock. The
+//! registration entry points detect this situation and panic with a clear
+//! message instead of hanging.
 
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::panic::AssertUnwindSafe;
 use std::sync::{RwLock, RwLockReadGuard};
@@ -27,8 +37,38 @@ static ERROR_CALLBACK: RwLock<Option<&'static ErrorCallback>> = RwLock::new(None
 static OUTPUT_CALLBACK: RwLock<Option<&'static OutputCallback>> = RwLock::new(None);
 static DEFERRED_FREE_CALLBACK: RwLock<Option<&'static DeferredFreeCallback>> = RwLock::new(None);
 
+thread_local! {
+    /// Set while a registration trampoline runs a callback on this thread.
+    /// Registration entry points refuse to run re-entrantly instead of
+    /// deadlocking on the write side of the lock the caller already holds.
+    static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
+}
+
+fn ensure_not_in_callback(operation: &str) {
+    let reentrant = IN_CALLBACK.with(|flag| flag.get());
+    assert!(
+        !reentrant,
+        "rustfs-mimalloc: {operation} called from inside an allocator callback \
+         would deadlock on the registration lock; defer the call instead"
+    );
+}
+
 fn invoke<T: ?Sized>(guard: &RwLockReadGuard<'_, Option<&'static T>>, run: impl FnOnce(&T)) {
     if let Some(callback) = guard.as_ref() {
+        struct CallbackScope {
+            previous: bool,
+        }
+
+        impl Drop for CallbackScope {
+            fn drop(&mut self) {
+                IN_CALLBACK.with(|flag| flag.set(self.previous));
+            }
+        }
+
+        // Mark this thread as inside a callback so registration entry points
+        // can refuse re-entrant calls; nesting restores the previous state.
+        let previous = IN_CALLBACK.with(|flag| flag.replace(true));
+        let _scope = CallbackScope { previous };
         // A panic inside a C callback must not unwind across FFI: contain it
         // and abort loudly instead.
         if std::panic::catch_unwind(AssertUnwindSafe(|| run(callback))).is_err() {
@@ -52,6 +92,7 @@ fn invoke<T: ?Sized>(guard: &RwLockReadGuard<'_, Option<&'static T>>, run: impl 
 /// concurrently from multiple threads, must be minimal (it can run inside
 /// allocation failure paths), and must not allocate through mimalloc.
 pub fn register_error(callback: &'static (dyn Fn(c_int) + Send + Sync)) {
+    ensure_not_in_callback("register_error");
     *ERROR_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = Some(callback);
@@ -66,6 +107,7 @@ pub fn register_error(callback: &'static (dyn Fn(c_int) + Send + Sync)) {
 /// # Safety contract
 /// The same quiescence requirements as [`register_error`] apply.
 pub fn clear_error() {
+    ensure_not_in_callback("clear_error");
     *ERROR_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = None;
@@ -92,6 +134,7 @@ unsafe extern "C" fn trampoline_error(err: c_int, _arg: *mut c_void) {
 /// callback must not allocate through mimalloc or it can recurse into its own
 /// output.
 pub fn register_output(callback: &'static (dyn Fn(&str) + Send + Sync)) {
+    ensure_not_in_callback("register_output");
     *OUTPUT_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = Some(callback);
@@ -107,6 +150,7 @@ pub fn register_output(callback: &'static (dyn Fn(&str) + Send + Sync)) {
 /// # Safety contract
 /// The same quiescence requirements as [`register_output`] apply.
 pub fn clear_output() {
+    ensure_not_in_callback("clear_output");
     *OUTPUT_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = None;
@@ -140,6 +184,7 @@ unsafe extern "C" fn trampoline_output(msg: *const core::ffi::c_char, _arg: *mut
 /// callback must support concurrent invocations and must not allocate through
 /// mimalloc.
 pub fn register_deferred_free(callback: &'static (dyn Fn(bool, u64) + Send + Sync)) {
+    ensure_not_in_callback("register_deferred_free");
     *DEFERRED_FREE_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = Some(callback);
@@ -158,6 +203,7 @@ pub fn register_deferred_free(callback: &'static (dyn Fn(bool, u64) + Send + Syn
 /// # Safety contract
 /// The same quiescence requirements as [`register_deferred_free`] apply.
 pub fn clear_deferred_free() {
+    ensure_not_in_callback("clear_deferred_free");
     *DEFERRED_FREE_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = None;
@@ -311,5 +357,43 @@ mod tests {
         second.join().unwrap();
         assert!(OUTPUTS.load(Ordering::Relaxed) >= 20);
         clear_output();
+    }
+
+    /// Child-process helper: performs the forbidden re-entrant registration
+    /// from inside a callback. Panics inside callbacks abort the process, so
+    /// the parent asserts a non-zero exit instead of a deadlock hang.
+    #[test]
+    fn reentrant_registration_child() {
+        if std::env::var_os("RUSTFS_CALLBACK_REENTRANCY_CHILD").is_none() {
+            return;
+        }
+        register_output(&|_message| {
+            // Would deadlock on the registration write lock without the
+            // re-entrancy guard.
+            clear_output();
+        });
+        unsafe {
+            rustfs_mimalloc_sys::mi_stats_print_out(None, core::ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn reentrant_registration_fails_fast_instead_of_deadlocking() {
+        let _guard = test_lock().lock().unwrap_or_else(|err| err.into_inner());
+        let executable = std::env::current_exe().expect("locate the test binary");
+        let status = std::process::Command::new(executable)
+            .args([
+                "callback::tests::reentrant_registration_child",
+                "--exact",
+                "--nocapture",
+            ])
+            .env("RUSTFS_CALLBACK_REENTRANCY_CHILD", "1")
+            .status()
+            .expect("spawn the reentrancy child");
+        assert!(
+            !status.success(),
+            "re-entrant registration must abort loudly, not hang; got {status:?}"
+        );
+        // The parent process registrations stay untouched by the child.
     }
 }

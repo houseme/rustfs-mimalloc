@@ -302,7 +302,9 @@ impl MiMalloc {
     /// A non-null `ptr` must meet [`Self::free_small_local_nonnull`]'s contract.
     #[inline]
     pub unsafe fn free_small_local(ptr: *mut u8) {
-        // Upstream's debug build asserts non-null even for its nullable variant.
+        // Upstream's nullable variant routes null through pointer validation
+        // (an error report in debug builds); the non-null variant asserts
+        // `p != NULL`. The guard makes null a quiet no-op in every build.
         if let Some(ptr) = NonNull::new(ptr) {
             unsafe { Self::free_small_local_nonnull(ptr) }
         }
