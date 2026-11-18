@@ -41,6 +41,16 @@ fn native_pprof_profiler_writes_snapshots() {
     assert!(profiler.stop(), "stop after sampling was running");
     profiler.detach();
 
+    // State-machine round trip in the quiescent binary: attach stops a
+    // running profiler, stop reports the previous state, and start resumes
+    // sampling while still attached (no re-attach required).
+    assert!(!profiler.start(), "restart while attached");
+    assert!(profiler.stop(), "stop the restarted profiler");
+    assert!(!profiler.stop(), "second stop reports not-running");
+    assert!(profiler.attach(), "re-attach after stop");
+    assert!(!profiler.start(), "attach stops before sampling starts");
+    assert!(profiler.stop(), "stop the sampled start");
+
     drop(profiler);
 
     let snapshots = collect_snapshots(&prefix);

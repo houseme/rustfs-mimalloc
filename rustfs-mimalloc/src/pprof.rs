@@ -183,6 +183,10 @@ impl Drop for PprofProfiler {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+// In-process state transitions (attach/start/stop/drop) deliberately live in
+// `tests/pprof_native.rs`: this lib test binary runs other unit tests whose
+// allocations would race the profiler drop quiescence contract.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,19 +197,14 @@ mod tests {
     }
 
     #[test]
-    fn attach_start_stop_round_trip_reports_states() {
-        let mut profiler =
-            PprofProfiler::new("rustfs-mimalloc-pprof-states", PprofConfig::default())
-                .expect("create native profiler");
-        assert!(!profiler.start());
-        assert!(profiler.stop());
-        assert!(!profiler.stop());
-        assert!(profiler.attach());
-        assert!(!profiler.start());
-        profiler.detach();
-        // Attaching stopped the profiler again; a restart requires re-attach.
-        assert!(profiler.attach());
-        assert!(!profiler.start());
-        profiler.detach();
+    fn creation_only_paths_stay_out_of_process_wide_state() {
+        // Creation and accessors never touch process-wide profiler state, so
+        // they are safe next to sibling unit tests.
+        let profiler = PprofProfiler::new("rustfs-mimalloc-pprof-create", PprofConfig::default())
+            .expect("create native profiler");
+        assert_eq!(profiler.base_file_name(), "rustfs-mimalloc-pprof-create");
+        // Dropping a never-attached, never-started profiler exercises the
+        // stop+detach+delete ordering with no registered callbacks to race.
+        drop(profiler);
     }
 }
