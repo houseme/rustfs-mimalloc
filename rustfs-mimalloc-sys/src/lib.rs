@@ -831,6 +831,11 @@ unsafe extern "C" {
     pub fn mi_subproc_add_current_thread(subproc: mi_subproc_id_t);
     /// Visit all heaps of `subproc`. Return `false` from `visitor` to stop
     /// early. Only valid while subprocess threads are quiescent.
+    ///
+    /// `visitor` must be non-null: upstream dereferences it unconditionally
+    /// and every subprocess owns at least its main heap, so [`None`]
+    /// always crashes the process. Unlike [`mi_heap_visit_blocks`], a null
+    /// visitor is not a supported no-op here.
     pub fn mi_subproc_visit_heaps(
         subproc: mi_subproc_id_t,
         visitor: Option<mi_heap_visit_fun>,
@@ -860,6 +865,10 @@ unsafe extern "C" {
     ) -> bool;
     /// Visit the live blocks of a cached thread-local context. Owner-thread
     /// or quiescent-context use only, like the other `mi_theap_*` APIs.
+    ///
+    /// `visitor` must be non-null: upstream only null-checks its internal
+    /// area wrapper and invokes the visitor unconditionally for every page,
+    /// so [`None`] crashes whenever the context owns at least one page.
     pub fn mi_theap_visit_blocks(
         theap: *const mi_theap_t,
         visit_blocks: bool,

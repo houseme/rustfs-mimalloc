@@ -99,6 +99,12 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Review-hardening fixes from the November 18 full-project audit: document
+  that `mi_subproc_visit_heaps` and `mi_theap_visit_blocks` dereference their
+  visitor unconditionally (unlike `mi_heap_visit_blocks`, `None` crashes),
+  move the pprof profiler state-machine test out of the lib test binary so
+  its profiler drop honors the callback-quiescence contract under parallel
+  test runs, and refresh the one stale native pin reference in the overview.
 - Inherit integer-based page metadata lookup that removes ARM64 null-pointer
   arithmetic, incorporated directly from PR #1491. Validate the current native
   API, alignment and QSBR paths with Clang UBSan.
