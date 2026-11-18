@@ -1204,13 +1204,11 @@ fn registered_tls_buffered_samples() -> Option<usize> {
 fn count_recorded_samples() -> usize {
     RECORDED_SAMPLE_SHARDS
         .iter()
-        .filter_map(|shard| match shard.lock() {
-            Ok(samples) => Some(samples.len()),
-            Err(_) => {
-                DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-        })
+        // Nothing under a recorded-shard critical section can panic today;
+        // recovering from a poisoned lock keeps the count complete (and a
+        // skipped shard from leaking stale samples into a new session) if
+        // that ever changes.
+        .map(|shard| shard.lock().unwrap_or_else(|err| err.into_inner()).len())
         .sum()
 }
 
@@ -1407,10 +1405,10 @@ fn clear_recorded_samples() {
 
 fn prepare_sample_buffer(capacity: usize) -> Result<()> {
     for shard in RECORDED_SAMPLE_SHARDS.iter() {
-        let Ok(mut samples) = shard.lock() else {
-            DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
-            continue;
-        };
+        // Nothing under a recorded-shard critical section can panic today;
+        // recovering from a poisoned lock guarantees every shard is cleared
+        // and reserved, so a stale sample cannot leak into the new session.
+        let mut samples = shard.lock().unwrap_or_else(|err| err.into_inner());
         samples.clear();
         let current_capacity = samples.capacity();
         let shard_capacity = recorded_sample_shard_capacity(capacity);
@@ -3344,10 +3342,15 @@ mod tests {
 
     #[test]
     fn filtered_inline_frames_are_shared_and_resolved_once_per_report() {
-        let mut first = StackKey::from_parts([0; MAX_CAPTURE_DEPTH], 2);
-        first.frames[..2].copy_from_slice(&[1, 2]);
-        let mut second = first;
-        second.frames[1] = 3;
+        let mut first_frames = [0; MAX_CAPTURE_DEPTH];
+        first_frames[..2].copy_from_slice(&[1, 2]);
+        let first = StackKey::from_parts(first_frames, 2);
+        // Build distinct keys through from_parts so capture-time hashes stay
+        // consistent with the captured prefix (mutation after construction
+        // breaks the equal-keys-implies-equal-hash contract).
+        let mut second_frames = first.frames;
+        second_frames[1] = 3;
+        let second = StackKey::from_parts(second_frames, 2);
         let recorded = [first, second]
             .into_iter()
             .map(|stack| RecordedAllocationSample {
@@ -3390,8 +3393,9 @@ mod tests {
 
     #[test]
     fn unresolved_addresses_survive_depth_limits_and_profiler_filtering() {
-        let mut stack = StackKey::from_parts([0; MAX_CAPTURE_DEPTH], 2);
-        stack.frames[..2].copy_from_slice(&[7, 8]);
+        let mut frames_arr = [0; MAX_CAPTURE_DEPTH];
+        frames_arr[..2].copy_from_slice(&[7, 8]);
+        let stack = StackKey::from_parts(frames_arr, 2);
         let frames = resolve_stack_with(&stack, 1, |ip| {
             filter_profiler_frame(MemoryFrame {
                 address: ip as u64,

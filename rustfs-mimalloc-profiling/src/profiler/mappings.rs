@@ -191,8 +191,17 @@ mod supported {
     }
 
     /// Process-lifetime cache of build-id-verified ELF segment file offsets.
-    /// A same-build-id file replacement has an identical segment layout, so
-    /// identity re-verification on disk is only required for cache misses.
+    ///
+    /// A same-build-id file replacement has an identical segment layout —
+    /// GNU build ids are content hashes — so identity re-verification on
+    /// disk is only required for cache misses. Entries are never evicted:
+    /// growth is bounded by the number of distinct library *paths* mapped
+    /// during the process lifetime (rebuilding a path overwrites its
+    /// entry), so only continuous `dlopen` of unique-path libraries grows
+    /// it meaningfully. A vendor that hardcodes one build id across
+    /// different releases would defeat the identity assumption; entries
+    /// are never stored for images without a build id, so that case always
+    /// re-verifies on disk.
     #[cfg(target_os = "linux")]
     mod verified_offsets {
         use std::{collections::HashMap, path::PathBuf, sync::Mutex};

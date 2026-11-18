@@ -150,7 +150,12 @@ pub(super) fn record(pointer: usize, stack: StackKey, weight: SampleWeight, gene
     let (index, bit) = shard_and_bit(pointer);
     let shard = &shards[index];
     let Ok(mut entries) = shard.entries.try_lock() else {
-        DROPPED.fetch_add(1, Ordering::Relaxed);
+        // Contention drops are only charged to the event's own session: a
+        // boundary-crossing in-flight hit must not inflate the successor
+        // session's dropped-sample diagnostics (the counter resets in prepare).
+        if session_is_current(generation) {
+            DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
         return;
     };
     if !enabled() || !session_is_current(generation) {
