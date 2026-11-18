@@ -88,7 +88,12 @@ fn requirement<'a>(dependencies: &'a toml::Value, name: &str) -> Result<&'a str>
 
 pub fn run(args: &mut Args) -> Result<()> {
     let provider = args.value("--provider", "all")?;
-    let local = args.flag("--local-dependencies");
+    // Default to the working tree: resolving the allocator from the registry
+    // would silently validate the published crate instead of local changes.
+    // --local-dependencies is retained as an explicit no-op for existing
+    // callers; pass --registry-dependencies to test published versions.
+    let _ = args.flag("--local-dependencies");
+    let local = !args.flag("--registry-dependencies");
     let release = args.flag("--release");
     let profiling = util::path(args.value("--profiling-dir", "rustfs-mimalloc-profiling")?);
     let output = util::path(args.value("--output", "target/provider-tests")?);
@@ -96,6 +101,14 @@ pub fn run(args: &mut Args) -> Result<()> {
     ensure!(
         ["all", "rustfs", "upstream"].contains(&provider.as_str()),
         "unknown provider: {provider}"
+    );
+    eprintln!(
+        "provider allocator source: {}",
+        if local {
+            "local working tree"
+        } else {
+            "published registry versions"
+        }
     );
     test(&provider, local, release, &profiling, &output)
 }
