@@ -182,6 +182,10 @@ pub fn criterion(args: &mut Args, profile: bool) -> Result<()> {
                 .collect::<Vec<_>>()
                 .join("|")
         );
+        // Heap-ABBA builds a single binary: the A/B contrast is the workload
+        // (TLS heap lookup vs a cached `ThreadHeap` view), selected by the
+        // criterion filter, not a build difference. The profiling ABBA does
+        // use two builds — B compiles with `no_profile`.
         let binary = if profile && label.starts_with('B') {
             &binaries["B"]
         } else {

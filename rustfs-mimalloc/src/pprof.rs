@@ -141,6 +141,25 @@ impl PprofProfiler {
         attached
     }
 
+    /// Attach to all current and future heaps of a custom subprocess
+    /// created through [`rustfs_mimalloc_sys::mi_subproc_new`], over
+    /// [`rustfs_mimalloc_sys::mi_subproc_profile`]. See [`Self::attach`]
+    /// for attach semantics; the process-wide single-registration rule
+    /// applies across subprocesses too.
+    ///
+    /// # Safety
+    /// `subproc` must be a live subprocess handle; its threads' heap
+    /// activity is routed to this profiler's callbacks until detach.
+    pub unsafe fn attach_subproc(&mut self, subproc: rustfs_mimalloc_sys::mi_subproc_id_t) -> bool {
+        // SAFETY: `self.ptr` is a live profiler handle and `subproc` is the
+        // caller-validated handle; the native attach stops the profiler.
+        let attached =
+            unsafe { rustfs_mimalloc_sys::mi_subproc_profile(subproc, self.ptr.as_ptr()) };
+        self.attached = attached;
+        self.started = false;
+        attached
+    }
+
     /// Detach from all heaps. Sampled blocks freed afterwards no longer
     /// invoke the profiler's free callback.
     pub fn detach(&mut self) {

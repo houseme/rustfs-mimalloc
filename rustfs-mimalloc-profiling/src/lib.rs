@@ -32,6 +32,18 @@
 //! allocator usable sizes. Live tracking is opt-in and bounded; inspect
 //! [`mimalloc_stats`] for dropped records. See the crate README for platform,
 //! concurrency, and performance limitations.
+//!
+//! # Relation to the native pprof profiler
+//! This crate stays allocator-neutral and captures stacks on the Rust side
+//! per sampled allocation. When the linked allocator is
+//! [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc), the native
+//! mimalloc pprof profiler is a lower-overhead alternative: it samples with
+//! C-side stack capture and writes protobuf snapshots directly — see
+//! `rustfs_mimalloc::pprof::PprofProfiler` and
+//! `rustfs_mimalloc::callback`. Choose this crate when you need
+//! allocator-neutral instrumentation, live-heap tracking across arbitrary
+//! allocators, or programmatic report bytes; choose the native profiler for
+//! minimal sampling cost against mimalloc itself.
 
 mod error;
 mod memory_pprof;

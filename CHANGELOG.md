@@ -117,6 +117,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   `mi_theap_stats_merge_to_heap`, making long-lived cached worker contexts
   visible in `Heap::stats_json()` / `Heap::stats_print()` without waiting
   for thread exit or collection.
+- `PprofProfiler::attach_subproc` over `mi_subproc_profile`, extending the
+  native profiler to custom subprocesses created through
+  `mi_subproc_new` and completing the reachability of the subprocess
+  profiler FFI. The profiling crate's documentation now explains when to
+  choose it versus the native pprof path (`rustfs_mimalloc::pprof`) and
+  the heap-ABBA harness documents that its A/B contrast is the workload,
+  not a build difference.
 - Raw `mi_thread_heap_release` and unsafe `Heap::release_current_thread()`.
   Workers can release contexts before heap deletion while live blocks remain
   valid for frees. Further allocations from that heap on the releasing thread
