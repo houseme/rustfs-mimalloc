@@ -703,8 +703,14 @@ impl Heap {
     /// [`rustfs_mimalloc_sys::mi_heap_visit_blocks`].
     ///
     /// With `visit_blocks`, the closure receives every live block after the
-    /// area-level call; otherwise it is called once per page area. Returning
-    /// `false` from the closure stops the walk.
+    /// area-level call; otherwise it is called once per page area (with
+    /// `block == None`), including fully free pages. Returning `false` from
+    /// the closure stops the walk.
+    ///
+    /// The closure's `size` is the page's block size for area-level calls
+    /// and the block's **usable** size (without allocator metadata, but
+    /// including padding in secure builds) for per-block calls — it can
+    /// exceed the size the block was requested with.
     ///
     /// # Safety
     /// No thread may allocate in or free into this heap while the walk runs.
@@ -794,8 +800,9 @@ impl HeapArea {
 }
 
 /// Closure signature for heap walks: receives the page area, the live
-/// block (area-level visits carry [`None`]), and the block's size.
-/// Return `false` to stop the walk.
+/// block (area-level visits carry [`None`], which includes fully free
+/// pages), and the size — the page's block size for area calls, the
+/// block's usable size for block calls. Return `false` to stop the walk.
 pub type BlockVisitor<'a> = dyn FnMut(&HeapArea, Option<NonNull<u8>>, usize) -> bool + 'a;
 
 /// Caller state carried through the C walk as an opaque `*mut c_void`.
@@ -1464,10 +1471,13 @@ mod tests {
                     // Payload bytes identify which allocation a block is.
                     if let Some(first) = block {
                         let first = *first.as_ptr();
+                        // The callback's size is the block's *usable* size,
+                        // which exceeds the requested size in padded (secure)
+                        // builds — only the lower bound is contractual.
                         if first == 0x11 {
-                            assert_eq!(block_size, 64);
+                            assert!(block_size >= 64, "block size {block_size}");
                         } else if first == 0x22 {
-                            assert_eq!(block_size, 640);
+                            assert!(block_size >= 640, "block size {block_size}");
                         }
                     }
                 }
@@ -1483,8 +1493,8 @@ mod tests {
                 "both live blocks must be visited, saw {block_calls}"
             );
             assert!(
-                found.contains(&64) && found.contains(&640),
-                "sizes: {found:?}"
+                found.iter().any(|size| *size >= 64) && found.iter().any(|size| *size >= 640),
+                "usable sizes: {found:?}"
             );
 
             // Area-only walk reports page areas without per-block calls.
@@ -1512,7 +1522,7 @@ mod tests {
                 if let Some(first) = block {
                     let value = *first.as_ptr();
                     if value == 0x22 {
-                        assert_eq!(size, 640);
+                        assert!(size >= 640, "block size {size}");
                     }
                 }
                 local_blocks += 1;
