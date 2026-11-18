@@ -131,6 +131,17 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   recorded-shard locks are recovered instead of silently skipped. CI now
   runs the test suite with the `debug_in_debug` feature on Ubuntu and
   Windows.
+- Final audit sweep: `record_sample` skips the unwinder for events whose
+  session already ended and drops a behaviorally dead ring branch; the
+  redundant pre-tail TLS store in the sampler hot path is gone; the sys
+  crate documents its uniform safety policy at the crate level with formal
+  `# Safety` sections on the heap lifecycle and sized/aligned free entry
+  points, `mi_wsize_from_size` documents its intentional overflow
+  difference from the C macro, and the pprof module documents the
+  process-wide native attach slot. Provider tests regenerate the isolated
+  consumer lockfile on every run, criterion estimate parsing tolerates
+  thousands separators, and a dispatched dry run without a matching git
+  tag prints a note instead of surfacing the gap at publish time.
 - Inherit integer-based page metadata lookup that removes ARM64 null-pointer
   arithmetic, incorporated directly from PR #1491. Validate the current native
   API, alignment and QSBR paths with Clang UBSan.
