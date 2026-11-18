@@ -96,6 +96,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Sized free in the global `dealloc`: route through `mi_free_size_aligned`
   so small frees take mimalloc's page-metadata fast path and over-aligned
   small frees degrade safely to plain `mi_free`.
+- Measured the dispatch and sized-free changes against the previous
+  unconditional-aligned build (same v3.7.0 native, criterion, 25 samples,
+  Apple Silicon macOS host): alloc+dealloc round trips via the
+  `GlobalAlloc` path improved 13–23% for layouts up to 1 KiB
+  (p < 0.05, two independent runs), 2–8% at 4–64 KiB, with one mid-size
+  point inside noise. Unchanged helper microbenchmarks moved within
+  code-layout variance; treat cross-build deltas below ~10% with caution.
 - Raw `mi_thread_heap_release` and unsafe `Heap::release_current_thread()`.
   Workers can release contexts before heap deletion while live blocks remain
   valid for frees. Further allocations from that heap on the releasing thread
