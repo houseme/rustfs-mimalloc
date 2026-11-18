@@ -13,6 +13,7 @@ mod ffi;
 
 pub mod heap;
 pub mod pprof;
+pub use heap::{BlockVisitor, HeapArea};
 
 pub use api::{ProcessInfo, set_current_thread_in_threadpool};
 pub use callback::{

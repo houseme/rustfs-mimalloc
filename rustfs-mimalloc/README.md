@@ -165,6 +165,31 @@ unsafe {
 heap.delete();
 ```
 
+Heap introspection takes closures instead of raw C callbacks — the walk
+reports page areas plus live blocks (area-level visits carry `None`), and
+returning `false` stops it early. The quiescence requirement (no concurrent
+allocation into or free from the heap during the walk) keeps the entry
+points `unsafe`:
+
+```rust,no_run
+use rustfs_mimalloc::heap::Heap;
+
+let heap = Heap::new().unwrap();
+let mut live = 0usize;
+unsafe {
+    heap.visit_blocks(true, &mut |_area, block, size| {
+        if block.is_some() { live += size; }
+        true // false stops the walk
+    });
+}
+println!("{live} bytes in live blocks");
+heap.delete();
+```
+
+Cached `ThreadHeap` views offer the same `visit_blocks` plus a safe
+`merge_stats_to_parent()` so long-lived worker contexts appear in
+`Heap::stats_json()` without waiting for thread exit.
+
 ## Builds Without Allocation Profiling
 
 Applications that do not need sampled heap profiles can opt out at build time:

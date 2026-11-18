@@ -103,6 +103,20 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   (p < 0.05, two independent runs), 2–8% at 4–64 KiB, with one mid-size
   point inside noise. Unchanged helper microbenchmarks moved within
   code-layout variance; treat cross-build deltas below ~10% with caution.
+- Closure-based heap introspection over the previously raw-only visitor
+  FFI: `Heap::visit_blocks` / `Heap::visit_abandoned_blocks` and
+  `ThreadHeap::visit_blocks` accept a `BlockVisitor` closure (page area,
+  optional live block pointer, block size; return `false` to stop) instead
+  of a bare `mi_block_visit_fun` plus `*mut c_void` arg. The trampoline
+  keeps the caller state alive for the walk and contains panics with a
+  loud abort instead of unwinding into C. Area-level visits report
+  `block == None` per the upstream convention. The quiescence requirement
+  (no concurrent allocation into or free from the heap during the walk)
+  keeps the entry points `unsafe`.
+- Safe `ThreadHeap::merge_stats_to_parent()` over
+  `mi_theap_stats_merge_to_heap`, making long-lived cached worker contexts
+  visible in `Heap::stats_json()` / `Heap::stats_print()` without waiting
+  for thread exit or collection.
 - Raw `mi_thread_heap_release` and unsafe `Heap::release_current_thread()`.
   Workers can release contexts before heap deletion while live blocks remain
   valid for frees. Further allocations from that heap on the releasing thread

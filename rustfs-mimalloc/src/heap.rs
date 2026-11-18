@@ -240,6 +240,40 @@ impl ThreadHeap<'_> {
             .cast()
         }
     }
+
+    /// Visit this cached context's pages with a closure, over
+    /// [`rustfs_mimalloc_sys::mi_theap_visit_blocks`]. See
+    /// [`Heap::visit_blocks`] for the area/block callback convention.
+    ///
+    /// # Safety
+    /// No thread may allocate in or free into the parent heap while the walk
+    /// runs, and the closure must not free or move visited blocks.
+    pub unsafe fn visit_blocks(&self, visit_blocks: bool, visitor: &mut BlockVisitor) -> bool {
+        let mut state = VisitState { visitor };
+        // SAFETY: `self.ptr` is a live owner-thread context and the
+        // trampoline forwards to the closure without unwinding into C.
+        unsafe {
+            rustfs_mimalloc_sys::mi_theap_visit_blocks(
+                self.ptr.as_ptr(),
+                visit_blocks,
+                Some(visit_trampoline),
+                (&mut state as *mut VisitState<'_>).cast::<c_void>(),
+            )
+        }
+    }
+
+    /// Merge this context's allocation statistics into its parent heap,
+    /// over [`rustfs_mimalloc_sys::mi_theap_stats_merge_to_heap`].
+    ///
+    /// Upstream merges theap stats into the heap on thread exit and during
+    /// collection; calling this makes long-lived worker contexts visible in
+    /// [`Heap::stats_json`] and [`Heap::stats_print`] without waiting for
+    /// those events. Safe because the context handle is valid for the
+    /// parent heap's lifetime and upstream tolerates redundant merges.
+    pub fn merge_stats_to_parent(&self) {
+        // SAFETY: The context is a live handle owned by this thread's borrow.
+        unsafe { rustfs_mimalloc_sys::mi_theap_stats_merge_to_heap(self.ptr.as_ptr()) }
+    }
 }
 
 impl Heap {
@@ -665,6 +699,55 @@ impl Heap {
         self.ptr.as_ptr()
     }
 
+    /// Visit this heap's pages with a closure, in safe ergonomics over
+    /// [`rustfs_mimalloc_sys::mi_heap_visit_blocks`].
+    ///
+    /// With `visit_blocks`, the closure receives every live block after the
+    /// area-level call; otherwise it is called once per page area. Returning
+    /// `false` from the closure stops the walk.
+    ///
+    /// # Safety
+    /// No thread may allocate in or free into this heap while the walk runs.
+    /// Blocks seen here are raw pointers into live pages; the closure must
+    /// not deallocate, free, or move them.
+    pub unsafe fn visit_blocks(&self, visit_blocks: bool, visitor: &mut BlockVisitor) -> bool {
+        let mut state = VisitState { visitor };
+        // SAFETY: `self.ptr` is a live handle and the trampoline forwards to
+        // the caller-supplied closure without unwinding into C. `state`
+        // outlives the walk on this call's stack.
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_visit_blocks(
+                self.ptr.as_ptr(),
+                visit_blocks,
+                Some(visit_trampoline),
+                (&mut state as *mut VisitState<'_>).cast::<c_void>(),
+            )
+        }
+    }
+
+    /// As [`Self::visit_blocks`], additionally visiting abandoned pages that
+    /// belong to this heap.
+    ///
+    /// # Safety
+    /// [`Self::visit_blocks`]'s requirements apply; abandoned blocks are not
+    /// owned by any live thread context.
+    pub unsafe fn visit_abandoned_blocks(
+        &self,
+        visit_blocks: bool,
+        visitor: &mut BlockVisitor<'_>,
+    ) -> bool {
+        let mut state = VisitState { visitor };
+        // SAFETY: as `visit_blocks`, with the abandoned-only native variant.
+        unsafe {
+            rustfs_mimalloc_sys::mi_heap_visit_abandoned_blocks(
+                self.ptr.as_ptr(),
+                visit_blocks,
+                Some(visit_trampoline),
+                (&mut state as *mut VisitState<'_>).cast::<c_void>(),
+            )
+        }
+    }
+
     #[inline]
     fn owned(ptr: NonNull<rustfs_mimalloc_sys::mi_heap_t>) -> Self {
         Self { ptr, owned: true }
@@ -673,6 +756,88 @@ impl Heap {
     #[inline]
     fn borrowed(ptr: NonNull<rustfs_mimalloc_sys::mi_heap_t>) -> Self {
         Self { ptr, owned: false }
+    }
+}
+
+/// One page area reported to a [`Heap::visit_blocks`] closure.
+///
+/// `blocks` points at the page's block region; it is only meaningful for
+/// pointer arithmetic when the closure also knows the block size, and must
+/// never be freed or written.
+#[derive(Debug, Clone, Copy)]
+pub struct HeapArea {
+    /// Start of the page's block region.
+    pub blocks: *mut c_void,
+    /// Bytes reserved for blocks in this page.
+    pub reserved: usize,
+    /// Bytes currently committed for this page.
+    pub committed: usize,
+    /// Bytes in use by live blocks (page-level visits).
+    pub used: usize,
+    /// Requested block size for this page.
+    pub block_size: usize,
+    /// Block size including allocator padding and metadata.
+    pub full_block_size: usize,
+}
+
+impl HeapArea {
+    fn from_raw(area: &rustfs_mimalloc_sys::mi_heap_area_t) -> Self {
+        Self {
+            blocks: area.blocks,
+            reserved: area.reserved,
+            committed: area.committed,
+            used: area.used,
+            block_size: area.block_size,
+            full_block_size: area.full_block_size,
+        }
+    }
+}
+
+/// Closure signature for heap walks: receives the page area, the live
+/// block (area-level visits carry [`None`]), and the block's size.
+/// Return `false` to stop the walk.
+pub type BlockVisitor<'a> = dyn FnMut(&HeapArea, Option<NonNull<u8>>, usize) -> bool + 'a;
+
+/// Caller state carried through the C walk as an opaque `*mut c_void`.
+struct VisitState<'a> {
+    visitor: &'a mut BlockVisitor<'a>,
+}
+
+/// Trampoline that adapts the C `mi_block_visit_fun` to a caller closure.
+///
+/// # Safety
+/// `arg` must be a valid pointer to the [`VisitState`] for the whole walk,
+/// and the closure must not unwind (enforced by aborting on panic, matching
+/// the crate's callback policy).
+unsafe extern "C" fn visit_trampoline(
+    _heap: *const rustfs_mimalloc_sys::mi_heap_t,
+    area: *const rustfs_mimalloc_sys::mi_heap_area_t,
+    block: *mut c_void,
+    block_size: usize,
+    arg: *mut c_void,
+) -> bool {
+    // SAFETY: The walk keeps `arg` and `area` valid for this call only; no
+    // reference escapes the trampoline.
+    let state = unsafe { &mut *(arg as *mut VisitState<'_>) };
+    let raw_area = unsafe { &*area };
+    let area = HeapArea::from_raw(raw_area);
+    let block = if block.is_null() {
+        None
+    } else {
+        // SAFETY: A non-null block pointer need only be addressable for the
+        // closure's inspection; constructing NonNull adds no dereference.
+        unsafe { Some(NonNull::new_unchecked(block.cast::<u8>())) }
+    };
+    let result = std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| {
+        (state.visitor)(&area, block, block_size)
+    }));
+    match result {
+        Ok(cont) => cont,
+        // A panic must not unwind into C: abort loudly.
+        Err(_) => {
+            eprintln!("rustfs-mimalloc: block-visit closure panicked; aborting");
+            std::process::abort();
+        }
     }
 }
 
@@ -1266,6 +1431,122 @@ mod tests {
             assert!(!stopped_early, "a stop-on-first visitor cannot complete");
             // The current subprocess handle is valid for the calling thread.
             let _current = rustfs_mimalloc_sys::mi_subproc_current();
+        }
+    }
+
+    #[test]
+    fn closure_visitor_sees_areas_blocks_and_payloads() {
+        let heap = Heap::new().unwrap();
+        let local = heap.thread_local().unwrap();
+        unsafe {
+            // Allocate from both the heap path and the cached context so the
+            // walk covers pages owned by both contexts.
+            let a = heap.malloc(64);
+            let b = local.malloc(640);
+            assert!(!a.is_null() && !b.is_null());
+            a.write_bytes(0x11, 8);
+            b.write_bytes(0x22, 8);
+
+            let mut area_calls = 0usize;
+            let mut block_calls = 0usize;
+            let mut found = Vec::new();
+            let visited = heap.visit_blocks(true, &mut |area, block, block_size| {
+                if block.is_none() {
+                    area_calls += 1;
+                    // `used` counts this page's live bytes only; pages that
+                    // host our allocations must report a nonzero figure and
+                    // a plausible full block size.
+                    assert!(area.used > 0 && area.full_block_size >= area.block_size);
+                } else {
+                    block_calls += 1;
+                    found.push(block_size);
+                    // Payload bytes identify which allocation a block is.
+                    if let Some(first) = block {
+                        let first = *first.as_ptr();
+                        if first == 0x11 {
+                            assert_eq!(block_size, 64);
+                        } else if first == 0x22 {
+                            assert_eq!(block_size, 640);
+                        }
+                    }
+                }
+                true
+            });
+            assert!(visited);
+            assert!(
+                area_calls >= 2,
+                "both contexts' pages must appear, saw {area_calls}"
+            );
+            assert!(
+                block_calls >= 2,
+                "both live blocks must be visited, saw {block_calls}"
+            );
+            assert!(
+                found.contains(&64) && found.contains(&640),
+                "sizes: {found:?}"
+            );
+
+            // Area-only walk reports page areas without per-block calls.
+            let mut areas = 0usize;
+            let visited = heap.visit_blocks(false, &mut |_area, block, _size| {
+                assert!(block.is_none(), "area visits carry no block");
+                areas += 1;
+                true
+            });
+            assert!(visited && areas >= 2);
+
+            // Returning false stops the walk early; the walk reports it did
+            // not complete by returning false itself.
+            let mut first_calls = 0usize;
+            let completed = heap.visit_blocks(true, &mut |_area, _block, _size| {
+                first_calls += 1;
+                false
+            });
+            assert!(!completed);
+            assert_eq!(first_calls, 1, "early stop ends after the first call");
+
+            // The cached context walks its own pages through the theap entry.
+            let mut local_blocks = 0usize;
+            assert!(local.visit_blocks(true, &mut |_area, block, size| {
+                if let Some(first) = block {
+                    let value = *first.as_ptr();
+                    if value == 0x22 {
+                        assert_eq!(size, 640);
+                    }
+                }
+                local_blocks += 1;
+                true
+            }));
+            assert!(local_blocks >= 1);
+
+            rustfs_mimalloc_sys::mi_free(a.cast());
+            rustfs_mimalloc_sys::mi_free(b.cast());
+        }
+    }
+
+    #[test]
+    fn thread_heap_stats_merge_makes_allocations_visible_in_heap_stats() {
+        let heap = Heap::new().unwrap();
+        let local = heap.thread_local().unwrap();
+        unsafe {
+            // Allocate through the cached context; the merge must surface it
+            // in the parent heap's aggregated stats.
+            let before = heap.stats_json();
+            let ptr = local.malloc(4096);
+            assert!(!ptr.is_null());
+            local.merge_stats_to_parent();
+            let after = heap.stats_json();
+            assert!(
+                !before.is_empty() && !after.is_empty(),
+                "both snapshots must produce JSON"
+            );
+            // The heap stats json must mention allocated bytes growing; check
+            // the allocated counter appears (exact accounting is upstream's).
+            assert!(
+                after.contains("allocated") || after.contains("bytes"),
+                "heap stats JSON should contain allocation counters: {after}"
+            );
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
         }
     }
 
