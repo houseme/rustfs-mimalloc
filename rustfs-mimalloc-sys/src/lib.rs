@@ -4,6 +4,27 @@
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
+//! # Safety policy
+//! Raw `extern "C"` declarations carry their safety requirements in prose on
+//! the declarations whose contracts go beyond the obvious "live handle, null
+//! checked" defaults (heap lifetime, callback lifetime, owner-thread
+//! contexts, quiescence). Rules that apply uniformly across the whole
+//! surface, and are not repeated per declaration:
+//!
+//! - Every opaque handle parameter must be a live object of the matching
+//!   type (or null where a declaration says null is meaningful) for the
+//!   whole call, and must not race concurrent destruction.
+//! - Allocation results must be null-checked and freed through a compatible
+//!   mimalloc free function; sizes/alignments passed to sized/aligned APIs
+//!   must match the original allocation contract.
+//! - Thread-local context APIs (`mi_theap_*`) are owner-thread only unless a
+//!   declaration documents otherwise.
+//! - Visitor and callback functions must not unwind and must honor the
+//!   re-entrancy constraints stated on the registering function.
+//!
+//! The `unsafe` wrapper functions in the `rustfs-mimalloc` crate document
+//! the combined requirements for their wrapped entry points.
+//!
 //! The opt-in `no_profile` feature disables allocation/free sampling and
 //! automatic `MIMALLOC_PROFILE` startup. Raw profiler control functions remain
 //! linked, and explicitly requested snapshot callbacks still execute, but
@@ -265,25 +286,76 @@ unsafe extern "C" {
     /// QSBR-enabled host adapters may retain the previous owner on abandonment.
     pub fn mi_thread_id_of(p: *const c_void) -> size_t;
     pub fn mi_good_size(size: size_t) -> size_t;
+    /// Free with the original requested size.
+    ///
+    /// # Safety
+    /// `p` must be null or a live mimalloc allocation, and `size` must be the
+    /// size used for the allocation. Debug builds assert the size fits; a
+    /// mismatched size on a real pointer is an allocator contract violation.
     pub fn mi_free_size(p: *mut c_void, size: size_t);
     /// C23 sized free. Non-null `p` must have been allocated with exactly `size`
     /// and ordinary alignment. For aligned allocations use `mi_free_aligned_sized`.
+    ///
+    /// # Safety
+    /// [`mi_free_size`]'s requirements apply; a non-null pointer with an
+    /// incorrect size or non-ordinary alignment is undefined behavior in
+    /// release builds.
     pub fn mi_free_sized(p: *mut c_void, size: size_t);
     /// C23 aligned sized free; note alignment precedes size, unlike
     /// `mi_free_size_aligned`. Both must match the original allocation.
+    ///
+    /// # Safety
+    /// [`mi_free_sized`]'s requirements apply, with `alignment` also required
+    /// to match the allocation's alignment.
     pub fn mi_free_aligned_sized(p: *mut c_void, alignment: size_t, size: size_t);
+    /// Free a small-page allocation, skipping the page-size dispatch.
+    ///
+    /// # Safety
+    /// `p` must be null or a live allocation on a small page; freeing a
+    /// non-small or non-mimalloc pointer is undefined behavior.
     pub fn mi_free_small(p: *mut c_void);
+    /// As `mi_free_small`, additionally requiring a non-null pointer.
+    ///
+    /// # Safety
+    /// [`mi_free_small`]'s requirements apply; `p` must additionally be
+    /// non-null (upstream asserts this even in debug builds).
     pub fn mi_free_small_nonnull(p: *mut c_void);
     /// The non-null allocation must be on a small page still owned by the calling thread.
     /// Allocation on this thread alone does not prove current page ownership.
+    ///
+    /// # Safety
+    /// [`mi_free_small`]'s requirements apply, and the owning page must
+    /// belong to the calling thread's context at the time of the call.
     pub fn mi_free_small_local(p: *mut c_void);
     /// As `mi_free_small_local`, additionally requiring a non-null pointer.
+    ///
+    /// # Safety
+    /// [`mi_free_small_local`]'s requirements apply; `p` must additionally
+    /// be non-null.
     pub fn mi_free_small_local_nonnull(p: *mut c_void);
+    /// Free with the original requested size and alignment.
+    ///
+    /// # Safety
+    /// `p` must be null or a live mimalloc allocation whose size and
+    /// alignment match the call exactly; small allocations with a larger
+    /// alignment route through the generic free (matching upstream), so only
+    /// the arguments' correctness is the caller's responsibility.
     pub fn mi_free_size_aligned(p: *mut c_void, size: size_t, alignment: size_t);
+    /// Free an aligned allocation by its alignment alone.
+    ///
+    /// # Safety
+    /// `p` must be null or a live mimalloc allocation allocated with exactly
+    /// `alignment`; upstream ignores the value in release builds.
     pub fn mi_free_aligned(p: *mut c_void, alignment: size_t);
 }
 
 /// Convert a byte size to a mimalloc machine-word count.
+///
+/// Unlike the upstream C macro `(size + word - 1) / word`, which wraps for
+/// sizes above `SIZE_MAX - word + 1`, `div_ceil` cannot overflow. Such sizes
+/// are rejected by every caller (the helpers gate on
+/// [`MI_SMALL_SIZE_MAX`]), so results differ only at nonsensical inputs
+/// where the Rust value is the mathematically correct one.
 #[inline]
 pub const fn mi_wsize_from_size(size: size_t) -> size_t {
     size.div_ceil(core::mem::size_of::<size_t>())
@@ -462,6 +534,13 @@ unsafe extern "C" {
 // ── Heaps ───────────────────────────────────────────────────────────────────
 
 unsafe extern "C" {
+    /// Create a first-class heap. Never returns null; check nothing but free
+    /// the result eventually through [`mi_heap_delete`] or [`mi_heap_destroy`].
+    ///
+    /// # Safety
+    /// The returned handle may be shared across threads (first-class heaps
+    /// accept allocations from any thread), but deleting/destroying it must
+    /// exclude every concurrent use, including cached thread-local views.
     pub fn mi_heap_new() -> *mut mi_heap_t;
     /// Experimental QSBR constructor from `mimalloc/qsbr.h`.
     ///
@@ -475,12 +554,26 @@ unsafe extern "C" {
     /// TLS destructors after mimalloc thread shutdown. There is deliberately
     /// no owning `Heap` wrapper for them.
     pub fn mi_heap_new_qsbr() -> *mut mi_heap_t;
+    /// Delete the heap, moving its live blocks to the main heap.
+    ///
+    /// # Safety
+    /// `heap` must be a live, non-null handle with no concurrent access and
+    /// no cached thread-local context views anywhere. The main heap is
+    /// unaffected by this call (deleting it is a no-op there). All pointers
+    /// allocated from the heap remain valid and frees on any thread keep
+    /// working, but the handle itself is invalid afterwards.
     pub fn mi_heap_delete(heap: *mut mi_heap_t);
     /// Release the calling thread's context and permanently disable its heap
     /// allocations. Existing blocks remain valid and may be freed on any thread.
     /// Discard all cached contexts for this heap on the caller before calling.
     /// Main heaps ignore this operation. Keep the heap alive during the call.
     pub fn mi_thread_heap_release(heap: *mut mi_heap_t);
+    /// Destroy the heap, freeing its live blocks.
+    ///
+    /// # Safety
+    /// [`mi_heap_delete`]'s requirements apply, and every pointer allocated
+    /// from the heap becomes dangling the moment the call returns: nothing
+    /// may read, write or free them afterwards. Main heaps are unaffected.
     pub fn mi_heap_destroy(heap: *mut mi_heap_t);
     /// Collects this heap's context on the caller, not all of its worker contexts.
     pub fn mi_heap_collect(heap: *mut mi_heap_t, force: bool);

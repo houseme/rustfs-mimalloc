@@ -13,6 +13,14 @@
 //! the caller must still guarantee no thread is inside a callback (that is,
 //! no sampled allocation is being freed concurrently) when the value drops.
 //!
+//! # Process-wide attach slot
+//! Native attach is process-wide: the main subprocess holds a single
+//! profiler registration, so attaching a second profiler replaces the
+//! first. Keep one [`PprofProfiler`] attached per process; attaching
+//! another one invalidates the first's attach (its later [`Drop`]
+//! detaches only when its own `attach` reported success, so it cannot
+//! unregister the replacement).
+//!
 //! # Examples
 //! ```no_run
 //! use rustfs_mimalloc::pprof::{PprofConfig, PprofProfiler};
