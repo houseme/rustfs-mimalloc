@@ -256,8 +256,25 @@ pub fn generate(source: &str) -> Result<(String, usize, usize)> {
             lines.push(format!("_Static_assert({measure}(struct rust_{name}) == {measure}({name}), \"{name} {measure}\");"));
         }
         for field in &item.fields {
-            let field = field.ident.as_ref().unwrap();
-            lines.push(format!("_Static_assert(offsetof(struct rust_{name}, {field}) == offsetof({name}, {field}), \"{name}.{field}\");"));
+            let field_name = field.ident.as_ref().unwrap();
+            lines.push(format!("_Static_assert(offsetof(struct rust_{name}, {field_name}) == offsetof({name}, {field_name}), \"{name}.{field_name}\");"));
+            // Size and offset cannot distinguish an 8-byte integer from an
+            // 8-byte pointer. Pin each C field's effective type against the
+            // Rust-rendered type through C11 _Generic; typedef-compatible
+            // spellings (e.g. size_t vs unsigned long on the platform)
+            // compare equal, representation-different types fail.
+            let rendered = match &field.ty {
+                Type::Array(array) => c_type(&array.elem)?,
+                kind => c_type(kind)?,
+            };
+            let access = format!("((({name}*)0)->{field_name})");
+            let access = match &field.ty {
+                Type::Array(_) => format!("{access}[0]"),
+                _ => access,
+            };
+            lines.push(format!(
+                "_Static_assert(_Generic({access}, {rendered}: 1, default: 0), \"{name}.{field_name} type\");"
+            ));
         }
     }
     ensure!(
@@ -341,6 +358,11 @@ pub fn controls(args: &mut Args) -> Result<()> {
             "pub on_free: Option<mi_profiler_on_free_fun>,\n    pub on_alloc: Option<mi_profiler_on_alloc_fun>,",
             "mi_profiler_t.on_",
         ),
+        (
+            "pub reserved: *mut c_void,",
+            "pub reserved: u64,",
+            "mi_profiler_t.reserved type",
+        ),
     ] {
         let changed = original.replacen(before, after, 1);
         ensure!(changed != original, "mutation did not match");
@@ -374,7 +396,7 @@ pub fn controls(args: &mut Args) -> Result<()> {
         .is_err(),
         "option ID mutation escaped"
     );
-    println!("All 7 ABI/option controls passed");
+    println!("All 8 ABI/option controls passed");
     Ok(())
 }
 
