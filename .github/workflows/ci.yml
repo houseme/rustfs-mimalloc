@@ -43,6 +43,11 @@ jobs:
             features: "debug"
           - os: windows-latest
             features: "debug"
+          # debug_in_debug — MI_DEBUG only in non-release builds
+          - os: ubuntu-latest
+            features: "debug_in_debug"
+          - os: windows-latest
+            features: "debug_in_debug"
           # override — non-Windows only (requires dylib interposing)
           - os: ubuntu-latest
             features: "override"
