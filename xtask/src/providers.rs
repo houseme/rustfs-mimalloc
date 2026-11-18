@@ -159,9 +159,16 @@ pub fn test(
             )?;
         }
         let lock = consumer.join("Cargo.lock");
-        if !lock.exists() {
-            fs::copy(root.join("Cargo.lock"), lock)?;
+        // The consumer workspace is generated: requirements come from the
+        // live root manifest, so a stale lock copied from an older run makes
+        // the `--locked` test fail with confusing errors. Refresh it from the
+        // current root lock on every run (its path dependencies do not
+        // participate in resolution; registry requirements re-resolve onto
+        // the copied versions, updating only what moved).
+        if lock.exists() {
+            fs::remove_file(&lock)?;
         }
+        fs::copy(root.join("Cargo.lock"), &lock)?;
         let target = std::env::var_os("CARGO_TARGET_DIR")
             .map(util::path)
             .unwrap_or_else(|| root.join("target/provider-build"));

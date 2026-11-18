@@ -16,7 +16,9 @@ const CASES: [&str; 4] = [
 ];
 
 fn criterion_estimate(output: &str, case: &str) -> Result<Value> {
-    let value = r"([0-9.]+)\s+(ns|µs|us|ms)";
+    // Tolerate thousands separators and surrounding bracket decorations so a
+    // criterion output-format tweak (e.g. "1,234.5 ns") does not break parsing.
+    let value = r"([0-9][0-9,\.]*\.?[0-9]*)\s+(ns|µs|us|ms)";
     let pattern = Regex::new(&format!(
         r"{}\s+time:\s+\[{}\s+{}\s+{}\]",
         regex::escape(case),
@@ -35,7 +37,7 @@ fn criterion_estimate(output: &str, case: &str) -> Result<Value> {
             "ms" => 1_000_000.0,
             _ => unreachable!(),
         };
-        let value = captures[index].parse::<f64>()? * scale;
+        let value = captures[index].replace(',', "").parse::<f64>()? * scale;
         ensure!(
             value.is_finite() && value > 0.0,
             "invalid benchmark estimate"
@@ -466,6 +468,20 @@ mod tests {
             comparison([100., 80., 80., 100.], 0.05, true, false)?["gate_passed"],
             true
         );
+        Ok(())
+    }
+    #[test]
+    fn criterion_estimates_tolerate_locale_decorations() -> Result<()> {
+        let plain = "example\n time:   [123.45 ns 124.50 ns 125.60 ns]";
+        let separated = "example\n time:   [1,123.45 us 1,224.50 us 1,325.60 us]";
+        for (output, estimate_ns) in [(plain, 124.5), (separated, 1_224_500.0)] {
+            let parsed = criterion_estimate(output, "example")?;
+            assert!(
+                (parsed["estimate_ns"].as_f64().unwrap() - estimate_ns).abs() < 1e-6,
+                "estimate mismatch: {parsed}"
+            );
+        }
+        assert!(criterion_estimate("time: [1 ns 2 ns]", "example").is_err());
         Ok(())
     }
     #[test]

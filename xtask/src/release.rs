@@ -39,14 +39,28 @@ fn resolved(event: &str, requested: &str, reference: &str) -> Result<String> {
 
 pub fn resolve(args: &mut Args) -> Result<()> {
     args.finish()?;
+    let event = std::env::var("RELEASE_EVENT")?;
     let value = resolved(
-        &std::env::var("RELEASE_EVENT")?,
+        &event,
         &std::env::var("REQUESTED_VERSION").unwrap_or_default(),
         &std::env::var("RELEASE_REF")?,
     )?;
     let dry = std::env::var("RELEASE_DRY_RUN")?
         .parse::<bool>()
         .context("RELEASE_DRY_RUN must be true or false")?;
+    // A dispatch dry run validates whatever the checkout holds, so point out
+    // when the version has no matching tag yet: the first tag-existence check
+    // would otherwise happen in the run that also publishes.
+    if event == "workflow_dispatch" {
+        let tag = format!("v{value}^{{commit}}");
+        let exists = util::git(["rev-parse", "--verify", "--quiet", tag.as_str()])?.is_empty();
+        if !exists {
+            println!(
+                "note: no git tag v{value} exists; a dry run validates the current checkout. \
+                 Create the tag before re-running with dry_run disabled."
+            );
+        }
+    }
     let output = format!("version={value}\ntag=v{value}\nis_dry_run={dry}\n");
     if let Some(path) = std::env::var_os("GITHUB_OUTPUT") {
         OpenOptions::new()
