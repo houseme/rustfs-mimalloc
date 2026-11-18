@@ -273,6 +273,11 @@ jobs:
       - name: Build (musl, static, no THP)
         run: cargo build --locked --target x86_64-unknown-linux-musl --features secure,no_thp
 
+      # Static musl executables run on the glibc host directly, so the test
+      # suite exercises the musl runtime (no QEMU needed).
+      - name: Test (musl, static)
+        run: cargo test --locked --target x86_64-unknown-linux-musl --features secure
+
   # ── Windows static CRT ────────────────────────────────────────────────────
 
   windows-static-crt:
