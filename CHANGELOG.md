@@ -68,7 +68,14 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   registration lock alive for the whole C call so re-registration can never
   race an in-flight invocation, contain panics with a loud abort instead of
   unwinding into C, and route concurrent calls correctly under upstream's
-  v3.7.0 re-registration semantics.
+  v3.7.0 re-registration semantics. Registration entry points detect and
+  refuse re-entrant calls from inside a callback (a clear panic-turned-abort
+  instead of a registration-lock deadlock) with a dedicated regression test.
+- The five remaining upstream legacy option spellings
+  (`mi_option_large_os_pages`, `mi_option_eager_region_commit`,
+  `mi_option_reset_decommits`, `mi_option_reset_delay`,
+  `mi_option_limit_os_alloc`) as aliases beside the existing
+  `mi_option_minimal_purge_size`, completing C-side option-name portability.
 - Bind the offset-aligned allocation families for payload-after-header
   layouts (`mi_{malloc,zalloc,calloc,realloc,rezalloc,recalloc}_aligned_at`
   global and heap variants), the subprocess lifecycle and heap visiting
@@ -105,6 +112,15 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   move the pprof profiler state-machine test out of the lib test binary so
   its profiler drop honors the callback-quiescence contract under parallel
   test runs, and refresh the one stale native pin reference in the overview.
+- Correct `PprofProfiler` state and contract documentation: attaching stops a
+  running profiler (the wrapper flag now mirrors that), sampling resumes via
+  `start` alone after `stop`, and `base_file_name` documents native extension
+  stripping plus the 1024-byte truncation. `mi_profiler_start`'s return value
+  (already-running flag, not success) is documented on the sys declaration,
+  and the `free_small_local` comment now states upstream's actual null
+  handling. The xtask option-drift check no longer lets a renamed C option
+  hide behind a shared numeric ID: a matching name or explicit alias is
+  required, with a mutation test covering the legacy-alias rename case.
 - Inherit integer-based page metadata lookup that removes ARM64 null-pointer
   arithmetic, incorporated directly from PR #1491. Validate the current native
   API, alignment and QSBR paths with Clang UBSan.

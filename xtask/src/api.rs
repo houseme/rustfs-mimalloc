@@ -119,16 +119,19 @@ pub fn options(header: &str, bindings: &str) -> Result<BTreeMap<String, i64>> {
     }
     let missing: Vec<_> = c_options
         .iter()
-        .filter(|(name, value)| {
+        .filter(|(name, _)| {
             name.starts_with("mi_option_")
                 && !name.contains("deprecated")
                 && !rust.contains_key(*name)
                 && !aliases.contains_key(*name)
-                && !rust.values().any(|v| v == *value)
         })
         .map(|(name, _)| name)
         .collect();
-    ensure!(missing.is_empty(), "unbound active options: {missing:?}");
+    ensure!(
+        missing.is_empty(),
+        "unbound active options: {missing:?}. Bind the option or add an explicit alias; \
+         sharing a numeric ID with a differently named binding is not sufficient."
+    );
     Ok(rust)
 }
 
@@ -229,6 +232,24 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("option alias ID drift")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn renamed_option_cannot_hide_behind_a_shared_numeric_id() -> Result<()> {
+        // A C rename that keeps the old spelling as a legacy alias must still
+        // force a binding decision for the new active name. Sharing the
+        // numeric ID with an existing Rust variant is not sufficient.
+        let header = headers()?.replacen(
+            "} mi_option_t;",
+            ",\n  mi_option_future_alias = mi_option_os_tag,\n} mi_option_t;",
+            1,
+        );
+        let error = options(&header, &bindings()?).unwrap_err().to_string();
+        assert!(
+            error.contains("unbound active options: [\"mi_option_future_alias\"]"),
+            "the renamed C option must be reported, got: {error}"
         );
         Ok(())
     }
