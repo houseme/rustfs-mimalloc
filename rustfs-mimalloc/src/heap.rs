@@ -1183,17 +1183,21 @@ mod tests {
             assert!(!ptr.is_null());
             assert_eq!((ptr as usize + 1) % 64, 0);
             ptr.write_bytes(0x5A, 129);
+            rustfs_mimalloc_sys::mi_free(ptr.cast());
+            // Zeroed reallocation requires the original block to be zero
+            // initialized: grow a `zalloc`ed block and check that the content
+            // survives while the grown region is zero.
             let zeroed = heap.zalloc_aligned_at(129, 64, 1);
             assert!(!zeroed.is_null());
             assert_eq!((zeroed as usize + 1) % 64, 0);
             assert!((0..129).all(|i| *zeroed.add(i) == 0));
-            let grown = heap.rezalloc_aligned_at(ptr, 257, 64, 1);
+            zeroed.write_bytes(0x5A, 129);
+            let grown = heap.rezalloc_aligned_at(zeroed, 257, 64, 1);
             assert!(!grown.is_null());
             assert_eq!((grown as usize + 1) % 64, 0);
             assert!((0..129).all(|i| *grown.add(i) == 0x5A));
             assert!((129..257).all(|i| *grown.add(i) == 0));
             rustfs_mimalloc_sys::mi_free(grown.cast());
-            rustfs_mimalloc_sys::mi_free(zeroed.cast());
         }
     }
 
