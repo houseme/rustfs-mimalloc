@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (V3.6.2 development snapshot, commit `9548089b`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.7.0 release, tag `1ed67b51`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
