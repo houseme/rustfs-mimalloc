@@ -121,6 +121,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   handling. The xtask option-drift check no longer lets a renamed C option
   hide behind a shared numeric ID: a matching name or explicit alias is
   required, with a mutation test covering the legacy-alias rename case.
+- Audit follow-ups for the maintenance tooling: `test-providers` defaults to
+  the local working tree (`--registry-dependencies` opts out; the resolved
+  source is printed), the crates.io sparse-index shard is computed from the
+  crate name instead of the hardcoded `ru/st` path, the ABI projection pins
+  every layout field's effective type through C11 `_Generic` (a same-size
+  integer/pointer swap now fails, with a new mutation control), live-table
+  contention drops are charged to their own session, and poisoned
+  recorded-shard locks are recovered instead of silently skipped. CI now
+  runs the test suite with the `debug_in_debug` feature on Ubuntu and
+  Windows.
 - Inherit integer-based page metadata lookup that removes ARM64 null-pointer
   arithmetic, incorporated directly from PR #1491. Validate the current native
   API, alignment and QSBR paths with Clang UBSan.
