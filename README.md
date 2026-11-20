@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.7.0 release, tag `1ed67b51`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides safe, ergonomic Rust bindings to Microsoft's mimalloc V3 memory allocator (post-v3.7.0 dev3, commit `cb534580`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -20,7 +20,7 @@ Repository maintenance and release validation use the unpublished Rust
 ### Why this crate?
 
 - **V3 only** — exclusively targets mimalloc V3, no multi-version complexity
-- **Always aligned** — uses `mi_malloc_aligned` for all allocations, preventing [alignment bugs](https://github.com/purpleprotocol/mimalloc_rust/issues/87)
+- **Layout alignment** — dispatches by allocation size and alignment while preserving Rust's layout guarantees
 - **Zero indirection** — `#[inline(always)]` hot path, no intermediate function calls
 - **Cross-platform** — Linux, macOS, Windows, ARM, RISC-V, musl
 - **Comprehensive API** — stats, options, heap/arena management
@@ -154,9 +154,17 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins [upstream tag v3.7.0](https://github.com/microsoft/mimalloc/releases/tag/v3.7.0)
-(commit `1ed67b51`), the latest official upstream release, superseding the
-previous v3.6.2 development pin. The numeric C version is **30700**.
+The submodule pins post-v3.7.0 dev3 commit `cb534580`, including lazy
+abandoned-bin bitmap initialization, THP advice eligibility and huge-block
+reset fixes. The numeric C version is **30700**. The latest official release
+is v3.7.0. [Pinned source](https://github.com/microsoft/mimalloc/commit/cb534580a9becbbd5de28a9f43b33d70816f5c31)
+
+The November 20 API audit verifies all public exports, option IDs and exposed
+layouts. Existing `mi_option_allow_thp` supports 0 (disable), 1 (allow) and 2
+(also avoid splitting during purge). Linux defaults to 2 and Android to 0.
+An explicit minimum purge size takes precedence. Native pprof attachment is
+unsafe and requires callback quiescence before Drop. Each subprocess has its
+own registration, which the wrapper tracks through detach and retargeting.
 
 The v3.7.0 refresh keeps the complete public API compatible: no exported
 function, option ID, or layout changed. Native improvements inherited in this
@@ -400,8 +408,8 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (v3.7.0 release, tag `1ed67b51`) | V2/V3 (configurable) |
-| Alignment | Always aligned | Conditional |
+| mimalloc version | V3 only (post-v3.7.0 dev3, `cb534580`) | V2/V3 (configurable) |
+| Alignment | Layout-aware native dispatch | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
 | Options API | Full get/set/enable/disable | Partial |
@@ -421,9 +429,14 @@ This crate exclusively targets mimalloc V3. Key improvements over V2:
 - Theap (thread-local heap) API for fine-grained control
 - Better multi-threaded performance
 
-### Always Use Aligned Allocation
+### Allocation Alignment
 
-`GlobalAlloc` allocation and reallocation methods use mimalloc's aligned APIs. Previous implementations tried to skip aligned calls for small alignments, causing [alignment bugs](https://github.com/purpleprotocol/mimalloc_rust/issues/87) and [crashes](https://github.com/purpleprotocol/mimalloc_rust/issues/128). Its cost should be measured for the target workload before considering any fast-path change.
+`GlobalAlloc` uses ordinary native allocation when alignment is at most 16
+and either fits a machine word or is covered by the requested size. Larger
+layout requirements use the aligned APIs. Reallocation checks the new size
+and pointer alignment before choosing its native entry point. Deallocation
+forwards the original size and alignment to `mi_free_size_aligned`. Tests cover
+small layouts, zeroing, over-alignment and preserved reallocation contents.
 
 ### Platform TLS Models
 

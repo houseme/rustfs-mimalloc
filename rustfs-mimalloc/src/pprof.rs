@@ -9,17 +9,15 @@
 //! # Ordering
 //! Upstream requires a profiler to be stopped and detached, with its
 //! callbacks quiesced, before deletion. [`PprofProfiler`]'s [`Drop`] runs
-//! `mi_profiler_stop` and detaches from all attached heaps in that order, but
-//! the caller must still guarantee no thread is inside a callback (that is,
-//! no sampled allocation is being freed concurrently) when the value drops.
+//! `mi_profiler_stop` and detaches from the attached subprocess in that order.
+//! Attaching is unsafe because the caller must quiesce all native callbacks
+//! before the value drops, including callbacks from earlier attachments.
 //!
-//! # Process-wide attach slot
-//! Native attach is process-wide: the main subprocess holds a single
-//! profiler registration, so attaching a second profiler replaces the
-//! first. Keep one [`PprofProfiler`] attached per process; attaching
-//! another one invalidates the first's attach (its later [`Drop`]
-//! detaches only when its own `attach` reported success, so it cannot
-//! unregister the replacement).
+//! # Subprocess attachments
+//! Each native subprocess has one profiler slot. Attaching to an occupied
+//! slot fails. This wrapper tracks its subprocess, detaches it before a new
+//! attachment and stops sampling when detached. Distinct subprocesses can
+//! have independent profilers.
 //!
 //! # Examples
 //! ```no_run
@@ -28,7 +26,8 @@
 //! # fn main() {
 //! let mut profiler = PprofProfiler::new("myprofile", PprofConfig::default())
 //!     .expect("failed to create the native profiler");
-//! profiler.attach();
+//! // SAFETY: This example finishes all sampled work before profiler teardown.
+//! unsafe { profiler.attach() };
 //! profiler.start();
 //! // ... the workload ...
 //! profiler.snapshot(); // writes `myprofile.0001.pb`
@@ -71,13 +70,22 @@ impl Default for PprofConfig {
 
 /// Owned handle for a native pprof profiler. Creating it allocates the
 /// profiler from a private native heap; dropping it stops sampling, detaches
-/// it from all heaps, and deletes the native profiler.
-#[derive(Debug)]
+/// it from its subprocess's heaps, and deletes the native profiler.
 pub struct PprofProfiler {
     ptr: NonNull<mi_profiler_t>,
     base_file_name: CString,
-    attached: bool,
-    started: bool,
+    attached_to: Option<rustfs_mimalloc_sys::mi_subproc_id_t>,
+}
+
+impl core::fmt::Debug for PprofProfiler {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("PprofProfiler")
+            .field("ptr", &self.ptr)
+            .field("base_file_name", &self.base_file_name)
+            .field("attached", &self.attached_to.is_some())
+            .finish()
+    }
 }
 
 // SAFETY: Every native entry point used here is callable from any thread and
@@ -112,8 +120,7 @@ impl PprofProfiler {
         NonNull::new(ptr).map(|ptr| Self {
             ptr,
             base_file_name,
-            attached: false,
-            started: false,
+            attached_to: None,
         })
     }
 
@@ -131,52 +138,62 @@ impl PprofProfiler {
     /// Attach to all current and future heaps in the main subprocess.
     /// Returns `true` when the profiler is attached. Attaching stops a
     /// running profiler first; call [`Self::start`] to begin sampling.
-    pub fn attach(&mut self) -> bool {
-        // SAFETY: `self.ptr` is a live profiler handle; attaching routes
-        // sampled allocations to the native callbacks until detach. The
-        // native attach stops the profiler, so mirror that in the flag.
-        let attached = unsafe { rustfs_mimalloc_sys::mi_profile(self.ptr.as_ptr()) };
-        self.attached = attached;
-        self.started = false;
-        attached
+    /// Any previous subprocess attachment is detached before this attempt.
+    ///
+    /// # Safety
+    /// Before dropping this value, quiesce every native callback that could
+    /// use it, including callbacks from earlier attachments. Stopping or
+    /// detaching prevents future sampling but does not wait for callbacks
+    /// already in progress. Exclude external changes to this registration
+    /// until it is detached.
+    ///
+    /// ```compile_fail
+    /// use rustfs_mimalloc::pprof::{PprofConfig, PprofProfiler};
+    /// let mut profiler = PprofProfiler::new("profile", PprofConfig::default()).unwrap();
+    /// profiler.attach(); // Requires a callback-lifetime guarantee.
+    /// ```
+    pub unsafe fn attach(&mut self) -> bool {
+        // SAFETY: The main subprocess lives for the process lifetime. The
+        // caller upholds the callback lifetime and registration requirements.
+        unsafe { self.attach_subproc(rustfs_mimalloc_sys::mi_subproc_main()) }
     }
 
     /// Attach to all current and future heaps of a custom subprocess
     /// created through [`rustfs_mimalloc_sys::mi_subproc_new`], over
     /// [`rustfs_mimalloc_sys::mi_subproc_profile`]. See [`Self::attach`]
-    /// for attach semantics; the process-wide single-registration rule
-    /// applies across subprocesses too.
+    /// for attach semantics. Each subprocess has an independent slot.
     ///
     /// # Safety
-    /// `subproc` must be a live subprocess handle; its threads' heap
-    /// activity is routed to this profiler's callbacks until detach.
+    /// [`Self::attach`]'s callback-quiescence and registration requirements
+    /// apply. `subproc` must remain live until this attachment is detached,
+    /// including detachment during Drop or a subsequent attach attempt.
     pub unsafe fn attach_subproc(&mut self, subproc: rustfs_mimalloc_sys::mi_subproc_id_t) -> bool {
+        self.detach();
         // SAFETY: `self.ptr` is a live profiler handle and `subproc` is the
         // caller-validated handle; the native attach stops the profiler.
         let attached =
             unsafe { rustfs_mimalloc_sys::mi_subproc_profile(subproc, self.ptr.as_ptr()) };
-        self.attached = attached;
-        self.started = false;
+        if attached {
+            self.attached_to = Some(subproc);
+        }
         attached
     }
 
-    /// Detach from all heaps. Sampled blocks freed afterwards no longer
-    /// invoke the profiler's free callback.
+    /// Stop sampling and detach from this profiler's subprocess and its heaps.
+    /// Callbacks already in progress must still finish before Drop.
     pub fn detach(&mut self) {
-        if self.attached {
-            // SAFETY: A null profiler detaches the main subprocess heaps.
-            unsafe { rustfs_mimalloc_sys::mi_profile(core::ptr::null_mut()) };
-            self.attached = false;
+        self.stop();
+        if let Some(subproc) = self.attached_to.take() {
+            // SAFETY: A successful unsafe attachment guarantees the subprocess
+            // is live and its registration belongs to this handle until detach.
+            unsafe { rustfs_mimalloc_sys::mi_subproc_profile(subproc, core::ptr::null_mut()) };
         }
-        self.started = false;
     }
 
     /// Start sampling. Returns whether the profiler was already running.
     pub fn start(&mut self) -> bool {
         // SAFETY: `self.ptr` is a live profiler handle.
-        let was_running = unsafe { rustfs_mimalloc_sys::mi_profiler_start(self.ptr.as_ptr()) };
-        self.started = true;
-        was_running
+        unsafe { rustfs_mimalloc_sys::mi_profiler_start(self.ptr.as_ptr()) }
     }
 
     /// Stop sampling. Returns whether the profiler was running. Sampling can
@@ -184,9 +201,7 @@ impl PprofProfiler {
     /// [`Self::detach`].
     pub fn stop(&mut self) -> bool {
         // SAFETY: `self.ptr` is a live profiler handle.
-        let was_running = unsafe { rustfs_mimalloc_sys::mi_profiler_stop(self.ptr.as_ptr()) };
-        self.started = false;
-        was_running
+        unsafe { rustfs_mimalloc_sys::mi_profiler_stop(self.ptr.as_ptr()) }
     }
 
     /// Write a snapshot now (numbered file next to the base name). Safe to
@@ -203,10 +218,6 @@ impl Drop for PprofProfiler {
         // Upstream ordering: stop sampling, detach so no further `on_free`
         // callbacks are issued, then delete. The caller guarantees no thread
         // is inside a callback at this point.
-        if self.started {
-            // SAFETY: `self.ptr` is a live profiler handle.
-            unsafe { rustfs_mimalloc_sys::mi_profiler_stop(self.ptr.as_ptr()) };
-        }
         self.detach();
         // SAFETY: The profiler is stopped and detached, and the owner upholds
         // the callback-quiescence requirement documented on this type.

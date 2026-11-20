@@ -52,7 +52,10 @@ frees hit the page-metadata fast path.
 `rustfs_mimalloc::pprof::PprofProfiler` wraps the native pprof profiler
 (`mi_pprof_profiler_new`) with RAII start/stop/snapshot/drop ordering, writing
 C-side sampled protobuf or text snapshots at a fraction of the cost of
-Rust-side unwinding. See the module documentation.
+Rust-side unwinding. `attach` and `attach_subproc` are unsafe because callers
+must quiesce callbacks before Drop. Each subprocess has an independent
+registration. Retargeting releases the prior registration, and detach stops
+sampling and releases the recorded subprocess. See the module documentation.
 
 ### Callback registration
 
@@ -89,8 +92,8 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **v3.7.0 (tag `1ed67b51`)**, the latest
-official release. The numeric C version is 30700. QSBR's experimental constructor is raw sys FFI
+The submodule is pinned to upstream **post-v3.7.0 dev3 (`cb534580`)**. The latest
+official release is v3.7.0. The numeric C version is 30700. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The deprecated guarded-precise control retains ID 31
 and the old Rust names. Precise placement is selected by the native

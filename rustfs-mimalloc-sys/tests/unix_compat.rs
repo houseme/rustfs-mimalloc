@@ -9,8 +9,9 @@ fn native_parser_pmd_and_advice_controls() {
     }
     let unix = include_str!("../c_src/mimalloc/src/prim/unix/prim.c").replace("\r\n", "\n");
     let libc = include_str!("../c_src/mimalloc/src/util/libc.c");
+    let os = include_str!("../c_src/mimalloc/src/prim/os.c");
     let parser = &libc
-        [libc.find("static bool mi_isspace(").unwrap()..libc.find("#ifdef MI_NO_GETENV").unwrap()];
+        [libc.find("static bool mi_isspace(").unwrap()..libc.find("#if MI_NO_GETENV").unwrap()];
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -22,6 +23,14 @@ fn native_parser_pmd_and_advice_controls() {
         let source = &unix;
         let probe = include_str!("fixtures/unix_probe.c")
             .replace("/* @PARSER@ */", parser)
+            .replace(
+                "/* @THP_ELIGIBILITY@ */",
+                function(os, "bool _mi_os_canuse_thp("),
+            )
+            .replace(
+                "/* @PURGE_MINIMUM@ */",
+                function(os, "size_t _mi_os_minimal_purge_size("),
+            )
             .replace(
                 "/* @DETECTOR@ */",
                 function(source, "static size_t unix_detect_large_page_size("),

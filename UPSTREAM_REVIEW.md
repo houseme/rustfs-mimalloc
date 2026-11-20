@@ -1,3 +1,71 @@
+# 0.7.5 upstream/API refresh — 2026-11-20
+
+`git pull --ff-only` confirms project base `6ee6142` is current. Its native
+source is the official v3.7.0 tag `1ed67b51`. The live dev3 branch and fetched
+source now agree on `cb534580a9becbbd5de28a9f43b33d70816f5c31`, still reporting
+C version 30700. The range has 43 reachable commits, including historical
+main3 merges brought back into dev3. The latest official release is v3.7.0.
+[Selected source](https://github.com/microsoft/mimalloc/commit/cb534580a9becbbd5de28a9f43b33d70816f5c31),
+[official release](https://github.com/microsoft/mimalloc/releases/tag/v3.7.0)
+
+## PR and native change audit
+
+| Item | Verified status and incorporated behavior |
+| --- | --- |
+| PR #1501 | Merged into dev3 as `a4e69a79`, followed by cleanup `cb534580`. Per-bin abandoned bitmaps reserve zero memory without touching their headers. First abandonment initializes the chunk count with a release store. This reduces committed metadata pages for unused size bins. |
+| PR #1504 | Closed with merged_at=null. Maintainer comments identify direct commits `e2a1f175` and `aac4f5f4` for THP advice and mapping-range eligibility. `1d15ce6a` subsequently separates explicit huge-page mmap from ordinary mmap advice. |
+| Issue #1506 | Incorporate numeric configuration guards, standalone public-header Wundef fixes, CMake big-endian detection, pthread TLS validation and Windows initialization selection. The issue remains open. |
+| Issue #1510 | Inherit v3 huge-reset handling that respects purge_delay/purge_decommits, eager reset when shrinking an eligible huge block and corrected optional huge-page abandonment. The issue also discusses v2 corruption scenarios, and remains open. |
+| Direct page changes | Relaxed atomic free-list links support optimistic readers. Claimed abandoned pages are force-collected before visitation. Full-page collection revives remote-freed pages more eagerly when abandonment is disabled. |
+
+The live closed-PR collection and individual metadata distinguish the new
+dev3 merge from earlier main3 release/history merges. PR #1424 closed without
+a merge. Native performance data in PR #1501 and PR #1504 belongs to the
+authors' environments.
+[PR #1501](https://github.com/microsoft/mimalloc/pull/1501),
+[PR #1504](https://github.com/microsoft/mimalloc/pull/1504),
+[maintainer reply](https://github.com/microsoft/mimalloc/pull/1504#issuecomment-7019777683),
+[issue #1506](https://github.com/microsoft/mimalloc/issues/1506),
+[issue #1510](https://github.com/microsoft/mimalloc/issues/1510)
+
+## API and build decisions
+
+Read the complete diffs of the four public API headers. Function exports,
+option IDs, callbacks and layouts match the release baseline. Header changes
+cover preprocessor guards and the existing allow_thp option's semantics.
+The inventory passes for 159 bound Rust function names, 46 option IDs and
+75 reviewed unbound exports. The ABI projection covers 150 extern signatures,
+nine callbacks and three layouts, with all eight mutation/option controls.
+
+Document allow_thp values 0, 1 and 2 through the existing Rust option. Linux
+defaults to 2, which also avoids splitting THP pages during purge. Android
+defaults to 0. An explicit minimum purge size overrides that policy. Extend
+the host-C probes with native aligned-range eligibility, allow_large=false,
+mode-dependent purge granularity and explicit minimum-size precedence.
+
+Upstream's numeric Windows startup guards invalidate the old checked source
+transformation. Update both its anchors and emitted conditions, preserving
+the CRT_TLS-only transformation and its cleanup/entropy controls. Adapt the
+parser probe to the numeric MI_NO_GETENV guard. Keep the native tree pristine.
+Existing generated QSBR and no_profile corrections continue to apply.
+
+## Wrapper review
+
+The native profiler has one slot per subprocess and refuses an occupied slot.
+The Rust wrapper previously discarded its attached flag after a repeated
+attach failure and always detached the main subprocess after custom attach.
+Track the successful target, stop and detach it before retargeting, and use
+that target during Drop. Attachment becomes unsafe because deleting the
+native profiler requires external callback quiescence, including in-flight
+callbacks from earlier attachments. See the native API's lifetime requirement
+and the new regression/compile-fail coverage.
+[Native contract](https://github.com/microsoft/mimalloc/blob/cb534580a9becbbd5de28a9f43b33d70816f5c31/include/mimalloc-profile.h)
+
+Current validation and performance priorities are in
+[REVIEW_0.7.5.md](REVIEW_0.7.5.md).
+
+---
+
 # 0.7.5 upstream/API refresh — 2026-11-15
 
 After `git pull --ff-only`, project base `ad3dae6` is current and clean.

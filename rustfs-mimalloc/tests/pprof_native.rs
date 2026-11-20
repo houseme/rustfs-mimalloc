@@ -24,11 +24,15 @@ fn native_pprof_profiler_writes_snapshots() {
 
     let mut profiler =
         PprofProfiler::new(&base, PprofConfig::default()).expect("create native pprof profiler");
-    assert!(profiler.attach(), "attach to the main subprocess heaps");
+    // SAFETY: This binary completes sampled work before teardown and owns
+    // every registration below. Custom subprocesses outlive their attachments.
+    assert!(
+        unsafe { profiler.attach() },
+        "attach to the main subprocess heaps"
+    );
     assert!(!profiler.start(), "a fresh profiler is not yet running");
 
-    // 64 MiB against a 512 KiB Poisson threshold guarantees sampled
-    // allocations reach the native on_alloc callback.
+    // Exercise C-side sampling with 64 MiB and a 512 KiB Poisson threshold.
     let mut sink: Vec<Vec<u8>> = Vec::new();
     for _ in 0..64 {
         sink.push(vec![0xAA_u8; 1024 * 1024]);
@@ -41,17 +45,59 @@ fn native_pprof_profiler_writes_snapshots() {
     assert!(profiler.stop(), "stop after sampling was running");
     profiler.detach();
 
-    // State-machine round trip in the quiescent binary: attach stops a
-    // running profiler, stop reports the previous state, and start resumes
-    // sampling while still attached (no re-attach required).
-    assert!(!profiler.start(), "restart while attached");
+    // Round-trip native running state and attachment generations in this
+    // quiescent binary, including restart after detach and repeated attach.
+    assert!(!profiler.start(), "restart after detach");
     assert!(profiler.stop(), "stop the restarted profiler");
     assert!(!profiler.stop(), "second stop reports not-running");
-    assert!(profiler.attach(), "re-attach after stop");
+    assert!(unsafe { profiler.attach() }, "re-attach after stop");
     assert!(!profiler.start(), "attach stops before sampling starts");
+    assert!(unsafe { profiler.attach() }, "repeat an active attachment");
+    assert!(!profiler.start(), "reattachment stops the running profiler");
     assert!(profiler.stop(), "stop the sampled start");
 
+    let mut contender = PprofProfiler::new(&base, PprofConfig::default()).unwrap();
+    assert!(
+        !unsafe { contender.attach() },
+        "an occupied slot rejects another profiler"
+    );
+
+    let subproc = unsafe { rustfs_mimalloc_sys::mi_subproc_new() };
+    let mut custom = PprofProfiler::new(&base, PprofConfig::default()).unwrap();
+    assert!(unsafe { custom.attach_subproc(subproc) });
+    custom.start();
+    custom.detach();
+    assert!(!custom.stop(), "detach also stops native sampling");
+    assert!(
+        !unsafe { contender.attach() },
+        "custom detach preserves the main attachment"
+    );
+    assert!(
+        unsafe { custom.attach_subproc(subproc) },
+        "custom slot is available after detach"
+    );
+    assert!(
+        !unsafe { custom.attach() },
+        "retarget to an occupied main slot fails"
+    );
+    assert!(
+        unsafe { custom.attach_subproc(subproc) },
+        "failed retarget released the prior slot"
+    );
+    drop(custom);
+    assert!(
+        unsafe { contender.attach_subproc(subproc) },
+        "Drop detaches the custom subprocess"
+    );
+    contender.detach();
+    unsafe { rustfs_mimalloc_sys::mi_subproc_destroy(subproc) };
+
     drop(profiler);
+    assert!(
+        unsafe { contender.attach() },
+        "Drop releases the main registration"
+    );
+    drop(contender);
 
     let snapshots = collect_snapshots(&prefix);
     assert!(

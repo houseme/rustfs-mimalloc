@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.5] - 2026-11-18
+## [0.7.5] - 2026-11-20
 
 ### Changed
 
@@ -24,9 +24,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   instead of every captured frame, and Linux ELF segment file offsets are
   cached per image identity across reports instead of re-opening and
   re-parsing each involved binary on every report.
-- Advance pristine mimalloc source to the official v3.7.0 release tag
-  `1ed67b51`, superseding the interim v3.6.2 development pin `9548089b`.
-  Numeric C version is 30700; v3.7.0 is the latest official upstream release.
+- Advance pristine mimalloc source to post-v3.7.0 dev3 commit `cb534580`,
+  including lazy abandoned-bin bitmap initialization, corrected THP advice
+  eligibility and huge-block purge/reset fixes. Numeric C version is 30700;
+  v3.7.0 is the latest official upstream release.
 - Re-verify the complete public API against v3.7.0: zero exported function,
   option ID, callback or layout changes across all four public headers, so all
   bindings stay unchanged. The version expectation test now asserts 30700.
@@ -58,8 +59,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   C-side sampled pprof snapshots at a fraction of the Rust unwinder cost,
   with `PprofConfig` (Poisson threshold and periodic snapshot intervals,
   zero disables) and drop ordering that stops sampling and detaches before
-  deleting. Covered by a dedicated integration test binary so snapshot
-  deletion honors the native callback-quiescence contract.
+  deleting. Attachment is unsafe and requires callback quiescence before
+  Drop. Covered by a dedicated integration test binary.
 - Safe process-wide callback registration in the new `rustfs_mimalloc::callback`
   module and crate-root re-exports: `register_error`/`clear_error`,
   `register_output`/`clear_output` and
@@ -134,6 +135,16 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Make native pprof attachment explicitly unsafe to carry its callback
+  lifetime contract. Track the attached subprocess so detach/Drop releases
+  the correct registration. Stop sampling on detach, release the previous
+  target before retargeting, and preserve ownership across repeated attach.
+  Registrations are independent per subprocess and occupied slots reject
+  competing profilers.
+- Adapt the Windows static-CRT source transformation to numeric native
+  startup controls, and update parser/THP probes for native macro and mmap
+  changes. Check aligned-range eligibility and THP advice independently of
+  explicit huge-page permission.
 - Review-hardening fixes from the November 18 full-project audit: document
   that `mi_subproc_visit_heaps` and `mi_theap_visit_blocks` dereference their
   visitor unconditionally (unlike `mi_heap_visit_blocks`, `None` crashes),
@@ -166,7 +177,7 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   `# Safety` sections on the heap lifecycle and sized/aligned free entry
   points, `mi_wsize_from_size` documents its intentional overflow
   difference from the C macro, and the pprof module documents the
-  process-wide native attach slot. Provider tests regenerate the isolated
+  per-subprocess native attach slots. Provider tests regenerate the isolated
   consumer lockfile on every run, criterion estimate parsing tolerates
   thousands separators, and a dispatched dry run without a matching git
   tag prints a note instead of surfacing the gap at publish time.
@@ -197,6 +208,12 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
+- Refresh dev3 and merged-PR metadata on November 20. PR #1501 is merged;
+  PR #1504 closed after direct upstream THP fixes. Verify 159 bound function
+  names, 46 option IDs, 150 extern signatures and all eight ABI controls.
+- Cover repeated attachment, occupied targets, custom subprocess detach/Drop,
+  retargeting failure and native stop state. Add a compile-fail check requiring
+  unsafe attachment and retain native default/secure/UBSan coverage.
 - Verify the November 17 v3.7.0 release (47 upstream commits since the prior
   pin, merged through PRs #1499/#1500) against every guarded build patch
   anchor: QSBR header correction, MI_PROFILE=0 sampler guards and the Windows

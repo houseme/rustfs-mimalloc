@@ -61,10 +61,10 @@ pub fn patch_prim(source: &str) -> String {
     // `.CRT$XCT` runs after CRT initialization and before normal C++ initializers.
     // Restrict the startup edits to CRT_TLS; other strategies stay unchanged.
     let (prefix, rest) = source
-        .split_once("#if defined(MI_WIN_INIT_USE_CRT_TLS)\n")
+        .split_once("#if MI_WIN_INIT_USE_CRT_TLS\n")
         .expect("upstream CRT_TLS initialization block is missing");
     let (crt_tls, suffix) = rest
-        .split_once("#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)\n")
+        .split_once("#elif MI_WIN_INIT_USE_RAW_DLLMAIN\n")
         .expect("upstream CRT_TLS initialization block has changed");
     let crt_tls = replace_once(
         crt_tls,
@@ -90,6 +90,6 @@ pub fn patch_prim(source: &str) -> String {
     // Run after UCRT's `__acrt_initialize` but before ordinary C++ constructors.
     let crt_tls = crt_tls.replace(".CRT$XIB", ".CRT$XCT");
     format!(
-        "#define MI_STATIC_CRT_STARTUP_COMPAT 1\n#if defined(_MSC_VER) && defined(_DLL)\n#error Windows static CRT compatibility requires /MT, not /MD\n#endif\n{prefix}#if defined(MI_WIN_INIT_USE_CRT_TLS)\n{crt_tls}#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)\n{suffix}"
+        "#define MI_STATIC_CRT_STARTUP_COMPAT 1\n#if defined(_MSC_VER) && defined(_DLL)\n#error Windows static CRT compatibility requires /MT, not /MD\n#endif\n{prefix}#if MI_WIN_INIT_USE_CRT_TLS\n{crt_tls}#elif MI_WIN_INIT_USE_RAW_DLLMAIN\n{suffix}"
     )
 }

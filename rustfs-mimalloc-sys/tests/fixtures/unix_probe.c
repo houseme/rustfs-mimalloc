@@ -30,6 +30,8 @@
 #define MI_UNUSED(x) ((void)(x))
 #define mi_assert_internal(x) assert(x)
 #define mi_option_allow_thp 1
+#define mi_option_minimal_purge_size 2
+#define mi_addr(p) ((uintptr_t)(p))
 
 static const char* pmd_text;
 static size_t detected_size;
@@ -38,7 +40,15 @@ static bool eligible = true;
 static bool allocation_succeeds = true;
 static bool option_enabled = true;
 static int advice;
-static char region;
+static void* const region = (void*)(uintptr_t)(1024 * MI_MiB);
+static struct { size_t large_page_size; bool has_transparent_huge_pages; } memory_config;
+#define mi_os_mem_config() (&memory_config)
+static long thp_mode = 2;
+static size_t purge_minimum;
+static long mi_option_get(int option) { assert(option == mi_option_allow_thp); return thp_mode; }
+static size_t mi_option_get_size(int option) { assert(option == mi_option_minimal_purge_size); return purge_minimum; }
+static size_t _mi_os_page_size(void) { return 4096; }
+static size_t mi_align_up(size_t size, size_t alignment) { return (size + alignment - 1) / alignment * alignment; }
 static int mi_prim_open(const char* path, int flags) {
   (void)flags;
   assert(strcmp(path, "/sys/kernel/mm/transparent_hugepage/hpage_pmd_size") == 0);
@@ -55,19 +65,18 @@ static int mi_prim_close(int fd) { assert(fd == 1); return 0; }
 static bool mi_option_is_enabled(int option) { assert(option == mi_option_allow_thp); return option_enabled; }
 static int unix_mmap_fd(void) { return -1; }
 static bool _mi_os_has_overcommit(void) { return true; }
-static bool _mi_os_canuse_large_page(size_t size, size_t alignment) {
-  (void)size; (void)alignment; return eligible;
-}
 static size_t _mi_os_large_page_size(void) { return detected_size; }
 static bool _mi_os_has_thp(void) { return thp_available; }
 static void* unix_mmap_prim_aligned(void* addr, size_t size, size_t alignment, int protect, int flags, int fd) {
   (void)addr; (void)size; (void)alignment; (void)protect; (void)flags; (void)fd;
-  return allocation_succeeds ? &region : NULL;
+  return allocation_succeeds ? region : NULL;
 }
 static int unix_madvise(void* p, size_t size, int value) {
-  (void)size; assert(p == &region); advice = value; return 0;
+  (void)size; assert(p == region); advice = value; return 0;
 }
 
+/* @THP_ELIGIBILITY@ */
+/* @PURGE_MINIMUM@ */
 /* @PARSER@ */
 /* @DETECTOR@ */
 /* @MMAP@ */
@@ -92,6 +101,7 @@ static void check_advice(size_t page_size, size_t mapping_size, bool allow, bool
   thp_available = page_size <= MI_UNIX_MAX_THP_PAGE_SIZE;
   allocation_succeeds = valid_mapping;
   eligible = valid_range;
+  memory_config.large_page_size = eligible ? page_size : 0;
   advice = 0;
   bool is_large = true;
   void* p = unix_mmap(NULL, mapping_size, MI_MiB, PROT_READ | PROT_WRITE, false, allow, &is_large);
@@ -136,9 +146,31 @@ int main(void) {
   const int negative = 0;
   #endif
   check_advice(2*MI_MiB, 2*MI_MiB, true, true, true, positive);
+  check_advice(2*MI_MiB, 2*MI_MiB, false, true, true, positive);
   check_advice(8*MI_MiB, 8*MI_MiB, true, true, true, positive);
   check_advice(32*MI_MiB, 32*MI_MiB, true, true, true, negative);
   check_advice(512*MI_MiB, 512*MI_MiB, true, true, true, negative);
+  memory_config.large_page_size = 2*MI_MiB;
+  assert(_mi_os_canuse_thp((void*)(uintptr_t)0, 2*MI_MiB));
+  assert(!_mi_os_canuse_thp((void*)(uintptr_t)1, 2*MI_MiB));
+  assert(!_mi_os_canuse_thp((void*)(uintptr_t)1, 4*MI_MiB-2));
+  assert(_mi_os_canuse_thp((void*)(uintptr_t)1, 4*MI_MiB-1));
+  assert(!_mi_os_canuse_thp(region, 2*MI_MiB-1));
+  memory_config.large_page_size = 0;
+  assert(!_mi_os_canuse_thp(region, 4*MI_MiB));
+  detected_size = 2*MI_MiB;
+  memory_config.has_transparent_huge_pages = true;
+  assert(_mi_os_minimal_purge_size() == 2*MI_MiB);
+  thp_mode = 1;
+  assert(_mi_os_minimal_purge_size() == 4096);
+  thp_mode = 0;
+  assert(_mi_os_minimal_purge_size() == 4096);
+  thp_mode = 2;
+  purge_minimum = 4097;
+  assert(_mi_os_minimal_purge_size() == 8192);
+  purge_minimum = 0;
+  memory_config.has_transparent_huge_pages = false;
+  assert(_mi_os_minimal_purge_size() == 4096);
   check_advice(512*MI_MiB, 512*MI_MiB, false, true, true, negative);
   check_advice(512*MI_MiB, 512*MI_MiB, true, false, true, 0);
   check_advice(512*MI_MiB, 512*MI_MiB, true, true, false, negative);

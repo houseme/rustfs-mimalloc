@@ -35,6 +35,8 @@ fn pinned_startup_sources_accept_patch_and_preserve_thread_cleanup() {
     let source = include_str!("../c_src/mimalloc/src/prim/windows/prim.c").replace("\r\n", "\n");
     let patched = startup::patch_prim(&source);
     assert!(patched.contains("#define MI_STATIC_CRT_STARTUP_COMPAT 1"));
+    assert!(patched.contains("#if MI_WIN_INIT_USE_CRT_TLS\n"));
+    assert!(!patched.contains("#if defined(MI_WIN_INIT_USE_CRT_TLS)"));
     let before = source
         .split("  static void NTAPI mi_tls_detach")
         .nth(1)
@@ -55,10 +57,10 @@ fn pinned_startup_sources_accept_patch_and_preserve_thread_cleanup() {
         "// tls process attach is always called before crt init\n      mi_win_main(module, reason, reserved);"
     ));
     let (_, before) = source
-        .split_once("#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)")
+        .split_once("#elif MI_WIN_INIT_USE_RAW_DLLMAIN")
         .unwrap();
     let (_, after) = patched
-        .split_once("#elif defined(MI_WIN_INIT_USE_RAW_DLLMAIN)")
+        .split_once("#elif MI_WIN_INIT_USE_RAW_DLLMAIN")
         .unwrap();
     assert_eq!(before, after);
     let random = include_str!("../c_src/mimalloc/src/util/random.c").replace("\r\n", "\n");

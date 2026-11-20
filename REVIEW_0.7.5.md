@@ -1,3 +1,97 @@
+# 0.7.5 follow-up review — 2026-11-20
+
+The clean base after `git pull --ff-only` is `6ee6142`. The workspace already
+uses 0.7.5 and has one shared changelog section. The current follow-up is
+collected there with a November 20 date. Native source advances from the
+v3.7.0 release to post-release dev3 `cb534580`, with numeric C version 30700.
+The release API still identifies v3.7.0 as the latest official release.
+The commit/PR audit is in [UPSTREAM_REVIEW.md](UPSTREAM_REVIEW.md).
+
+## Findings and fixes
+
+| Area | Finding and delivered change |
+| --- | --- |
+| Native profiler lifetime | A safe attach could publish callbacks that outlive the handle's Drop. Mark attach unsafe and specify callback quiescence before deletion. A compile-fail example checks the boundary. |
+| Profiler target ownership | A failed repeated attach discarded local ownership, custom detach targeted the main subprocess, and retargeting left previous registrations behind. Store one successful subprocess target, detach it before retargeting, stop native sampling on detach and release the same target in Drop. |
+| Profiler state | Remove the redundant running flag and query native start/stop directly. Regression coverage includes repeated attachment, occupied main slots, independent custom slots, failed retargeting, custom Drop and main-slot preservation. |
+| THP and reset policy | Document allow_thp modes 0/1/2 and the Linux default 2. The native implementation now advises THP independently of explicit huge-page permission, checks complete aligned-page coverage and honors huge-block purge/reset policy. Host-C probes execute the new native eligibility and purge-minimum functions. |
+| Build compatibility | Numeric upstream Windows startup macros require numeric conditions in the generated static-CRT source. Refresh the checked anchors and tests. The parser source probe adopts the numeric MI_NO_GETENV guard. |
+| Public API | Public function/option/layout additions in this range total zero. Verify 159 Rust function names, 46 IDs, 150 extern signatures, nine callbacks, three layouts and eight controls. |
+
+Native pprof callers now use `unsafe { profiler.attach() }` after establishing
+that all callback users will finish before teardown. Custom subprocesses must
+outlive their attachments. Reattachment first releases the previous target,
+and a competing profiler keeps its occupied slot. Raw consumers continue to
+uphold the upstream lifetime and registration contracts.
+
+## Performance assessment
+
+The current project already implements ordinary-allocation dispatch, sized
+GlobalAlloc frees, sampled-stack hashes, cold sampling tails and Linux ELF
+mapping caches. The review evaluates those current paths alongside the new
+native source.
+
+1. Lazy abandoned-bin bitmaps reduce metadata header writes and committed
+   pages for unused bins. Measure arena/heap count, OS page size and resident
+   metadata under the actual workload. Native arena tests cover first
+   abandonment, concurrent initialization and reclaim after thread exit.
+2. Compare allow_thp=1 and 2 using page faults, RSS, huge-page residency and
+   p99 allocation/purge latency. Mode 2 can retain larger resident ranges by
+   avoiding splits. Explicit purge minimums and no_thp build selection belong
+   in the benchmark configuration.
+3. Measure huge shrink, remote free and disabled-abandonment workloads. The
+   new native reset policy and fuller queue scanning trade reclamation work
+   against memory retention. Record bytes retained, eager resets and latency.
+4. Compare native pprof and Rust SamplingAllocator with their respective
+   coverage and stack-quality requirements. The Rust report still constructs
+   aggregation and frame caches per report. Reusable report capacity could
+   reduce allocation churn while preserving dynamic-image symbol lifetimes.
+5. Use cached ThreadHeap contexts where workers alternate between heaps.
+   Measure the existing lookup/cached-context workloads and profile the live
+   map's snapshot copy duration and contention before changing locking.
+
+This refresh has functional and native regression evidence. Production
+throughput/RSS effects require workload measurements. Earlier benchmark
+numbers in the changelog describe their original builds and workloads.
+
+## Validation
+
+Local validation uses stable Rust 1.100.0 on macOS arm64 with serial libtest
+execution. The following checks pass.
+
+- Workspace default, no_profile, secure/debug/no_profile,
+  secure/debug/override and all-feature tests, plus the separate profiling
+  no_hooks/rustfs-allocator suite.
+- The pprof lifecycle integration in debug and release, and its unsafe-attach
+  compile-fail example. The ordinary allocator, callback and visitor suites
+  retain their current coverage.
+- The 159-function/46-option inventory, 150-signature C ABI projection and
+  all eight ABI controls. The C ABI probe also passes with Wundef enabled.
+- Nine native debug C tests, four native secure tests and four Clang UBSan
+  API/alignment/QSBR tests. The native arena suite includes lazy-bitmap first
+  use, concurrent initialization and post-thread-exit reclamation.
+- Updated host-C parser, THP eligibility/advice/purge-minimum probes and
+  Windows startup/entropy source controls. The THP probes run with and without
+  no_thp and MADV_NOHUGEPAGE support, retaining the dangling-else control.
+- Both isolated providers in debug and release, plus the RustFS provider's
+  two ignored release pressure tests.
+- All-target/all-feature Clippy, rustdoc with denied warnings, benchmark
+  compilation, formatting and diff checks.
+- Normalized profiling archive verification, sys/allocator archive creation
+  with local dependency patches, extracted sys no_profile API execution and
+  0.7.5 version/changelog/release-note consistency checks.
+
+Cargo emits one existing warning for the provider requirement consumed by
+generated consumer workspaces. Evidence stays under ignored
+`target/review-0.7.5-nov20-*` and `target/api-0.7.5-nov20.json`.
+Current Windows static CRT/clang-cl, Linux THP/musl and Rust 1.95 execution
+results come from CI for the pushed commit. Hardware MTE/PAC and production
+performance require their respective environments.
+The baseline commit's cross-platform CI completed successfully.
+[Baseline CI](https://github.com/houseme/rustfs-mimalloc/actions/runs/44451013745)
+
+---
+
 # 0.7.5 follow-up review — 2026-11-15
 
 `git pull --ff-only` confirms base `ad3dae6` is current. The workspace,

@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to the upstream v3.7.0 release (tag `1ed67b51`).
+//! Pinned to upstream post-v3.7.0 dev3 commit `cb534580` (C version 30700).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -122,6 +122,9 @@ pub enum mi_option_t {
     mi_option_page_commit_on_demand = 40,
     mi_option_page_max_reclaim = 41,
     mi_option_page_cross_thread_max_reclaim = 42,
+    /// Transparent huge pages: 0 disables, 1 allows, 2 also avoids splitting
+    /// on purge. Linux defaults to 2, Android to 0. An explicit minimal purge
+    /// size overrides the purge policy.
     mi_option_allow_thp = 43,
     mi_option_arena_purge_min_size = 44,
     mi_option_arena_max_object_size = 45,
