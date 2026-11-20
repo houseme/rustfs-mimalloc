@@ -119,10 +119,12 @@ reporter-visible buffers even while their thread is idle; tracked frees remove m
 removals may wait for a shard lock. Reports copy live shards individually, so
 snapshots do not freeze the application at one global instant.
 
-The temporary live-copy vector is sized from retained occupancy. Stable empty
-snapshots need no vector storage; concurrent admissions can grow that buffer
-outside the shard lock before copying. The preallocated live tables and
-`live_metadata_payload_bytes` accounting are unchanged.
+Reports reuse the event drain and live snapshot buffers within a session.
+Each can retain up to 4 MiB of capacity between reports. Larger buffers are
+released after aggregation, and stopping the session releases both buffers.
+The live snapshot sizes new storage from retained occupancy. Concurrent
+admissions can grow the buffer outside the shard lock before copying.
+`live_metadata_payload_bytes` measures the live tables.
 
 Live snapshots lock each shard once when existing output and table capacity are
 sufficient. Growth and table rebuilding allocate after unlocking, reserve for

@@ -1,3 +1,51 @@
+# 0.7.5 profiling report review — 2026-11-20
+
+Reviewed the allocation dispatch, sampling drains, live-table snapshots,
+stack aggregation and ELF mapping cache on `731108e`. The report path
+allocated fresh drain and snapshot vectors on every call and copied each
+distinct stack into the aggregation table. Reports now reuse the two vectors
+and borrow stack keys while aggregating. Each vector can retain up to 4 MiB
+between reports. Oversized buffers are freed after aggregation, and stop
+releases both. Reservations still happen outside recorder and live-shard
+locks. Symbol resolution retains its per-report lifetime.
+
+The Linux ELF cache previously stored offsets only for the segments selected
+by the first report. Later reports could omit a newly sampled segment of the
+same image despite a matching build ID. Cache the verified file's complete
+segment offsets and apply them directly on cache hits. The Linux regression
+fails on the baseline when the second segment becomes visible, passes with
+the fix, and rejects a mismatched build ID.
+
+Local macOS arm64 release diagnostics used frozen baseline and candidate
+binaries, 30 warm-up reports and 160 measured reports per allocation-count
+run. Repeated runs produced the same counts. The byte totals sum the sizes
+requested from the Rust allocator during reporting, including reallocations.
+
+| Workload | Baseline | Candidate | Reduction |
+| --- | ---: | ---: | ---: |
+| Interval allocation reports, 41,121 records drained | 66.45 MiB | 2.38 MiB | 96.4% |
+| Live snapshots, 4,098 retained records | 343.15 MiB | 4.80 MiB | 98.6% |
+
+Both versions drained their backlog without dropping events or live samples.
+The byte totals measure allocation traffic. Peak RSS and service throughput
+require separate measurements. Repeated sequential A/B/B/A runs included
+same-binary controls, which showed timing drift beyond 5%, so the allocation
+counts are the performance result. Logs and the workload source are under
+ignored `target/report-review/`.
+
+The workspace suite, no_hooks, optimized profiling stress tests, both
+isolated release providers and profiling Clippy passed on macOS arm64.
+The delivery reran workspace tests, no_hooks, release profiling stress,
+Clippy and the 0.7.5 consistency check on macOS. The official Rust 1.100.0
+Bookworm image built and tested the workspace offline on Linux arm64. The
+workspace run covered the ELF cache regression and native stack capture.
+The container also passed no_hooks, optimized profiling stress, RustFS
+provider compatibility and the optimized native source-line assertions
+with release debug info enabled. Delivery logs are under
+`target/report-review/final/`.
+
+---
+
 # 0.7.5 follow-up review — 2026-11-20
 
 The clean base after `git pull --ff-only` is `6ee6142`. The workspace already

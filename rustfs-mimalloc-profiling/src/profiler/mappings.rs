@@ -145,15 +145,8 @@ mod supported {
         // Images never change identity while loaded, so verified segment file
         // offsets are cached per (path, build id) across reports. A repeated
         // report then skips re-opening and re-parsing every involved image.
-        if let Some(offsets) = verified_offsets::lookup(&image.path, &image.build_id) {
-            image.segments.retain_mut(|segment| {
-                let Some(file_offset) = offsets.get(&segment.stated_address) else {
-                    return false;
-                };
-                segment.file_offset = *file_offset;
-                true
-            });
-            return !image.segments.is_empty();
+        if let Some(matched) = verified_offsets::apply(image) {
+            return matched;
         }
 
         let Ok(file) = std::fs::File::open(&image.path) else {
@@ -171,23 +164,33 @@ mod supported {
         if image.build_id.is_empty() || disk_id.as_deref() != Some(&image.build_id) {
             return false;
         }
+        // The current report may reference only a subset of this image's
+        // segments. Cache the verified file's complete segment offsets.
         let mut offsets = std::collections::HashMap::new();
-        image.segments.retain_mut(|segment| {
-            let Some(disk_segment) = object
-                .segments()
-                .find(|disk_segment| disk_segment.address() == segment.stated_address)
-            else {
-                return false;
-            };
-            let file_offset = disk_segment.file_range().0;
-            segment.file_offset = file_offset;
-            offsets.insert(segment.stated_address, file_offset);
-            true
-        });
+        for segment in object.segments() {
+            offsets
+                .entry(segment.address())
+                .or_insert_with(|| segment.file_range().0);
+        }
+        apply_elf_offsets(&mut image.segments, &offsets);
         if !image.segments.is_empty() {
             verified_offsets::store(image.path.clone(), image.build_id.clone(), offsets);
         }
         !image.segments.is_empty()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn apply_elf_offsets(
+        segments: &mut Vec<CodeSegment>,
+        offsets: &std::collections::HashMap<u64, u64>,
+    ) {
+        segments.retain_mut(|segment| {
+            let Some(&offset) = offsets.get(&segment.stated_address) else {
+                return false;
+            };
+            segment.file_offset = offset;
+            true
+        });
     }
 
     /// Process-lifetime cache of build-id-verified ELF segment file offsets.
@@ -206,6 +209,8 @@ mod supported {
     mod verified_offsets {
         use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
+        use super::{Image, apply_elf_offsets};
+
         struct VerifiedImage {
             build_id: String,
             offsets: HashMap<u64, u64>,
@@ -217,12 +222,13 @@ mod supported {
             ENTRIES.get_or_init(|| Mutex::new(HashMap::new()))
         }
 
-        pub(super) fn lookup(path: &PathBuf, build_id: &str) -> Option<HashMap<u64, u64>> {
+        pub(super) fn apply(image: &mut Image) -> Option<bool> {
             let entries = entries().lock().unwrap_or_else(|err| err.into_inner());
-            entries
-                .get(path)
-                .filter(|image| image.build_id == build_id)
-                .map(|image| image.offsets.clone())
+            let cached = entries
+                .get(&image.path)
+                .filter(|cached| cached.build_id == image.build_id)?;
+            apply_elf_offsets(&mut image.segments, &cached.offsets);
+            Some(!image.segments.is_empty())
         }
 
         pub(super) fn store(path: PathBuf, build_id: String, offsets: HashMap<u64, u64>) {
@@ -249,12 +255,15 @@ mod supported {
 
         #[cfg(target_os = "linux")]
         #[test]
-        fn replaced_elf_identity_does_not_produce_offsets() {
+        fn elf_cache_covers_segments_first_seen_in_later_reports() {
             use object::{Object, ObjectSegment};
 
             let path = std::env::current_exe().unwrap();
             let cache = object::read::ReadCache::new(std::fs::File::open(&path).unwrap());
             let object = object::File::parse(&cache).unwrap();
+            let mut segments = object.segments();
+            let first = segments.next().unwrap().address();
+            let second = segments.find(|segment| segment.address() != first).unwrap();
             let mut image = Image {
                 is_main: true,
                 path,
@@ -264,12 +273,16 @@ mod supported {
                 segments: vec![CodeSegment {
                     start: 0,
                     limit: 1,
-                    stated_address: object.segments().next().unwrap().address(),
+                    stated_address: first,
                     file_offset: u64::MAX,
                 }],
             };
             assert!(load_elf_offsets(&mut image));
             assert_ne!(image.segments[0].file_offset, u64::MAX);
+            image.segments[0].stated_address = second.address();
+            image.segments[0].file_offset = u64::MAX;
+            assert!(load_elf_offsets(&mut image));
+            assert_eq!(image.segments[0].file_offset, second.file_range().0);
             image.build_id = "not-the-loaded-build-id".into();
             assert!(!load_elf_offsets(&mut image));
         }

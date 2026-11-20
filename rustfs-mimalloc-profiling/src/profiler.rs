@@ -36,6 +36,8 @@ const DEFAULT_MAX_DEPTH: usize = 64;
 const DEFAULT_RING_CAPACITY: usize = 512;
 const DEFAULT_REPORT_DRAIN_LIMIT: usize = 1_000_000;
 const DEFAULT_MAX_LIVE_SAMPLES: usize = 16_384;
+// Keep ordinary report buffers warm without holding onto a large one-off drain.
+const MAX_RETAINED_REPORT_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CAPTURE_DEPTH: usize = 64;
 const PROFILER_FRAME_ALLOWANCE: usize = 16;
 const TLS_SAMPLE_RING_CAPACITY: usize = 64;
@@ -659,6 +661,8 @@ pub struct Profiler {
     config: MimallocConfig,
     last_report: Option<Instant>,
     initialized: bool,
+    report_events: Vec<RecordedAllocationSample>,
+    report_live: Vec<live::LiveAllocationSample>,
 }
 
 impl Profiler {
@@ -687,10 +691,12 @@ impl Profiler {
             config,
             last_report: None,
             initialized: false,
+            report_events: Vec::new(),
+            report_live: Vec::new(),
         }
     }
 
-    /// Stop recording, release global/live-table storage, and relinquish ownership.
+    /// Stop recording, release session storage, and relinquish ownership.
     ///
     /// This is idempotent. Pending samples are discarded; call [`Self::report`]
     /// first when they are needed. The allocator remains usable after stopping.
@@ -706,6 +712,8 @@ impl Profiler {
             clear_registered_tls_samples();
             clear_recorded_samples();
             live::clear();
+            self.report_events = Vec::new();
+            self.report_live = Vec::new();
         });
         self.initialized = false;
         BACKEND_CLAIMED.store(false, Ordering::Release);
@@ -799,8 +807,8 @@ impl Profiler {
                 .map(|last_report| duration_to_i64_nanos(now.duration_since(last_report)))
                 .unwrap_or_default();
 
-            let recorded = drain_samples_for_report(self.config.report_drain_limit);
-            let recorded_count = recorded.len();
+            drain_samples_for_report_into(&mut self.report_events, self.config.report_drain_limit);
+            let recorded_count = self.report_events.len();
             let dropped_count = DROPPED_SAMPLES.load(Ordering::Relaxed);
             if dropped_count > 0 {
                 log::debug!(
@@ -809,7 +817,14 @@ impl Profiler {
                 );
             }
 
-            let samples = build_memory_samples(recorded, live::snapshot(), self.config.max_depth);
+            live::snapshot_into(&mut self.report_live);
+            let samples = build_memory_samples(
+                &self.report_events,
+                &self.report_live,
+                self.config.max_depth,
+            );
+            recycle_report_buffer(&mut self.report_events);
+            recycle_report_buffer(&mut self.report_live);
 
             let encode_start = Instant::now();
             let mappings = mappings::collect(&samples);
@@ -1511,7 +1526,23 @@ fn drain_recorded_samples(limit: usize) -> Vec<RecordedAllocationSample> {
     out
 }
 
+fn recycle_report_buffer<T>(buffer: &mut Vec<T>) {
+    if buffer.capacity() * std::mem::size_of::<T>() > MAX_RETAINED_REPORT_BUFFER_BYTES {
+        *buffer = Vec::new();
+    } else {
+        buffer.clear();
+    }
+}
+
+#[cfg(all(test, not(feature = "no_hooks")))]
 fn drain_samples_for_report(limit: usize) -> Vec<RecordedAllocationSample> {
+    let mut recorded = Vec::new();
+    drain_samples_for_report_into(&mut recorded, limit);
+    recorded
+}
+
+fn drain_samples_for_report_into(recorded: &mut Vec<RecordedAllocationSample>, limit: usize) {
+    recorded.clear();
     // Give both sources progress under a small drain limit. For a limit of one,
     // alternate the preferred source instead of starving the global backlog.
     let global_budget = if limit == 1 {
@@ -1522,13 +1553,12 @@ fn drain_samples_for_report(limit: usize) -> Vec<RecordedAllocationSample> {
     let estimate = GLOBAL_BUFFERED_SAMPLE_COUNT
         .load(Ordering::Relaxed)
         .min(global_budget);
-    let mut recorded = Vec::with_capacity(estimate);
-    drain_recorded_samples_into(&mut recorded, global_budget);
+    recorded.reserve(estimate);
+    drain_recorded_samples_into(recorded, global_budget);
     let remaining = limit - recorded.len();
-    drain_registered_tls_samples_for_report(&mut recorded, remaining);
+    drain_registered_tls_samples_for_report(recorded, remaining);
     let remaining = limit - recorded.len();
-    drain_recorded_samples_into(&mut recorded, remaining);
-    recorded
+    drain_recorded_samples_into(recorded, remaining);
 }
 
 fn recorded_sample_shard_capacity(total_capacity: usize) -> usize {
@@ -1537,34 +1567,36 @@ fn recorded_sample_shard_capacity(total_capacity: usize) -> usize {
 
 #[cfg(all(test, not(feature = "no_hooks")))]
 fn build_allocation_samples(
-    recorded: Vec<RecordedAllocationSample>,
+    recorded: &[RecordedAllocationSample],
     max_depth: usize,
 ) -> Vec<AllocationSample> {
-    build_memory_samples(recorded, Vec::new(), max_depth)
+    build_memory_samples(recorded, &[], max_depth)
 }
 
 fn build_memory_samples(
-    recorded: Vec<RecordedAllocationSample>,
-    live_samples: Vec<live::LiveAllocationSample>,
+    recorded: &[RecordedAllocationSample],
+    live_samples: &[live::LiveAllocationSample],
     max_depth: usize,
 ) -> Vec<AllocationSample> {
     build_memory_samples_with_resolver(recorded, live_samples, max_depth, resolve_frame)
 }
 
 fn build_memory_samples_with_resolver(
-    recorded: Vec<RecordedAllocationSample>,
-    live_samples: Vec<live::LiveAllocationSample>,
+    recorded: &[RecordedAllocationSample],
+    live_samples: &[live::LiveAllocationSample],
     max_depth: usize,
     mut resolve: impl FnMut(usize) -> MemoryFrame,
 ) -> Vec<AllocationSample> {
-    let mut aggregated: HashMap<StackKey, AggregatedAllocationSample> = HashMap::new();
+    // Borrow the captured stacks until aggregation finishes. Hash/equality
+    // still compare stack contents, while table growth only moves references.
+    let mut aggregated: HashMap<&StackKey, AggregatedAllocationSample> = HashMap::new();
     for sample in recorded {
-        let entry = aggregated.entry(sample.stack).or_default();
+        let entry = aggregated.entry(&sample.stack).or_default();
         entry.alloc_objects += sample.weighted_objects;
         entry.alloc_space += sample.weighted_bytes;
     }
     for sample in live_samples {
-        let entry = aggregated.entry(sample.stack).or_default();
+        let entry = aggregated.entry(&sample.stack).or_default();
         entry.inuse_objects += sample.weighted_objects;
         entry.inuse_space += sample.weighted_bytes;
     }
@@ -1576,7 +1608,7 @@ fn build_memory_samples_with_resolver(
     aggregated
         .into_iter()
         .map(|(stack, sample)| {
-            let frames = resolve_stack_with(&stack, max_depth, |ip| {
+            let frames = resolve_stack_with(stack, max_depth, |ip| {
                 frame_cache
                     .entry(ip)
                     .or_insert_with(|| filter_profiler_frame(resolve(ip)).map(Arc::new))
@@ -2065,6 +2097,9 @@ mod tests {
                 .load(Ordering::Acquire),
         );
         backend.report().unwrap();
+        let event_capacity = backend.report_events.capacity();
+        let live_capacity = backend.report_live.capacity();
+        assert!(event_capacity > 0 && live_capacity > 0);
         let stats = mimalloc_stats();
         assert!(last_report_elapsed_micros() >= stats.last_pprof_encode_elapsed_micros);
         assert_eq!(
@@ -2081,7 +2116,17 @@ mod tests {
             (mimalloc_stats().reports, mimalloc_stats().reported_samples),
             (3, 2)
         );
-        drop(backend);
+        assert_eq!(backend.report_events.capacity(), event_capacity);
+        assert_eq!(backend.report_live.capacity(), live_capacity);
+        backend.report_events.reserve_exact(
+            MAX_RETAINED_REPORT_BUFFER_BYTES / size_of::<RecordedAllocationSample>() + 1,
+        );
+        backend.report().unwrap();
+        assert_eq!(backend.report_events.capacity(), 0);
+        assert_eq!(backend.report_live.capacity(), live_capacity);
+        backend.stop();
+        assert_eq!(backend.report_events.capacity(), 0);
+        assert_eq!(backend.report_live.capacity(), 0);
         let mut restarted = Profiler::new(MimallocConfig::default());
         restarted.initialize().unwrap();
         assert_eq!(last_report_elapsed_micros(), 0);
@@ -2310,8 +2355,8 @@ mod tests {
     fn memory_aggregation_combines_interval_and_live_values_by_stack() {
         let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let samples = build_memory_samples(
-            vec![test_sample(stack)],
-            vec![test_live_sample(stack), test_live_sample(stack)],
+            &[test_sample(stack)],
+            &[test_live_sample(stack), test_live_sample(stack)],
             16,
         );
         assert_eq!(samples.len(), 1);
@@ -2333,7 +2378,7 @@ mod tests {
             weighted_objects: 1.582,
             weighted_bytes: 1620.5,
         };
-        let samples = build_memory_samples(Vec::new(), vec![sample, sample], 8);
+        let samples = build_memory_samples(&[], &[sample, sample], 8);
         assert_eq!(samples[0].inuse_objects, 3);
         assert_eq!(samples[0].inuse_space, 3241);
     }
@@ -2390,8 +2435,7 @@ mod tests {
         let first = StackKey::from_parts(frames, 1);
         let second = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         assert_eq!(first, second);
-        let samples =
-            build_memory_samples(vec![test_sample(first), test_sample(second)], Vec::new(), 8);
+        let samples = build_memory_samples(&[test_sample(first), test_sample(second)], &[], 8);
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].alloc_objects, 2);
     }
@@ -3275,7 +3319,7 @@ mod tests {
     fn build_allocation_samples_groups_matching_stacks() {
         let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
         let samples = build_allocation_samples(
-            vec![
+            &[
                 RecordedAllocationSample {
                     stack,
                     weighted_objects: 8.0,
@@ -3357,16 +3401,13 @@ mod tests {
         let mut second_frames = first.frames;
         second_frames[1] = 3;
         let second = StackKey::from_parts(second_frames, 2);
-        let recorded = [first, second]
-            .into_iter()
-            .map(|stack| RecordedAllocationSample {
-                stack,
-                weighted_objects: 1.0,
-                weighted_bytes: 1024.0,
-            })
-            .collect();
+        let recorded = [first, second].map(|stack| RecordedAllocationSample {
+            stack,
+            weighted_objects: 1.0,
+            weighted_bytes: 1024.0,
+        });
         let mut resolutions = HashMap::<usize, usize>::new();
-        let samples = build_memory_samples_with_resolver(recorded, Vec::new(), 64, |ip| {
+        let samples = build_memory_samples_with_resolver(&recorded, &[], 64, |ip| {
             *resolutions.entry(ip).or_default() += 1;
             let names = if ip == 1 {
                 vec![
@@ -3497,15 +3538,12 @@ mod tests {
     #[test]
     fn allocation_estimates_round_only_after_stack_aggregation() {
         let stack = StackKey::from_parts([42; MAX_CAPTURE_DEPTH], 1);
-        let samples = vec![
-            RecordedAllocationSample {
-                stack,
-                weighted_objects: 1.4,
-                weighted_bytes: 1075.2,
-            };
-            2
-        ];
-        let profile = build_allocation_samples(samples, 8);
+        let samples = [RecordedAllocationSample {
+            stack,
+            weighted_objects: 1.4,
+            weighted_bytes: 1075.2,
+        }; 2];
+        let profile = build_allocation_samples(&samples, 8);
         assert_eq!(profile.len(), 1);
         assert_eq!(profile[0].alloc_objects, 3);
         assert_eq!(profile[0].alloc_space, 2150);

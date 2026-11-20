@@ -12,6 +12,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Reuse Rust profiling report buffers across successive drains and live
+  snapshots. Retain up to 4 MiB per buffer between reports and release both on
+  stop. Aggregate by borrowed stack keys to reduce copies during table growth.
 - Tighten the profiling allocation hooks: `SamplingAllocator`'s `GlobalAlloc`
   methods, the allocator-seen marker and the sampler countdown now inline into
   caller allocation sites, interval expiry and sample capture moved to a cold
@@ -135,6 +138,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Cache all build-ID-verified ELF segment offsets on Linux. Later reports can
+  resolve segments absent from the first report, and cache hits avoid cloning
+  the offset table.
 - Make native pprof attachment explicitly unsafe to carry its callback
   lifetime contract. Track the attached subprocess so detach/Drop releases
   the correct registration. Stop sampling on detach, release the previous

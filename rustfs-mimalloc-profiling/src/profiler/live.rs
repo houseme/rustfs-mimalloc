@@ -308,20 +308,27 @@ pub(super) fn transfer_sample(pointer: usize, sample: LiveAllocationSample, gene
     entries.add_membership(shard, bit);
 }
 
+#[cfg(all(test, not(feature = "no_hooks")))]
 pub(super) fn snapshot() -> Vec<LiveAllocationSample> {
+    let mut samples = Vec::new();
+    snapshot_into(&mut samples);
+    samples
+}
+
+pub(super) fn snapshot_into(samples: &mut Vec<LiveAllocationSample>) {
+    samples.clear();
     if !enabled() {
-        return Vec::new();
+        return;
     }
     let Some(shards) = SHARDS.get() else {
-        return Vec::new();
+        return;
     };
     // Occupancy is only a sizing hint: workers can add/remove records while
     // reporting. Stable empty/sparse heaps need no whole-shard reservation.
-    let mut samples = Vec::with_capacity(sample_count());
+    samples.reserve_exact(sample_count());
     for shard in shards {
-        snapshot_shard(shard, &mut samples, Vec::reserve);
+        snapshot_shard(shard, samples, Vec::reserve);
     }
-    samples
 }
 
 fn snapshot_shard(
