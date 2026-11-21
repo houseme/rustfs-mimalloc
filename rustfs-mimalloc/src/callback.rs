@@ -108,11 +108,15 @@ pub fn register_error(callback: &'static (dyn Fn(c_int) + Send + Sync)) {
 /// The same quiescence requirements as [`register_error`] apply.
 pub fn clear_error() {
     ensure_not_in_callback("clear_error");
+    // Restore the C handler first: once the native call returns, no new
+    // trampoline invocation can occur, so clearing the Rust slot afterwards
+    // never drops a message into a handlerless window.
+    //
+    // SAFETY: Restoring the default handler takes no callback state.
+    unsafe { rustfs_mimalloc_sys::mi_register_error(None, core::ptr::null_mut()) };
     *ERROR_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = None;
-    // SAFETY: Restoring the default handler takes no callback state.
-    unsafe { rustfs_mimalloc_sys::mi_register_error(None, core::ptr::null_mut()) }
 }
 
 unsafe extern "C" fn trampoline_error(err: c_int, _arg: *mut c_void) {
@@ -151,11 +155,11 @@ pub fn register_output(callback: &'static (dyn Fn(&str) + Send + Sync)) {
 /// The same quiescence requirements as [`register_output`] apply.
 pub fn clear_output() {
     ensure_not_in_callback("clear_output");
+    // SAFETY: Restoring the default sink takes no callback state.
+    unsafe { rustfs_mimalloc_sys::mi_register_output(None, core::ptr::null_mut()) };
     *OUTPUT_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = None;
-    // SAFETY: Restoring the default sink takes no callback state.
-    unsafe { rustfs_mimalloc_sys::mi_register_output(None, core::ptr::null_mut()) }
 }
 
 unsafe extern "C" fn trampoline_output(msg: *const core::ffi::c_char, _arg: *mut c_void) {
@@ -204,11 +208,11 @@ pub fn register_deferred_free(callback: &'static (dyn Fn(bool, u64) + Send + Syn
 /// The same quiescence requirements as [`register_deferred_free`] apply.
 pub fn clear_deferred_free() {
     ensure_not_in_callback("clear_deferred_free");
+    // SAFETY: Unregistering takes no callback state.
+    unsafe { rustfs_mimalloc_sys::mi_register_deferred_free(None, core::ptr::null_mut()) };
     *DEFERRED_FREE_CALLBACK
         .write()
         .unwrap_or_else(|err| err.into_inner()) = None;
-    // SAFETY: Unregistering takes no callback state.
-    unsafe { rustfs_mimalloc_sys::mi_register_deferred_free(None, core::ptr::null_mut()) }
 }
 
 unsafe extern "C" fn trampoline_deferred_free(force: bool, heartbeat: u64, _arg: *mut c_void) {

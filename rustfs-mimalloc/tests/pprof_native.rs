@@ -85,6 +85,13 @@ fn native_pprof_profiler_writes_snapshots() {
         "failed retarget released the prior slot"
     );
     drop(custom);
+    // A failed retarget must not have recorded the main slot: if Drop had
+    // detached it, the profiler's registration would be gone and this
+    // contender could take the slot.
+    assert!(
+        !unsafe { contender.attach() },
+        "failed retarget preserves the profiler's main attachment"
+    );
     assert!(
         unsafe { contender.attach_subproc(subproc) },
         "Drop detaches the custom subprocess"
