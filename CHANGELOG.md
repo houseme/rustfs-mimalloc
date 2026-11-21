@@ -152,6 +152,18 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Fixed
 
+- Second full-project audit round (November 22): correct `HeapArea::used`
+  documentation — upstream reports a live-block **count**, not bytes; document
+  the heap-visit closure deadlock constraint (upstream holds the heap's
+  context lock for the whole walk, so `Heap::thread_local`, `delete`,
+  `destroy` or a nested visit of the same heap from inside the closure hangs);
+  restore the native callback handler before clearing the Rust registration
+  in `clear_error`/`clear_output`/`clear_deferred_free` so no message falls
+  into a handlerless window; record the current session generation after a
+  stale-generation ring clear during TLS flushes; stop charging
+  `dropped_samples` on registry-lock contention (drains defer, nothing is
+  lost); and strengthen the pprof ownership test to prove a failed retarget
+  preserves the profiler's main attachment.
 - Cache all build-ID-verified ELF segment offsets on Linux. Later reports can
   resolve segments absent from the first report, and cache hits avoid cloning
   the offset table.

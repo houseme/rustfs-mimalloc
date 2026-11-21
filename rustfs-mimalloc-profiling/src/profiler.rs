@@ -1201,7 +1201,11 @@ fn deregister_tls_sample_buffer(id: usize) {
 
 fn registered_tls_sample_buffers() -> Vec<Arc<Mutex<TlsSampleBuffer>>> {
     let Ok(registry) = TLS_SAMPLE_BUFFER_REGISTRY.lock() else {
-        DROPPED_SAMPLES.fetch_add(1, Ordering::Relaxed);
+        // Registry-lock contention never drops samples: drains defer to the
+        // next report, statistics underreport, and a missed session-boundary
+        // clear cannot leak stale samples into reports (flushes are rejected
+        // by the under-lock generation check). Charging DROPPED_SAMPLES here
+        // would inflate the counter without any real loss.
         return Vec::new();
     };
 
@@ -1339,6 +1343,11 @@ fn flush_tls_samples_to_global(
             .load(Ordering::Acquire)
     {
         buffer.clear();
+        // Mirror record_sample's under-lock fixup: record the current
+        // generation so later flushes do not re-clear an already-empty ring.
+        buffer.generation = HOT_ALLOCATION_STATE
+            .sampling_config_generation
+            .load(Ordering::Acquire);
         return true;
     }
     let reserved_slots = reserve_global_sample_slots(buffer.len());
