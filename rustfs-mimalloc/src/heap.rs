@@ -247,7 +247,10 @@ impl ThreadHeap<'_> {
     ///
     /// # Safety
     /// No thread may allocate in or free into the parent heap while the walk
-    /// runs, and the closure must not free or move visited blocks.
+    /// runs, and the closure must not free or move visited blocks. It also
+    /// must not call mimalloc APIs that lock the parent heap (see
+    /// [`Heap::visit_blocks`]'s safety notes) — a nested walk or
+    /// `Heap::thread_local` on this heap would deadlock.
     pub unsafe fn visit_blocks(&self, visit_blocks: bool, visitor: &mut BlockVisitor) -> bool {
         let mut state = VisitState { visitor };
         // SAFETY: `self.ptr` is a live owner-thread context and the
@@ -716,6 +719,11 @@ impl Heap {
     /// No thread may allocate in or free into this heap while the walk runs.
     /// Blocks seen here are raw pointers into live pages; the closure must
     /// not deallocate, free, or move them.
+    ///
+    /// Upstream holds this heap's context lock for the whole walk, so the
+    /// closure must not call mimalloc APIs that take the same heap's lock:
+    /// [`Heap::thread_local`], [`Heap::delete`], [`Heap::destroy`], or a
+    /// nested `visit_blocks` on this heap would deadlock.
     pub unsafe fn visit_blocks(&self, visit_blocks: bool, visitor: &mut BlockVisitor) -> bool {
         let mut state = VisitState { visitor };
         // SAFETY: `self.ptr` is a live handle and the trampoline forwards to
@@ -778,7 +786,9 @@ pub struct HeapArea {
     pub reserved: usize,
     /// Bytes currently committed for this page.
     pub committed: usize,
-    /// Bytes in use by live blocks (page-level visits).
+    /// Number of live blocks in this page — a **count**, not bytes.
+    /// Multiply by [`Self::block_size`] for approximate in-use bytes
+    /// (upstream reports `mi_page_used(page)`).
     pub used: usize,
     /// Requested block size for this page.
     pub block_size: usize,
@@ -1462,8 +1472,9 @@ mod tests {
                     area_calls += 1;
                     // Pages are visited even when fully free (used == 0) —
                     // the walk covers the whole arena page map — so only the
-                    // block-size plausibility is asserted here. `used` counts
-                    // this page's live bytes alone, never a heap total.
+                    // block-size plausibility is asserted here. `used` is a
+                    // live-block count for this page alone, never a heap
+                    // total and never bytes.
                     assert!(area.full_block_size >= area.block_size);
                 } else {
                     block_calls += 1;
