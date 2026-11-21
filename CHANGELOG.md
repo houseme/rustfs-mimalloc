@@ -12,6 +12,11 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Refresh internal requirements and the lockfile: `cc` 1.11.3, `regex` 1.13.2,
+  `toml` 1.2.2 plus transitive lockfile patches. No semver-incompatible
+  upgrades were available; the published allocator graphs are unaffected
+  (validated across the full workspace suite, API/ABI projection and the
+  isolated provider workspaces).
 - Reuse Rust profiling report buffers across successive drains and live
   snapshots. Retain up to 4 MiB per buffer between reports and release both on
   stop. Aggregate by borrowed stack keys to reduce copies during table growth.
