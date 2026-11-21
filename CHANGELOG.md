@@ -12,6 +12,15 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Re-verify the post-v3.7.0 dev3 pin `cb534580` against upstream on November
+  22: the `main3` tip is three README-only commits past the pin, no v3.7.1
+  release exists, and the 43 dev3 commits (PRs #1501, #1502, #1506, #1509,
+  #1510 plus CPython-linked fixes for eager page revival, atomic free-list
+  links and force-collected abandoned pages during visits) change no exported
+  declaration — the public-header delta is compiler-macro hardening and the
+  documented `mi_option_allow_thp` value-2 semantics. All guarded build
+  anchors (QSBR correction, MI_PROFILE=0 sampler, Windows static CRT) still
+  apply unchanged.
 - Refresh internal requirements and the lockfile: `cc` 1.11.3, `regex` 1.13.2,
   `toml` 1.2.2 plus transitive lockfile patches. No semver-incompatible
   upgrades were available; the published allocator graphs are unaffected
