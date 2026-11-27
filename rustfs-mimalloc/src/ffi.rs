@@ -68,27 +68,48 @@ impl fmt::Debug for MiString {
 pub(crate) fn collect_mimalloc_output(
     write: impl FnOnce(Option<rustfs_mimalloc_sys::mi_output_fun>, *mut c_void),
 ) -> String {
-    let mut output = OutputBuffer {
-        bytes: Vec::with_capacity(OUTPUT_BUFFER_CAPACITY),
-        truncated: false,
-    };
-
-    write(
-        Some(collect_mimalloc_output_callback),
-        &mut output as *mut OutputBuffer as *mut c_void,
-    );
+    let mut bytes = Vec::with_capacity(OUTPUT_BUFFER_CAPACITY);
+    let complete = write_mimalloc_output(&mut bytes, write);
 
     // Reuse the callback buffer for the usual UTF-8 output instead of copying it.
-    let mut result = String::from_utf8(output.bytes)
+    let mut result = String::from_utf8(bytes)
         .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
-    if output.truncated {
+    if !complete {
         result.push_str("\n[truncated: mimalloc profile output exceeded internal buffer]\n");
     }
     result
 }
 
-struct OutputBuffer {
-    bytes: Vec<u8>,
+pub(crate) fn write_mimalloc_output(
+    bytes: &mut Vec<u8>,
+    write: impl FnOnce(Option<rustfs_mimalloc_sys::mi_output_fun>, *mut c_void),
+) -> bool {
+    bytes.clear();
+    let mut output = OutputBuffer {
+        bytes,
+        truncated: false,
+    };
+
+    write(
+        Some(collect_mimalloc_output_callback),
+        core::ptr::from_mut(&mut output).cast(),
+    );
+    !output.truncated
+}
+
+pub(crate) fn write_mimalloc_json(
+    buffer: &mut [u8],
+    write: impl FnOnce(usize, *mut c_char) -> *mut c_char,
+) -> Option<&CStr> {
+    // Mimalloc allocates its own output if the caller's buffer is empty.
+    if buffer.is_empty() || write(buffer.len(), buffer.as_mut_ptr().cast()).is_null() {
+        return None;
+    }
+    CStr::from_bytes_until_nul(buffer).ok()
+}
+
+struct OutputBuffer<'a> {
+    bytes: &'a mut Vec<u8>,
     truncated: bool,
 }
 
@@ -100,7 +121,7 @@ unsafe extern "C" fn collect_mimalloc_output_callback(
         return;
     }
 
-    let output = unsafe { &mut *(arg as *mut OutputBuffer) };
+    let output = unsafe { &mut *arg.cast::<OutputBuffer<'_>>() };
     if output.truncated {
         return;
     }

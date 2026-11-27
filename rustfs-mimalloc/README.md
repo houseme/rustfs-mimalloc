@@ -48,6 +48,11 @@ For JSON statistics, `MiMalloc::stats_json_owned()` and
 `as_str()` or native bytes with `as_c_str()`. The existing
 `stats_json()` methods return a Rust `String`.
 
+For periodic collection, `stats_json_into(&mut [u8])` borrows its JSON
+result from the supplied buffer and returns `None` when that buffer is too
+small. `stats_print_into(&mut Vec<u8>)` clears and reuses the vector without
+growing it. It returns `false` when capacity truncates the output.
+
 ### Allocator
 
 `MiMalloc` implements `GlobalAlloc` with upstream-mirroring dispatch: layouts

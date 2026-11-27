@@ -45,10 +45,27 @@ rustdoc, API/ABI and local archive verification. The optimized allocator-count
 test passed on macOS and in Linux arm64 Docker. Linux arm64 builds passed
 72 allocator tests apiece in the default and secure/debug/no_profile modes.
 
-For high-frequency diagnostics, measure native JSON serialization separately
-from caller-side parsing. The text statistics collector initially reserves
-64 KiB on the Rust side. Profile snapshot sizes and callback lock context
-before replacing that reservation with incremental growth or streaming.
+## Reusable statistics buffers
+
+For repeated collection, `stats_json_into()` uses the existing native
+caller-buffer interface. A nonempty buffer selects native fixed-buffer
+mode without the allocation and resizing used for owned JSON. The wrapper
+returns `None` for empty or insufficient storage. Text statistics use
+`stats_print_into()` to overwrite a vector up to its current capacity,
+with a truncation result. The callback never grows that vector, preserving
+its allocation-free behavior during native output. The original text
+`String` helpers still reserve their own fixed buffer.
+
+Allocator-count tests check both process and heap paths for zero Rust
+allocations, verify the JSON result borrows the supplied bytes and exercise
+short buffers. Native JSON serialization and C-string scanning remain
+costs. Measure these separately from caller-side parsing, and compare
+native snapshot cost against the reporting interval before tuning further.
+
+The follow-up passed default and all-feature macOS workspace tests, API and
+ABI checks, Clippy, rustdoc, provider tests and local archive verification.
+Linux arm64 Docker passed 72 allocator tests per configuration and the
+allocation-count harness in both default and secure/debug/no_profile builds.
 
 ## Usable-capacity reallocation
 

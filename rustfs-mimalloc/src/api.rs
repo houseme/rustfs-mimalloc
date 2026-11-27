@@ -1,7 +1,7 @@
 //! Stats, options, version, and process information APIs.
 
 use crate::{MI_WORD_ALIGN, MiMalloc, MiString};
-use core::ffi::c_void;
+use core::ffi::{CStr, c_void};
 use core::ptr::NonNull;
 
 /// Mark the current thread as part of a thread pool for mimalloc.
@@ -424,9 +424,25 @@ impl MiMalloc {
         }
     }
 
+    /// Write JSON statistics into a caller-provided buffer and borrow the result.
+    /// Returns `None` if the buffer is empty or too small, or native reporting fails.
+    pub fn stats_json_into(buffer: &mut [u8]) -> Option<&CStr> {
+        crate::ffi::write_mimalloc_json(buffer, |size, bytes| unsafe {
+            rustfs_mimalloc_sys::mi_stats_get_json(size, bytes)
+        })
+    }
+
     /// Allocation statistics in mimalloc's human-readable text format.
     pub fn stats_print() -> String {
         crate::ffi::collect_mimalloc_output(|out, arg| unsafe {
+            rustfs_mimalloc_sys::mi_stats_print_out(out, arg);
+        })
+    }
+
+    /// Clear and reuse a caller's byte buffer for text statistics without growing it.
+    /// Returns `false` if the output was truncated to the buffer capacity.
+    pub fn stats_print_into(buffer: &mut Vec<u8>) -> bool {
+        crate::ffi::write_mimalloc_output(buffer, |out, arg| unsafe {
             rustfs_mimalloc_sys::mi_stats_print_out(out, arg);
         })
     }

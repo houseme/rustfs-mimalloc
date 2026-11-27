@@ -15,6 +15,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Expose the official-style `MiString` owner. Process and heap
   `stats_json_owned()` return native JSON buffers without copying them
   into a Rust `String`.
+- Write process and heap statistics into reusable caller buffers with
+  `stats_json_into()` and `stats_print_into()`. JSON borrows the native
+  output from the supplied slice, and text reports capacity truncation.
 - Implement the stable Rust 1.100 `Allocator` API for `MiMalloc` and
   borrowed `Heap` handles, and add `MiMallocExcess` to report usable
   capacity. Handle zero-sized layouts, realignment and zeroed growth.
@@ -39,6 +42,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 - Confirm that owned process and heap stats JSON use zero Rust allocator
   calls. Test invalid UTF-8, heap teardown and cross-thread drop.
+- Verify borrowed JSON stays in the supplied slice, text statistics do
+  not grow the caller buffer, and undersized buffers report truncation.
 - Compare the official `main3/contrib/rust` implementation and exercise
   Rust collections, fitting layouts, zeroed growth, and native statistics
   linkage. Validate the additional secure levels independently.

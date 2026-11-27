@@ -698,9 +698,25 @@ impl Heap {
         }
     }
 
+    /// Write heap JSON statistics into a caller-provided buffer and borrow the result.
+    /// Returns `None` if the buffer is empty or too small, or native reporting fails.
+    pub fn stats_json_into<'a>(&self, buffer: &'a mut [u8]) -> Option<&'a core::ffi::CStr> {
+        crate::ffi::write_mimalloc_json(buffer, |size, bytes| unsafe {
+            rustfs_mimalloc_sys::mi_heap_stats_get_json(self.ptr.as_ptr(), size, bytes)
+        })
+    }
+
     /// Allocation statistics for this heap in mimalloc's human-readable text format.
     pub fn stats_print(&self) -> String {
         crate::ffi::collect_mimalloc_output(|out, arg| unsafe {
+            rustfs_mimalloc_sys::mi_heap_stats_print_out(self.ptr.as_ptr(), out, arg);
+        })
+    }
+
+    /// Clear and reuse a caller's byte buffer for heap text statistics without growing it.
+    /// Returns `false` if the output was truncated to the buffer capacity.
+    pub fn stats_print_into(&self, buffer: &mut Vec<u8>) -> bool {
+        crate::ffi::write_mimalloc_output(buffer, |out, arg| unsafe {
             rustfs_mimalloc_sys::mi_heap_stats_print_out(self.ptr.as_ptr(), out, arg);
         })
     }

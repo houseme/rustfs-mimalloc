@@ -1,3 +1,22 @@
+# 0.7.6 reusable statistics review — 2026-11-28
+
+The project base after `git pull --ff-only origin main` was `74b9e22`.
+The official Git refs and branch API still resolve main3 to `bc44251a`
+and dev3 to the pinned `5424c54c`. v3.7.1 remains the latest official
+release. The merged PR query returns #1523 and #1524, both included in the
+pin. The four public headers and official Rust tree have no new deltas.
+[Official Rust tree](https://github.com/microsoft/mimalloc/tree/bc44251a1198409399bca17e319914795e8903d1/contrib/rust),
+[v3.7.1 release](https://github.com/microsoft/mimalloc/releases/tag/v3.7.1)
+
+The official Rust implementation continues to use owned JSON through
+`MiString`. The local Rust wrapper now exposes the caller-buffer mode of
+the existing native JSON functions, and reuses a caller vector for the
+existing text callbacks. The API inventory covers 175 names and 46 option
+IDs. The C ABI projection covers 166 signatures, nine callbacks and three
+layouts.
+
+---
+
 # 0.7.6 official Rust diagnostics follow-up — 2026-11-28
 
 The project base after `git pull --ff-only origin main` was `47765d4`.
