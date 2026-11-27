@@ -45,7 +45,8 @@ impl MiMalloc {
         unsafe { rustfs_mimalloc_sys::mi_version() }
     }
 
-    /// Collect the calling thread's current default allocation context.
+    /// Collect the calling thread's default allocation context, or purge the
+    /// main subprocess arenas when the thread has no initialized context.
     ///
     /// This does not collect every worker or guarantee a process-wide RSS drop.
     #[inline]
@@ -69,6 +70,66 @@ impl MiMalloc {
     #[inline]
     pub unsafe fn usable_size(ptr: *const u8) -> usize {
         unsafe { rustfs_mimalloc_sys::mi_usable_size(ptr as *const c_void) }
+    }
+
+    /// Return the total allocator block size, including padding and alignment overhead.
+    ///
+    /// # Safety
+    /// Pass null or a live mimalloc allocation. Only [Self::usable_size]
+    /// describes the bytes accessible from the pointer.
+    #[inline]
+    pub unsafe fn allocated_size(ptr: *const u8) -> usize {
+        unsafe { rustfs_mimalloc_sys::mi_allocated_size(ptr.cast()) }
+    }
+
+    /// Allocate and return the usable byte capacity in the same native call.
+    ///
+    /// # Safety
+    /// Free successful allocations with a compatible mimalloc free function.
+    /// The returned bytes must be initialized before reading.
+    #[inline]
+    pub unsafe fn malloc_with_usable_size(size: usize) -> Option<(NonNull<u8>, usize)> {
+        let mut usable = 0;
+        let ptr = unsafe { rustfs_mimalloc_sys::mi_umalloc(size, &mut usable) };
+        NonNull::new(ptr.cast()).map(|ptr| (ptr, usable))
+    }
+
+    /// Allocate zeroed memory and return the usable byte capacity.
+    ///
+    /// # Safety
+    /// Free successful allocations with a compatible mimalloc free function.
+    /// Only the first `size` bytes are guaranteed to be initialized.
+    #[inline]
+    pub unsafe fn zalloc_with_usable_size(size: usize) -> Option<(NonNull<u8>, usize)> {
+        let mut usable = 0;
+        let ptr = unsafe { rustfs_mimalloc_sys::mi_uzalloc(size, &mut usable) };
+        NonNull::new(ptr.cast()).map(|ptr| (ptr, usable))
+    }
+
+    /// Resize a block with the requested alignment and return its new usable capacity.
+    /// Failure leaves the original block valid.
+    ///
+    /// # Safety
+    /// Pass null or a live, exclusively owned mimalloc block and a nonzero
+    /// power-of-two alignment. On success use the returned pointer in place of
+    /// the old pointer. Initialize newly allocated bytes before reading them.
+    #[inline]
+    pub unsafe fn realloc_aligned_with_usable_size(
+        ptr: *mut u8,
+        new_size: usize,
+        alignment: usize,
+    ) -> Option<(NonNull<u8>, usize)> {
+        let mut usable = 0;
+        let ptr = unsafe {
+            rustfs_mimalloc_sys::mi_urealloc_aligned(
+                ptr.cast(),
+                new_size,
+                alignment,
+                core::ptr::null_mut(),
+                &mut usable,
+            )
+        };
+        NonNull::new(ptr.cast()).map(|ptr| (ptr, usable))
     }
 
     /// Snapshot of the allocation page's current mimalloc owner identifier.
@@ -500,9 +561,42 @@ mod tests {
     fn version_is_v3() {
         assert_eq!(
             MiMalloc::version(),
-            30700,
+            30702,
             "expected the pinned native C version"
         );
+    }
+
+    #[test]
+    fn usable_capacity_allocations_preserve_alignment_and_contents() {
+        unsafe {
+            for allocate in [
+                MiMalloc::malloc_with_usable_size,
+                MiMalloc::zalloc_with_usable_size,
+            ] {
+                let (ptr, usable) = allocate(73).unwrap();
+                assert!(usable >= 73);
+                assert_eq!(usable, MiMalloc::usable_size(ptr.as_ptr()));
+                assert!(MiMalloc::allocated_size(ptr.as_ptr()) >= usable);
+                rustfs_mimalloc_sys::mi_free(ptr.as_ptr().cast());
+            }
+            let (ptr, _) = MiMalloc::zalloc_with_usable_size(73).unwrap();
+            let ptr = ptr.as_ptr();
+            assert!((0..73).all(|index| ptr.add(index).read() == 0));
+            ptr.write_bytes(0x5a, 73);
+            assert!(MiMalloc::realloc_aligned_with_usable_size(ptr, usize::MAX, 4096).is_none());
+            assert!((0..73).all(|index| ptr.add(index).read() == 0x5a));
+            let (ptr, usable) =
+                MiMalloc::realloc_aligned_with_usable_size(ptr, 8193, 4096).unwrap();
+            let ptr = ptr.as_ptr();
+            assert_eq!(ptr as usize % 4096, 0);
+            assert!(usable >= 8193);
+            assert_eq!(usable, MiMalloc::usable_size(ptr));
+            assert!(MiMalloc::allocated_size(ptr) >= usable);
+            assert!((0..73).all(|index| ptr.add(index).read() == 0x5a));
+            let mut freed_usable = 0;
+            rustfs_mimalloc_sys::mi_ufree(ptr.cast(), &mut freed_usable);
+            assert_eq!(freed_usable, usable);
+        }
     }
 
     #[test]

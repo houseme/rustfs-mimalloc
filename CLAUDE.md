@@ -3,7 +3,7 @@
 ## Project
 
 rustfs-mimalloc: high-performance mimalloc V3 bindings for Rust, pinned to
-post-v3.7.0 dev3 commit `cb534580`, numeric version 30700.
+dev3 commit `5424c54c`, numeric version 30702.
 The sys build exports a generated public include tree with a guarded QSBR
 header correction shared by ABI checks. The no_profile build also generates a
 guarded sampler correction for upstream MI_PROFILE=0 activation. Keep upstream

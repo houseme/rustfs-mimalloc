@@ -1,3 +1,45 @@
+# 0.7.5 allocator and upstream review — 2026-11-27
+
+The Rust global allocator already dispatches ordinary and over-aligned
+layouts and uses sized free. The new opt-in Rust usable-capacity helpers
+address callers that allocate and immediately query `mi_usable_size`.
+Native `mi_umalloc` can fill that output using the page already selected
+for allocation. The optimized native path depends on padding, guarding,
+sampling and the target. Aligned reallocation reports the post-operation
+capacity through the existing native lookup. The wrappers are exercised
+with padded and ordinary builds, including failed growth, payload
+preservation, alignment, and the difference between block and usable size.
+
+The highest-priority performance comparison is ordinary small-buffer
+allocation with a required capacity query. Compare the paired calls and
+the combined native call with equivalent writes and frees. Record
+requested and usable-size distributions alongside latency. Include secure
+and over-aligned layouts, where native padding or pointer offsets can
+change the result.
+
+For applications that retire worker heaps, measure thread churn with
+cached contexts and use collection from an idle maintenance thread to
+measure purge latency against RSS. Compare p99 latency and page faults
+with equivalent purge and THP settings. For profiling workloads, the report
+buffers already reuse storage. The remaining report costs worth profiling
+are symbol resolution, serialization and live-map shard contention.
+The November 20 allocation-traffic figures below describe the original
+profiling experiment. This refresh has no new production speedup estimate.
+
+See [the November 27 API audit](UPSTREAM_REVIEW.md) for the upstream PR and
+source changes.
+
+Validation passed on macOS arm64 with stable Rust 1.100.0. The workspace ran
+default, secure/debug/no_profile and all-feature suites. Both isolated
+providers, optimized capacity and profiling-pressure tests, Clippy, rustdoc,
+the native C regression suite and the shared-library export check passed.
+Linux arm64 GNU test binaries were cross-built with cargo-zigbuild and
+executed offline in Docker. Allocator, raw FFI, environment, ELF cache,
+native stack capture and profiling integration tests passed. Windows and
+WASI runtime coverage remains upstream or CI coverage.
+
+---
+
 # 0.7.5 profiling report review — 2026-11-20
 
 Reviewed the allocation dispatch, sampling drains, live-table snapshots,

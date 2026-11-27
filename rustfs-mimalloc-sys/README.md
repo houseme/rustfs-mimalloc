@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/rustfs-mimalloc-sys/badge.svg)](https://docs.rs/rustfs-mimalloc-sys)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../LICENSE)
 
-Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to post-v3.7.0 dev3 commit `cb534580` (C version 30700).
+Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3, pinned to dev3 commit `5424c54c` (C version 30702).
 
 For a safe, ergonomic wrapper, use [`rustfs-mimalloc`](https://crates.io/crates/rustfs-mimalloc).
 
@@ -99,9 +99,12 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
   controls, default/clamped option APIs, aligned
   heap reallocation, and thread-local aligned allocation/reallocation APIs
 
-The November 20 post-release refresh includes lazy abandoned-bin bitmaps and
-THP/huge-block reset fixes. Public exports, option IDs and layouts match the
-v3.7.0 release. `mi_option_allow_thp` supports 0 (disable), 1 (allow) and
+The `mi_u*` allocation family can return usable capacity alongside the
+pointer. Read capacity outputs from allocation or reallocation after
+success. `mi_allocated_size` reports the total native block size for
+diagnostics. Word-size small-allocation helpers are now C exports.
+
+`mi_option_allow_thp` supports 0 (disable), 1 (allow) and
 2 (also avoid splitting during purge), with Linux defaulting to 2 and Android
 to 0. An explicit minimum purge size takes precedence.
 Raw `mi_thread_heap_release` releases a calling-thread
@@ -230,13 +233,17 @@ whose allocations fail. A non-null context is not proof of allocation readiness.
 ## Secure environment policy
 
 With the `secure` feature, native `MI_SECURE_ENV` defaults to 1. Only
-`MIMALLOC_SHOW_STATS`, `MIMALLOC_VERBOSE` and `MIMALLOC_ALLOW_THP` environment
+`MIMALLOC_SHOW_ERRORS`, `MIMALLOC_SHOW_STATS`, `MIMALLOC_VERBOSE` and `MIMALLOC_ALLOW_THP` environment
 options are applied. Automatic `MIMALLOC_PROFILE` startup is restricted.
 Programmatic option APIs remain available with their initialization/synchronization
 requirements. Target CFLAGS may select `-DMI_SECURE_ENV=0`; native secure mode
 still restricts large-page, MTE, destroy-on-exit and precise-placement controls.
 `MI_UNSAFE_GUARDED_PRECISE=1` is a separate compile-time opt-in that can violate
 Rust alignment contracts. The runtime precise option is deprecated.
+
+Set `MI_ENV_PREFIX` to a quoted C string in target CFLAGS to use names such as
+`MYAPP_MIMALLOC_VERBOSE` and `MYAPP_MIMALLOC_PROFILE`. The configured library
+uses the prefix for both allocator options and automatic profiler startup.
 
 Native profiler attachment establishes a fresh generation and stops sampling.
 `on_free` continues after `mi_profiler_stop` for sampled blocks until detachment.

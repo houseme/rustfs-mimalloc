@@ -53,6 +53,7 @@ fn main() {
                 "kib" => mi_option_get_size(mi_option_t::mi_option_arena_purge_min_size) as i64,
                 "reclaim" => mi_option_get(mi_option_t::mi_option_page_reclaim_on_free) as i64,
                 "mte" => mi_option_get(mi_option_t::mi_option_mte) as i64,
+                "show_errors" => mi_option_get(mi_option_t::mi_option_show_errors) as i64,
                 _ => panic!("unknown option case"),
             }
         };
@@ -116,6 +117,8 @@ fn main() {
         ("mte", "sync".to_owned(), 2),
         ("mte", "ASYNC".to_owned(), 3),
         ("mte", "preferred".to_owned(), 4),
+        ("show_errors", "0".to_owned(), 0),
+        ("show_errors", "1".to_owned(), 1),
     ];
     let executable = std::env::current_exe().unwrap();
     for (kind, value, expected) in &cases {
@@ -127,6 +130,7 @@ fn main() {
                 "bytes" => 4 * 1024 * 1024,
                 "kib" | "reclaim" => 0,
                 "mte" => 1,
+                "show_errors" => *expected,
                 _ => unreachable!(),
             }
         } else {
@@ -138,6 +142,7 @@ fn main() {
             "kib" => "MIMALLOC_ARENA_PURGE_MIN_SIZE",
             "reclaim" => "MIMALLOC_PAGE_RECLAIM_ON_FREE",
             "mte" => "MIMALLOC_MTE",
+            "show_errors" => "MIMALLOC_SHOW_ERRORS",
             _ => unreachable!(),
         };
         let mut command = std::process::Command::new(&executable);

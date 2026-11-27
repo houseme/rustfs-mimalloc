@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream post-v3.7.0 dev3 commit `cb534580` (C version 30700).
+//! Pinned to upstream dev3 commit `5424c54c` (C version 30702).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -17,6 +17,10 @@
 //! - Allocation results must be null-checked and freed through a compatible
 //!   mimalloc free function; sizes/alignments passed to sized/aligned APIs
 //!   must match the original allocation contract.
+//! - Usable-size output pointers in the `mi_u*` family may be null. Otherwise
+//!   they must point to writable size storage outside the allocation being
+//!   freed or resized. Read allocation and reallocation outputs on success.
+//!   Usable capacity follows [`mi_usable_size`], including padding and offsets.
 //! - Thread-local context APIs (`mi_theap_*`) are owner-thread only unless a
 //!   declaration documents otherwise.
 //! - Visitor and callback functions must not unwind and must honor the
@@ -283,6 +287,9 @@ unsafe extern "C" {
     /// Zero-initialized reallocation retaining the original power-of-two alignment.
     pub fn mi_rezalloc_aligned(p: *mut c_void, newsize: size_t, alignment: size_t) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> size_t;
+    /// Total allocator block size, including any padding or alignment overhead.
+    /// Pass null or a live allocation. Use `mi_usable_size` for accessible bytes.
+    pub fn mi_allocated_size(p: *const c_void) -> size_t;
     /// Snapshot of the allocation page's current owner, or zero for null,
     /// detached or abandoned pages. Not a Rust `ThreadId` or an ownership lock.
     /// A non-null pointer must be a live mimalloc allocation; its owner can change.
@@ -350,6 +357,42 @@ unsafe extern "C" {
     /// `p` must be null or a live mimalloc allocation allocated with exactly
     /// `alignment`; upstream ignores the value in release builds.
     pub fn mi_free_aligned(p: *mut c_void, alignment: size_t);
+}
+
+// ── Allocation with usable-size outputs ─────────────────────────────────────
+unsafe extern "C" {
+    pub fn mi_umalloc(size: size_t, usable_size: *mut size_t) -> *mut c_void;
+    pub fn mi_uzalloc(size: size_t, usable_size: *mut size_t) -> *mut c_void;
+    pub fn mi_ucalloc(count: size_t, size: size_t, usable_size: *mut size_t) -> *mut c_void;
+    pub fn mi_umalloc_small(size: size_t, usable_size: *mut size_t) -> *mut c_void;
+    pub fn mi_uzalloc_small(size: size_t, usable_size: *mut size_t) -> *mut c_void;
+    pub fn mi_umalloc_aligned(
+        size: size_t,
+        alignment: size_t,
+        usable_size: *mut size_t,
+    ) -> *mut c_void;
+    pub fn mi_uzalloc_aligned(
+        size: size_t,
+        alignment: size_t,
+        usable_size: *mut size_t,
+    ) -> *mut c_void;
+    /// Resize a live allocation or allocate for null. Failure preserves the old block.
+    pub fn mi_urealloc(
+        p: *mut c_void,
+        newsize: size_t,
+        usable_size_pre: *mut size_t,
+        usable_size_post: *mut size_t,
+    ) -> *mut c_void;
+    /// As `mi_urealloc`, with a nonzero power-of-two output alignment.
+    pub fn mi_urealloc_aligned(
+        p: *mut c_void,
+        newsize: size_t,
+        alignment: size_t,
+        usable_size_pre: *mut size_t,
+        usable_size_post: *mut size_t,
+    ) -> *mut c_void;
+    /// Report usable size before freeing a live allocation. Null reports zero.
+    pub fn mi_ufree(p: *mut c_void, usable_size: *mut size_t);
 }
 
 /// Convert a byte size to a mimalloc machine-word count.

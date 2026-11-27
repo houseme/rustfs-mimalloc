@@ -1,4 +1,4 @@
-# Reviewed unbound public C exports at mimalloc post-v3.7.0 dev3 cb534580.
+# Reviewed unbound public C exports at mimalloc dev3 5424c54c.
 # Compatibility aliases, string helpers, C++ allocation, subprocess statistics
 # and runtime-specific lifecycle APIs retain their existing scope. Offset
 # allocations and subprocess/heap block visitors are bound since 0.7.5.
@@ -67,15 +67,7 @@ mi_theap_stats_get
 mi_thread_done
 mi_thread_init
 mi_thread_stats_print_out
-mi_ucalloc
-mi_ufree
-mi_umalloc
-mi_umalloc_aligned
-mi_umalloc_small
 mi_unsafe_heap_page_is_under_utilized
-mi_urealloc
-mi_uzalloc_aligned
-mi_uzalloc_small
 mi_valloc
 mi_wcsdup
 mi_wdupenv_s

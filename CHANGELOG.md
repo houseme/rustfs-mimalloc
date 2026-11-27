@@ -8,10 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.5] - 2026-11-20
+## [0.7.5] - 2026-11-27
 
 ### Changed
 
+- Pin mimalloc dev3 at `5424c54c` (C version 30702), including v3.7.1 and
+  subsequent thread-heap teardown and statistics fixes.
 - Re-verify the post-v3.7.0 dev3 pin `cb534580` against upstream on November
   22: the `main3` tip is three README-only commits past the pin, no v3.7.1
   release exists, and the 43 dev3 commits (PRs #1501, #1502, #1506, #1509,
@@ -66,11 +68,15 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   unchanged but re-registration may briefly route other threads to the
   previously registered callback, which raw-API consumers must tolerate.
 - Inherit `MI_SECURE_ENV=1` for secure builds, restricting environment options
-  to show_stats, verbose and allow_thp, with programmatic option APIs available.
+  to show_errors, show_stats, verbose and allow_thp, with programmatic option APIs available.
   Document target-CFLAGS controls and automatic native profiler restrictions.
 
 ### Added
 
+- Bind the `mi_u*` allocation family and `mi_allocated_size`. Expose
+  `MiMalloc` helpers for usable capacity on allocation and aligned
+  reallocation, plus total block size for diagnostics. Four word-size
+  helpers that Rust already binds are now C exports.
 - RAII `rustfs_mimalloc::pprof::PprofProfiler` over the native pprof
   profiler (`mi_pprof_profiler_new`/`start`/`stop`/`snapshot`/`delete`):
   C-side sampled pprof snapshots at a fraction of the Rust unwinder cost,

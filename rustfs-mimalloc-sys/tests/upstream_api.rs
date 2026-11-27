@@ -400,6 +400,41 @@ fn additional_allocation_symbols_link_and_preserve_data() {
     }
 }
 
+fn usable_size_outputs_work_on_native_allocations() {
+    unsafe {
+        for allocate in [mi_umalloc_small, mi_uzalloc_small] {
+            let mut size = 0;
+            let p = allocate(73, &mut size);
+            assert!(!p.is_null());
+            assert!(size >= 73);
+            assert_eq!(mi_usable_size(p), size);
+            mi_free(p);
+        }
+        for allocate in [mi_umalloc_aligned, mi_uzalloc_aligned] {
+            let mut size = 0;
+            let p = allocate(73, 4096, &mut size);
+            assert!(!p.is_null());
+            assert_eq!(p as usize % 4096, 0);
+            assert_eq!(mi_usable_size(p), size);
+            mi_free(p);
+        }
+        let mut size = 0;
+        assert!(mi_ucalloc(usize::MAX, 2, &mut size).is_null());
+        let p = mi_ucalloc(3, 31, &mut size).cast::<u8>();
+        assert!(!p.is_null());
+        assert_eq!(mi_usable_size(p.cast()), size);
+        assert!((0..93).all(|i| p.add(i).read() == 0));
+        let (mut before, mut after) = (0, 0);
+        let p = mi_urealloc(p.cast(), 513, &mut before, &mut after);
+        assert!(!p.is_null());
+        assert_eq!(before, size);
+        assert!(after >= 513);
+        assert_eq!(mi_usable_size(p), after);
+        mi_ufree(p, &mut size);
+        assert_eq!(size, after);
+    }
+}
+
 fn new_option_ids_match_upstream_header() {
     assert_eq!(mi_option_t::mi_option_arena_purge_min_size as i32, 44);
     assert_eq!(mi_option_t::mi_option_stats_merge_on_collect as i32, 47);
@@ -619,6 +654,7 @@ fn main() {
     foreign_abandon_requires_a_quiescent_owner();
     heap_lifecycle_includes_direct_os_pages();
     additional_allocation_symbols_link_and_preserve_data();
+    usable_size_outputs_work_on_native_allocations();
     new_option_ids_match_upstream_header();
     // Keep this process-wide purge check in this serial integration executable,
     // not in the parallel unit-test harness that allocates on other threads.

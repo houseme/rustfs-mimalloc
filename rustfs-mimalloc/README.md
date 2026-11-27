@@ -70,7 +70,7 @@ re-registration races eliminated.
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;
 
-let version = MiMalloc::version();       // 30700 = v3.7.0
+let version = MiMalloc::version();       // 30702 = v3.7.2 development snapshot
 let json    = MiMalloc::stats_json();    // stats as JSON
 let text    = MiMalloc::stats_print();   // stats as text
 let info    = MiMalloc::process_info();  // ProcessInfo struct
@@ -92,8 +92,8 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **post-v3.7.0 dev3 (`cb534580`)**. The latest
-official release is v3.7.0. The numeric C version is 30700. QSBR's experimental constructor is raw sys FFI
+The submodule is pinned to upstream **dev3 (`5424c54c`)**, with C version
+30702. The latest official release is v3.7.1. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The deprecated guarded-precise control retains ID 31
 and the old Rust names. Precise placement is selected by the native

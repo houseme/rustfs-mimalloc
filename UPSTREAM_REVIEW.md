@@ -1,3 +1,45 @@
+# 0.7.5 upstream/API refresh — 2026-11-27
+
+The project base after `git pull --ff-only` is `dc3c9e8`. The upstream
+release API reports v3.7.1 at `1c842769`. The selected dev3 head,
+`5424c54c`, contains that tag and 28 later reachable commits. Its C version
+is 30702. The previous native pin was `cb534580`.
+[Release](https://github.com/microsoft/mimalloc/releases/tag/v3.7.1),
+[native comparison](https://github.com/microsoft/mimalloc/compare/cb534580...5424c54c)
+
+| Merged PR | Effect |
+| --- | --- |
+| [#1514](https://github.com/microsoft/mimalloc/pull/1514) | Export the four C word-size allocation helpers that the Rust static bindings already expose. |
+| [#1516](https://github.com/microsoft/mimalloc/pull/1516) | Repair WASI configuration and add upstream WASI CI. |
+| [#1517](https://github.com/microsoft/mimalloc/pull/1517) | Allow `mi_collect` to purge main-subprocess arenas from a thread without an initialized theap. |
+| [#1519](https://github.com/microsoft/mimalloc/pull/1519) | Merge the v3.7.1 release into main3. |
+| [#1523](https://github.com/microsoft/mimalloc/pull/1523) | Repair deleted default-theap handling during thread exit. Later dev3 commits retain the cached context while needed and fall back to the main theap. |
+| [#1524](https://github.com/microsoft/mimalloc/pull/1524) | Merge heap statistics while the heaps lock still protects the linked heap. The final selected commit also takes per-field values so concurrent readers avoid double counting during merges. |
+
+The closed-PR audit also includes #1518 and #1521. Their GitHub PRs show no
+merge timestamp. Direct commits `c969ea4c` and `b3e07185` incorporate the
+cached-theap and environment-prefix changes. PR #1501 was already included
+in the previous pin.
+
+Across the four public API headers, three newly declared functions are
+`mi_allocated_size`, `mi_uzalloc` and `mi_urealloc_aligned`. The existing
+`mi_u*` family now consistently reports usable size. Bind its eight
+previously unbound exports alongside the three new functions. Use the
+returned usable capacity for writes and the internal block size for
+diagnostics. Retain the existing Rust word-size helpers. The API inventory
+reports 170 bound names, 46 option IDs and 67 reviewed unbound C exports.
+The ABI check covers 161 extern signatures, nine callbacks and three
+layouts. All eight ABI and option controls pass.
+
+Upstream also enables `MIMALLOC_SHOW_ERRORS` in secure environment mode
+and adds a build-time `MI_ENV_PREFIX` for allocator options and automatic
+profiling. The secure environment test now covers explicit show-errors
+values. Smaller native security levels and prefix selection can be set
+through existing target CFLAGS controls. Guarded QSBR, no_profile and
+Windows static-CRT source checks pass against the new pin.
+
+---
+
 # 0.7.5 upstream/API refresh — 2026-11-20
 
 `git pull --ff-only` confirms project base `6ee6142` is current. Its native
