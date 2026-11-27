@@ -7,6 +7,8 @@
 //! static GLOBAL: MiMalloc = MiMalloc;
 //! ```
 
+#[cfg(allocator_api_stable)]
+mod allocator;
 mod api;
 pub mod callback;
 mod ffi;
@@ -15,6 +17,8 @@ pub mod heap;
 pub mod pprof;
 pub use heap::{BlockVisitor, HeapArea};
 
+#[cfg(allocator_api_stable)]
+pub use allocator::MiMallocExcess;
 pub use api::{ProcessInfo, set_current_thread_in_threadpool};
 pub use callback::{
     clear_deferred_free, clear_error, clear_output, register_deferred_free, register_error,

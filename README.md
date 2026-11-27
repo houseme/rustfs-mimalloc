@@ -59,6 +59,8 @@ the profiling crate. See the companion README for usage and migration.
 | Feature | Default | Description |
 |---------|:-------:|-------------|
 | `secure` | | Metadata guard pages, checked frees and encoded/randomized free lists (MI_SECURE=4) |
+| `secure_basic` | | Metadata guards and encoded free lists (MI_SECURE=1) |
+| `secure_checked` | | Basic protections plus checked frees and stronger free-list encoding (MI_SECURE=2) |
 | `debug` | | mimalloc debug checks |
 | `debug_in_debug` | | Auto-enable `debug` in Cargo debug builds |
 | `override` | | Override system `malloc`/`free` on non-Windows targets |
@@ -67,6 +69,7 @@ the profiling crate. See the companion README for usage and migration.
 | `no_profile` | | Compile out allocation profiling and automatic pprof startup |
 
 All stats, options, heap, and arena APIs are available without any feature flag.
+If multiple secure features are enabled, the highest selected level applies.
 
 ## API
 
@@ -79,8 +82,17 @@ use rustfs_mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 ```
 
-Implements `GlobalAlloc` with aligned allocation/reallocation and general
-`mi_free` deallocation.
+Implements `GlobalAlloc` with layout-aware dispatch and sized deallocation.
+Rust 1.100 stable and later also expose the standard `Allocator` API for
+`MiMalloc`, `&Heap` and `MiMallocExcess`. Use `MiMallocExcess` when
+containers should receive the full usable capacity.
+
+```rust
+use rustfs_mimalloc::MiMallocExcess;
+
+let mut buffer = Vec::new_in(MiMallocExcess);
+buffer.extend_from_slice(b"mimalloc");
+```
 
 ### Statistics & Diagnostics
 

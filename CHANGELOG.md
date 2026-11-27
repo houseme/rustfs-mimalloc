@@ -8,7 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [0.7.6] - 2026-11-27
+## [0.7.6] - 2026-11-28
+
+### Added
+
+- Implement the stable Rust 1.100 `Allocator` API for `MiMalloc` and
+  borrowed `Heap` handles, and add `MiMallocExcess` to report usable
+  capacity. Handle zero-sized layouts, realignment and zeroed growth.
+- Add `secure_basic` and `secure_checked`, corresponding to native
+  `MI_SECURE=1` and `MI_SECURE=2`. The highest enabled level applies.
+- Bind upstream subprocess JSON and text statistics, per-heap
+  subprocess statistics, heap-to-subprocess merge and bin-size lookup.
 
 ### Changed
 
@@ -24,6 +34,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Validation
 
+- Compare the official `main3/contrib/rust` implementation and exercise
+  Rust collections, fitting layouts, zeroed growth, and native statistics
+  linkage. Validate the additional secure levels independently.
 - Recheck the official mimalloc dev3 head and public API at `5424c54c`.
   The pin already includes the latest merged thread-heap and statistics
   fixes. Exercise usable-capacity reallocation with ordinary and offset

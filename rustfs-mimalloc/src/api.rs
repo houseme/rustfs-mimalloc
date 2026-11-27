@@ -729,8 +729,17 @@ mod tests {
             text.contains("profiling   :"),
             MiMalloc::profiling_enabled()
         );
-        if cfg!(feature = "secure") {
-            assert!(text.contains("secure level: 4"));
+        let secure_level = if cfg!(feature = "secure") {
+            Some(4)
+        } else if cfg!(feature = "secure_checked") {
+            Some(2)
+        } else if cfg!(feature = "secure_basic") {
+            Some(1)
+        } else {
+            None
+        };
+        if let Some(level) = secure_level {
+            assert!(text.contains(&format!("secure level: {level}")));
         }
         if cfg!(feature = "debug") {
             assert!(text.contains("debug level : 2"));

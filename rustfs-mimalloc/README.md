@@ -30,12 +30,16 @@ fn main() {
 | Feature | Description |
 |---------|-------------|
 | `secure` | Metadata guard pages, checked frees and encoded/randomized free lists (MI_SECURE=4) |
+| `secure_basic` | Metadata guards and encoded free lists (MI_SECURE=1) |
+| `secure_checked` | Basic protections plus checked frees and stronger free-list encoding (MI_SECURE=2) |
 | `debug` | mimalloc debug checks |
 | `debug_in_debug` | Auto-enable `debug` in Cargo debug builds |
 | `override` | Override system `malloc`/`free` on non-Windows targets |
 | `local_dynamic_tls` | Use local-dynamic TLS model |
 | `no_thp` | Disable Transparent Huge Pages |
 | `no_profile` | Compile out allocation profiling and automatic pprof startup |
+
+Cargo feature unification selects the highest enabled secure level.
 
 ## API
 
@@ -46,6 +50,22 @@ that fit mimalloc's native guarantees take the ordinary `mi_malloc`/
 `mi_zalloc`/`mi_realloc` fast path, genuinely over-aligned layouts use the
 aligned APIs, and `dealloc` routes through `mi_free_size_aligned` so small
 frees hit the page-metadata fast path.
+
+Rust 1.100 stable and later support `std::alloc::Allocator` for `MiMalloc`,
+`&Heap` and `MiMallocExcess`. `MiMalloc` and `&Heap` report the requested
+size. `MiMallocExcess` reports the usable capacity from mimalloc. Zeroed
+allocations and zeroed growth initialize all returned bytes.
+
+```rust
+use rustfs_mimalloc::{MiMallocExcess, heap::Heap};
+
+let heap = Heap::new().unwrap();
+let mut local = Vec::new_in(&heap);
+local.push(42);
+
+let mut excess = Vec::new_in(MiMallocExcess);
+excess.extend_from_slice(b"payload");
+```
 
 ### Native pprof profiler
 

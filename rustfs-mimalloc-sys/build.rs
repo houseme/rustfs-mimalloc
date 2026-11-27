@@ -79,6 +79,8 @@ fn main() {
     println!("cargo:rerun-if-changed=c_src/mimalloc/include");
     println!("cargo:rerun-if-changed=c_src/mimalloc/src");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_SECURE");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_SECURE_BASIC");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_SECURE_CHECKED");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DEBUG_IN_DEBUG");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_OVERRIDE");
@@ -147,9 +149,13 @@ fn main() {
         build.define("MI_DEBUG", "0");
     }
 
-    // Secure mode: guard pages, randomized and encoded free lists.
+    // Cargo features are additive, so use the highest selected secure level.
     if env::var_os("CARGO_FEATURE_SECURE").is_some() {
         build.define("MI_SECURE", "4");
+    } else if env::var_os("CARGO_FEATURE_SECURE_CHECKED").is_some() {
+        build.define("MI_SECURE", "2");
+    } else if env::var_os("CARGO_FEATURE_SECURE_BASIC").is_some() {
+        build.define("MI_SECURE", "1");
     }
 
     if env::var_os("CARGO_FEATURE_NO_PROFILE").is_some() {

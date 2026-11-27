@@ -124,7 +124,11 @@ fn main() {
     for (kind, value, expected) in &cases {
         // Native MI_SECURE_ENV defaults on for the secure feature. These
         // environment controls retain their defaults, while the API remains usable.
-        let expected = if cfg!(feature = "secure") {
+        let expected = if cfg!(any(
+            feature = "secure",
+            feature = "secure_basic",
+            feature = "secure_checked"
+        )) {
             match *kind {
                 "integer" => 32,
                 "bytes" => 4 * 1024 * 1024,

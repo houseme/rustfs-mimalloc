@@ -28,6 +28,7 @@ mimalloc = "0.1.52"
 log = "0.4"
 object = { version = "0.41", default-features = false }
 prost = "0.14"
+rustversion = "1.0.23"
 
 # Development tooling only; these do not enter the published allocator graphs.
 anyhow = "1.0.105"

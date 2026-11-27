@@ -31,6 +31,8 @@ include = [
 default = []
 # Security: guard pages and encoded/randomized free lists (MI_SECURE=4)
 secure = []
+secure_basic = []
+secure_checked = []
 # Debug mode with extra checks
 debug = []
 # Automatically enable debug mode in debug builds

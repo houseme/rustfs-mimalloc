@@ -633,6 +633,41 @@ fn destroyed_heap_address_reuse_invalidates_cached_theap() {
 
 // Process-global profiler registration requires a single-threaded executable,
 // with no Rust test-harness threads allocating concurrently (especially override).
+fn official_statistics_exports_link() {
+    unsafe extern "C" fn count_output(_: *const c_char, arg: *mut c_void) {
+        unsafe { *arg.cast::<usize>() += 1 };
+    }
+
+    unsafe {
+        let heap = mi_heap_new();
+        assert!(!heap.is_null());
+        let ptr = mi_heap_malloc(heap, 73);
+        assert!(!ptr.is_null());
+        mi_theap_stats_merge_to_heap(mi_heap_theap(heap));
+        mi_heap_stats_merge_to_subproc(heap);
+
+        let subprocess = mi_subproc_current();
+        let json = mi_subproc_stats_get_json(subprocess, 0, std::ptr::null_mut());
+        assert!(!json.is_null());
+        assert!(std::ffi::CStr::from_ptr(json).to_bytes().starts_with(b"{"));
+        mi_free(json.cast());
+
+        for print in [mi_subproc_stats_print_out, mi_subproc_heap_stats_print_out] {
+            let mut calls = 0usize;
+            print(
+                subprocess,
+                Some(count_output),
+                std::ptr::from_mut(&mut calls).cast(),
+            );
+            assert!(calls > 0);
+        }
+        assert!(mi_stats_get_bin_size(1) > 0);
+        assert_eq!(mi_stats_get_bin_size(usize::MAX), 0);
+        mi_free(ptr);
+        mi_heap_delete(heap);
+    }
+}
+
 fn main() {
     #[cfg(feature = "no_profile")]
     {
@@ -655,6 +690,7 @@ fn main() {
     heap_lifecycle_includes_direct_os_pages();
     additional_allocation_symbols_link_and_preserve_data();
     usable_size_outputs_work_on_native_allocations();
+    official_statistics_exports_link();
     new_option_ids_match_upstream_header();
     // Keep this process-wide purge check in this serial integration executable,
     // not in the parallel unit-test harness that allocates on other threads.

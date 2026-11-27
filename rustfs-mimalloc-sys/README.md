@@ -28,6 +28,8 @@ unsafe {
 | Feature | Description |
 |---------|-------------|
 | `secure` | Metadata guard pages, checked frees and encoded/randomized free lists (MI_SECURE=4) |
+| `secure_basic` | Metadata guards and encoded free lists (MI_SECURE=1) |
+| `secure_checked` | Basic protections plus checked frees and stronger free-list encoding (MI_SECURE=2) |
 | `debug` | mimalloc debug checks |
 | `debug_in_debug` | Auto-enable `debug` in Cargo debug builds |
 | `override` | Override system `malloc`/`free` on non-Windows targets |
@@ -89,6 +91,8 @@ This crate vendors the mimalloc V3 C source and compiles it via the `cc` crate. 
 - `mi_free_small_local{,_nonnull}` for small pages still owned by the calling thread
 - `mi_arena_area` and `mi_arena_contains` query reserved regions and membership
 - Raw error, output and deferred-free callback registration APIs
+- Subprocess JSON and text statistics, per-heap text statistics, heap-to-subprocess
+  statistics merging and statistics bin sizes
 - Offset-aligned allocation families (`mi_{malloc,zalloc,calloc,realloc,rezalloc,recalloc}_aligned_at`
   and their `mi_heap_*` variants) for payload-after-header layouts
 - Subprocess lifecycle and visiting (`mi_subproc_{main,current,new,destroy,add_current_thread,visit_heaps}`)
@@ -232,7 +236,8 @@ whose allocations fail. A non-null context is not proof of allocation readiness.
 
 ## Secure environment policy
 
-With the `secure` feature, native `MI_SECURE_ENV` defaults to 1. Only
+With any secure feature, native `MI_SECURE_ENV` defaults to 1. The highest
+enabled secure level applies when Cargo unifies features. Only
 `MIMALLOC_SHOW_ERRORS`, `MIMALLOC_SHOW_STATS`, `MIMALLOC_VERBOSE` and `MIMALLOC_ALLOW_THP` environment
 options are applied. Automatic `MIMALLOC_PROFILE` startup is restricted.
 Programmatic option APIs remain available with their initialization/synchronization

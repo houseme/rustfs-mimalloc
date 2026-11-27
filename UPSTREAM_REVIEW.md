@@ -1,3 +1,35 @@
+# 0.7.6 official Rust implementation review — 2026-11-28
+
+The project base is `a6f6537`. The official `main3/contrib/rust` tree was
+read from merge `bc44251a` for v3.7.1. The pinned dev3 source
+`5424c54c` includes that Rust implementation. The two Rust directories
+differ in version metadata, documentation and the newer dev3 environment
+prefix support. Their allocator, arena and heap implementation files match.
+[Official Rust tree](https://github.com/microsoft/mimalloc/tree/bc44251a1198409399bca17e319914795e8903d1/contrib/rust)
+
+- The official Rust allocator uses stable `Allocator` as of Rust 1.100.
+  Match the stable implementations for `MiMalloc`, `&Heap` and
+  `MiMallocExcess`. The compiler gate keeps the base allocator available
+  where the trait is unavailable. The adapters preserve alignment changes,
+  fully initialize zeroed capacity, and use general native free for
+  fitting layouts.
+- Match the official `secure_basic` and `secure_checked` build options.
+  The highest enabled level wins. Target-specific `opt_arch`, MTE and PAC
+  remain available through the documented native compiler controls.
+- Bind the five shared-library exports for subprocess and per-heap
+  statistics, heap-to-subprocess merging and bin-size lookup. The official
+  Rust FFI also declares `mi_stats_merge`, but the pinned C source only
+  declares it and the shared-library symbol table has no definition.
+  The audit retains that name as unbound, alongside legacy, explicit
+  lifecycle and C++ API entries outside the current Rust surface.
+
+The native submodule still points to the verified dev3 head. The newly
+exposed Rust bindings refer to existing C exports. The inventory passes
+for 175 function names and 46 option IDs. The ABI projection covers 166
+extern signatures, nine callbacks and three layouts.
+
+---
+
 # 0.7.6 upstream/API review — 2026-11-27
 
 The project base after `git pull --ff-only origin main` is `d927f57`.

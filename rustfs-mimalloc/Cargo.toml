@@ -16,6 +16,8 @@ readme = "README.md"
 default = []
 # Security: guard pages and encoded/randomized free lists
 secure = ["rustfs-mimalloc-sys/secure"]
+secure_basic = ["rustfs-mimalloc-sys/secure_basic"]
+secure_checked = ["rustfs-mimalloc-sys/secure_checked"]
 # Debug mode
 debug = ["rustfs-mimalloc-sys/debug"]
 debug_in_debug = ["rustfs-mimalloc-sys/debug_in_debug"]
@@ -33,6 +35,9 @@ rustfs-mimalloc-sys = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
+
+[build-dependencies]
+rustversion.workspace = true
 
 [[bench]]
 name = "alloc"

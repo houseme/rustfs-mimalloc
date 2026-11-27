@@ -962,6 +962,8 @@ unsafe extern "C" {
     pub fn mi_stats_get_json(buf_size: size_t, buf: *mut c_char) -> *mut c_char;
     pub fn mi_stats_print_out(out: Option<mi_output_fun>, arg: *mut c_void);
     pub fn mi_stats_reset();
+    /// Native block size for a statistics bin, or zero when out of range.
+    pub fn mi_stats_get_bin_size(bin: size_t) -> size_t;
     pub fn mi_heap_stats_get_json(
         heap: *mut mi_heap_t,
         buf_size: size_t,
@@ -969,6 +971,31 @@ unsafe extern "C" {
     ) -> *mut c_char;
     pub fn mi_heap_stats_print_out(
         heap: *mut mi_heap_t,
+        out: Option<mi_output_fun>,
+        arg: *mut c_void,
+    );
+    /// Merge accumulated heap statistics into its subprocess and clear the
+    /// heap counters. The heap handle must remain live for the call.
+    pub fn mi_heap_stats_merge_to_subproc(heap: *mut mi_heap_t);
+    /// Aggregate subprocess statistics as JSON. Free the returned string
+    /// with `mi_free` when the caller passes a null buffer. A non-null
+    /// buffer must be writable for `buf_size` bytes.
+    pub fn mi_subproc_stats_get_json(
+        subproc_id: mi_subproc_id_t,
+        buf_size: size_t,
+        buf: *mut c_char,
+    ) -> *mut c_char;
+    /// Print aggregated subprocess statistics through the supplied callback.
+    pub fn mi_subproc_stats_print_out(
+        subproc_id: mi_subproc_id_t,
+        out: Option<mi_output_fun>,
+        arg: *mut c_void,
+    );
+    /// Print statistics for each heap and the subprocess separately. The
+    /// callback must not reenter operations that acquire the subprocess's
+    /// heap-list lock, including heap creation, deletion or visitation.
+    pub fn mi_subproc_heap_stats_print_out(
+        subproc_id: mi_subproc_id_t,
         out: Option<mi_output_fun>,
         arg: *mut c_void,
     );

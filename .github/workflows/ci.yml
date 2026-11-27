@@ -36,6 +36,11 @@ jobs:
           - "no_profile"
           - "secure,debug,no_profile"
         include:
+          # Exercise each additional native security level independently.
+          - os: ubuntu-latest
+            features: "secure_basic"
+          - os: ubuntu-latest
+            features: "secure_checked"
           # debug feature — test on all platforms
           - os: ubuntu-latest
             features: "debug"
