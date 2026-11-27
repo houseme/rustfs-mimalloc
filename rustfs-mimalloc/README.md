@@ -43,6 +43,11 @@ Cargo feature unification selects the highest enabled secure level.
 
 ## API
 
+For JSON statistics, `MiMalloc::stats_json_owned()` and
+`Heap::stats_json_owned()` return a `MiString`. Borrow UTF-8 with
+`as_str()` or native bytes with `as_c_str()`. The existing
+`stats_json()` methods return a Rust `String`.
+
 ### Allocator
 
 `MiMalloc` implements `GlobalAlloc` with upstream-mirroring dispatch: layouts

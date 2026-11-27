@@ -96,6 +96,10 @@ buffer.extend_from_slice(b"mimalloc");
 
 ### Statistics & Diagnostics
 
+Use `MiMalloc::stats_json_owned()` or `Heap::stats_json_owned()` to borrow
+JSON directly from a mimalloc-owned buffer. Use `stats_json()` when a Rust
+`String` is needed.
+
 ```rust
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;

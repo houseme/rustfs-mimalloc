@@ -1,3 +1,22 @@
+# 0.7.6 official Rust diagnostics follow-up — 2026-11-28
+
+The project base after `git pull --ff-only origin main` was `47765d4`.
+Live GitHub metadata and Git refs still resolve main3 to `bc44251a` and
+dev3 to `5424c54c`. The latest official release is v3.7.1. The merged PR
+query returned #1523 and #1524, both included in the pin. The four public
+C headers have no changes after that pin.
+[Official Rust tree](https://github.com/microsoft/mimalloc/tree/bc44251a1198409399bca17e319914795e8903d1/contrib/rust),
+[v3.7.1 release](https://github.com/microsoft/mimalloc/releases/tag/v3.7.1)
+
+The official Rust stats API returns a mimalloc-owned `MiString`. Expose the
+same ownership model for process and heap JSON under `stats_json_owned()`.
+The existing Rust `String` methods remain available and retain their lossy
+UTF-8 conversion and empty-on-failure behavior. The owned handle frees its
+buffer through `mi_free` and permits cross-thread drop. This integration
+uses existing C exports and adds no FFI declarations.
+
+---
+
 # 0.7.6 official Rust implementation review — 2026-11-28
 
 The project base is `a6f6537`. The official `main3/contrib/rust` tree was

@@ -681,8 +681,16 @@ impl Heap {
 
     /// Allocation statistics for this heap as JSON. Returns empty string on failure.
     pub fn stats_json(&self) -> String {
+        self.stats_json_owned()
+            .map(|json| json.as_c_str().to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Allocation statistics for this heap as JSON in an owned native buffer.
+    /// Returns `None` on failure.
+    pub fn stats_json_owned(&self) -> Option<crate::MiString> {
         unsafe {
-            crate::ffi::owned_mimalloc_string(rustfs_mimalloc_sys::mi_heap_stats_get_json(
+            crate::MiString::from_raw(rustfs_mimalloc_sys::mi_heap_stats_get_json(
                 self.ptr.as_ptr(),
                 0,
                 core::ptr::null_mut(),

@@ -39,6 +39,10 @@ criterion = { workspace = true, features = ["html_reports"] }
 [build-dependencies]
 rustversion.workspace = true
 
+[[test]]
+name = "stats_json_allocations"
+harness = false
+
 [[bench]]
 name = "alloc"
 harness = false

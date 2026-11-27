@@ -1,6 +1,6 @@
 //! Stats, options, version, and process information APIs.
 
-use crate::{MI_WORD_ALIGN, MiMalloc};
+use crate::{MI_WORD_ALIGN, MiMalloc, MiString};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -408,8 +408,16 @@ impl MiMalloc {
 
     /// Allocation statistics as JSON. Returns empty string on failure.
     pub fn stats_json() -> String {
+        Self::stats_json_owned()
+            .map(|json| json.as_c_str().to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Allocation statistics as JSON in a native buffer. Returns `None` on
+    /// failure. Borrow or parse the bytes without copying into a Rust string.
+    pub fn stats_json_owned() -> Option<MiString> {
         unsafe {
-            crate::ffi::owned_mimalloc_string(rustfs_mimalloc_sys::mi_stats_get_json(
+            MiString::from_raw(rustfs_mimalloc_sys::mi_stats_get_json(
                 0,
                 core::ptr::null_mut(),
             ))
@@ -766,6 +774,23 @@ mod tests {
     fn stats_json_not_empty() {
         let json = MiMalloc::stats_json();
         assert!(!json.is_empty());
+    }
+
+    #[test]
+    fn native_stats_json_outlives_its_heap_and_can_drop_on_another_thread() {
+        let process = MiMalloc::stats_json_owned().unwrap();
+        let heap = crate::heap::Heap::new().unwrap();
+        let snapshot = heap.stats_json_owned().unwrap();
+        drop(heap);
+        std::thread::spawn(move || {
+            for json in [&process, &snapshot] {
+                assert!(json.starts_with('{'));
+                assert!(json.contains("\"mimalloc_version\""));
+                assert!(json.trim_end().ends_with('}'));
+            }
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

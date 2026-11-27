@@ -30,6 +30,26 @@ passed for the unified 0.7.6 version. Cross-built Docker tests on Linux arm64
 passed 70 allocator tests in each of the default and combined checked/no_profile
 configurations, plus the raw API and 44 option cases in each configuration.
 
+## Owned statistics JSON
+
+Process and heap statistics previously always copied the native buffer into
+a Rust `String`. The official-style `MiString` owner lets callers borrow
+the result directly. A standalone allocator-count test records zero Rust
+allocator calls for owned JSON and a Rust allocation for each `String`
+API, including optimized builds. The native JSON buffer is still allocated
+by mimalloc. Lifetime tests cover invalid UTF-8, dropping the heap before
+reading its snapshot and freeing the buffer on another thread.
+
+Default and all-feature macOS workspace tests passed, along with Clippy,
+rustdoc, API/ABI and local archive verification. The optimized allocator-count
+test passed on macOS and in Linux arm64 Docker. Linux arm64 builds passed
+72 allocator tests apiece in the default and secure/debug/no_profile modes.
+
+For high-frequency diagnostics, measure native JSON serialization separately
+from caller-side parsing. The text statistics collector initially reserves
+64 KiB on the Rust side. Profile snapshot sizes and callback lock context
+before replacing that reservation with incremental growth or streaming.
+
 ## Usable-capacity reallocation
 
 `MiMalloc::realloc_aligned_with_usable_size` previously always used

@@ -24,6 +24,7 @@ pub use callback::{
     clear_deferred_free, clear_error, clear_output, register_deferred_free, register_error,
     register_output,
 };
+pub use ffi::MiString;
 pub use rustfs_mimalloc_sys::{MI_SMALL_SIZE_MAX, MI_SMALL_WSIZE_MAX};
 
 use core::alloc::{GlobalAlloc, Layout};
