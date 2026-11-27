@@ -57,6 +57,84 @@ fn bench_aligned_alloc(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_usable_capacity(c: &mut Criterion) {
+    use rustfs_mimalloc_sys::{
+        c_void, mi_free, mi_malloc, mi_malloc_aligned, mi_umalloc, mi_umalloc_aligned,
+        mi_usable_size, mi_uzalloc, mi_zalloc,
+    };
+    use std::hint::black_box;
+
+    fn measure(
+        group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+        id: BenchmarkId,
+        size: usize,
+        alignment: usize,
+        allocate: impl Fn(usize) -> (*mut c_void, usize),
+    ) {
+        let (ptr, usable) = allocate(size);
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % alignment, 0);
+        assert!(usable >= size);
+        unsafe {
+            assert_eq!(usable, mi_usable_size(ptr));
+            mi_free(ptr);
+        }
+        group.bench_function(id, |b| {
+            b.iter(|| {
+                let (ptr, usable) = allocate(black_box(size));
+                assert!(!ptr.is_null());
+                black_box(usable);
+                unsafe {
+                    ptr.cast::<u8>().write_bytes(0x5a, size);
+                    black_box(ptr);
+                    mi_free(ptr);
+                }
+            });
+        });
+    }
+
+    let mut group = c.benchmark_group("usable_capacity");
+    // Keep each native call direct in the measured loop.
+    macro_rules! compare {
+        ($name:expr, $size:expr, $alignment:expr, $alloc:ident, $with_size:ident $(, $arg:expr)?) => {{
+            measure(
+                &mut group,
+                BenchmarkId::new("separate", $name),
+                $size,
+                $alignment,
+                |size| unsafe {
+                    let ptr = $alloc(size $(, $arg)?);
+                    (ptr, mi_usable_size(ptr))
+                },
+            );
+            measure(
+                &mut group,
+                BenchmarkId::new("combined", $name),
+                $size,
+                $alignment,
+                |size| unsafe {
+                    let mut usable = 0;
+                    let ptr = $with_size(size $(, $arg)?, &mut usable);
+                    (ptr, usable)
+                },
+            );
+        }};
+    }
+    let word = std::mem::align_of::<usize>();
+    compare!("small-73", 73, word, mi_malloc, mi_umalloc);
+    compare!("small-256", 256, word, mi_malloc, mi_umalloc);
+    compare!("zeroed-73", 73, word, mi_zalloc, mi_uzalloc);
+    compare!(
+        "aligned-73-4096",
+        73,
+        4096,
+        mi_malloc_aligned,
+        mi_umalloc_aligned,
+        4096
+    );
+    group.finish();
+}
+
 fn bench_small_free(c: &mut Criterion) {
     let mut group = c.benchmark_group("small_free_64");
     for local in [false, true] {
@@ -360,6 +438,7 @@ criterion_group!(
     benches,
     bench_alloc_dealloc,
     bench_aligned_alloc,
+    bench_usable_capacity,
     bench_small_free,
     bench_cross_thread_free,
     bench_threaded_alloc_free,

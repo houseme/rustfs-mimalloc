@@ -439,8 +439,8 @@ This crate exclusively targets mimalloc V3. Key improvements over V2:
 
 `GlobalAlloc` uses ordinary native allocation when alignment is at most 16
 and either fits a machine word or is covered by the requested size. Larger
-layout requirements use the aligned APIs. Reallocation checks the new size
-and pointer alignment before choosing its native entry point. Deallocation
+layout requirements use the aligned APIs. Reallocation uses the original
+layout's alignment and the new size to choose its native entry point. Deallocation
 forwards the original size and alignment to `mi_free_size_aligned`. Tests cover
 small layouts, zeroing, over-alignment and preserved reallocation contents.
 

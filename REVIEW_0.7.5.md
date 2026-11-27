@@ -10,12 +10,49 @@ capacity through the existing native lookup. The wrappers are exercised
 with padded and ordinary builds, including failed growth, payload
 preservation, alignment, and the difference between block and usable size.
 
-The highest-priority performance comparison is ordinary small-buffer
-allocation with a required capacity query. Compare the paired calls and
-the combined native call with equivalent writes and frees. Record
-requested and usable-size distributions alongside latency. Include secure
-and over-aligned layouts, where native padding or pointer offsets can
-change the result.
+## Usable-capacity benchmark
+
+The `usable_capacity` Criterion group compares separate allocation and
+usable-size calls with the combined native calls. Each case checks its
+reported capacity against `mi_usable_size`, writes the same requested bytes,
+and frees on the allocating thread. It covers 73 B and 256 B ordinary
+allocations, 73 B zeroed allocations, and 73 B aligned to 4096 B.
+
+Release builds used Rust 1.100.0 and native mimalloc `5424c54c`. The macOS
+arm64 and Debian Bookworm Linux arm64 Docker runs used four same-binary
+separate-call controls before A1/B1/B2/A2. The largest control spread and
+both within-variant drifts had to stay within 5%. Criterion used 20 samples
+per arm with 0.25 s warm-up and 0.50 s collection. The Linux retest verified
+one virtual CPU via `taskset`. A separate diagnostic used the same native
+archives and Linux thread CPU time over six million operations per arm.
+Lower values mean less time per operation.
+
+| Qualified case | Metric | Separate | Combined | Reduction |
+| --- | --- | ---: | ---: | ---: |
+| macOS default, 73 B aligned to 4096 B | Wall time | 12.282 ns | 11.668 ns | 5.0% |
+| Docker default, 73 B zeroed, initial run | Wall time | 9.536 ns | 9.126 ns | 4.3% |
+| Docker default, 256 B ordinary | Thread CPU time | 7.520 ns | 5.615 ns | 25.3% |
+| Docker secure, 73 B zeroed | Thread CPU time | 7.926 ns | 6.588 ns | 16.9% |
+
+All other rows exceeded the drift limit. The Linux zeroed wall-time result
+did not repeat under the drift check in the pinned run. The CPU-time results
+support trying the combined APIs where the caller already needs capacity.
+Workload latency and the effect of changing global allocator dispatch remain
+unmeasured. Logs, frozen binary checksums and the CPU-time probe are under
+ignored `target/capacity-abba/`.
+
+Run the checked-in cases with
+`cargo bench --locked -p rustfs-mimalloc --bench alloc -- usable_capacity`.
+Build separately with `--features secure` for the secure comparison.
+
+The release also removes the old-pointer alignment test from
+`GlobalAlloc::realloc`. The caller provides the original layout. If native
+realloc retains the block, the pointer keeps that alignment. If it moves
+the block, the ordinary-allocation size and alignment guard determines
+whether to use the aligned entry point. The grow and shrink regression
+checks alignment and preserved contents in both directions across the
+size-below-alignment boundary. The measurements above cover capacity
+queries. They do not estimate the realloc change.
 
 For applications that retire worker heaps, measure thread churn with
 cached contexts and use collection from an idle maintenance thread to

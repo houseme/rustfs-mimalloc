@@ -12,17 +12,13 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
-- Pin mimalloc dev3 at `5424c54c` (C version 30702), including v3.7.1 and
-  subsequent thread-heap teardown and statistics fixes.
-- Re-verify the post-v3.7.0 dev3 pin `cb534580` against upstream on November
-  22: the `main3` tip is three README-only commits past the pin, no v3.7.1
-  release exists, and the 43 dev3 commits (PRs #1501, #1502, #1506, #1509,
-  #1510 plus CPython-linked fixes for eager page revival, atomic free-list
-  links and force-collected abandoned pages during visits) change no exported
-  declaration — the public-header delta is compiler-macro hardening and the
-  documented `mi_option_allow_thp` value-2 semantics. All guarded build
-  anchors (QSBR correction, MI_PROFILE=0 sampler, Windows static CRT) still
-  apply unchanged.
+- Use the original layout's alignment for `GlobalAlloc::realloc` dispatch,
+  removing a redundant alignment check on the live allocation.
+- Add a Criterion benchmark for combined usable-capacity allocation and
+  separate capacity lookup, including zeroed and over-aligned cases.
+- Pin mimalloc to the v3.7.2 development snapshot `5424c54c` (C version
+  30702), including v3.7.1 and subsequent thread-heap teardown and statistics
+  fixes.
 - Refresh internal requirements and the lockfile: `cc` 1.11.3, `regex` 1.13.2,
   `toml` 1.2.2 plus transitive lockfile patches (`hashbrown` 0.17.2 in the
   November 22 refresh). No semver-incompatible upgrades were available; the
@@ -43,13 +39,10 @@ and `rustfs-mimalloc-profiling`, which share one release version.
   instead of every captured frame, and Linux ELF segment file offsets are
   cached per image identity across reports instead of re-opening and
   re-parsing each involved binary on every report.
-- Advance pristine mimalloc source to post-v3.7.0 dev3 commit `cb534580`,
-  including lazy abandoned-bin bitmap initialization, corrected THP advice
-  eligibility and huge-block purge/reset fixes. Numeric C version is 30700;
-  v3.7.0 is the latest official upstream release.
-- Re-verify the complete public API against v3.7.0: zero exported function,
-  option ID, callback or layout changes across all four public headers, so all
-  bindings stay unchanged. The version expectation test now asserts 30700.
+- Inherit lazy abandoned-bin bitmap initialization, corrected THP advice
+  eligibility, huge-block purge fixes and earlier reuse of full pages after
+  cross-thread frees. Retain the guarded QSBR header, profiling opt-out and
+  Windows static CRT source checks.
 - Synchronize the allocator, sys and profiling crates, lockfile, internal
   requirements and installation examples at 0.7.5. Consolidate this work into
   one shared version section.

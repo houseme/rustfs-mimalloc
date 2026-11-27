@@ -91,9 +91,9 @@ unsafe impl GlobalAlloc for MiMalloc {
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         unsafe {
-            if ordinary_alloc_covers(layout.align(), new_size)
-                && (ptr as usize).is_multiple_of(layout.align())
-            {
+            // The old block already satisfies layout.align() by the GlobalAlloc
+            // contract. The size check covers allocations that move.
+            if ordinary_alloc_covers(layout.align(), new_size) {
                 rustfs_mimalloc_sys::mi_realloc(ptr as *mut c_void, new_size) as *mut u8
             } else {
                 rustfs_mimalloc_sys::mi_realloc_aligned(
@@ -197,18 +197,23 @@ mod tests {
                 );
                 assert!((0..size).all(|i| *zeroed.add(i) == 0));
                 // Growing to or from below-alignment sizes keeps the contract.
+                ptr.write_bytes(0x5a, size);
                 let grown = GLOBAL.realloc(ptr, layout, align * 2);
+                assert!(!grown.is_null());
                 assert_eq!(grown as usize % align, 0, "grow size={size} align={align}");
+                assert!((0..size).all(|i| *grown.add(i) == 0x5a));
                 let shrunk = GLOBAL.realloc(
                     grown,
                     Layout::from_size_align(align * 2, align).unwrap(),
                     size,
                 );
+                assert!(!shrunk.is_null());
                 assert_eq!(
                     shrunk as usize % align,
                     0,
                     "shrink size={size} align={align}"
                 );
+                assert!((0..size).all(|i| *shrunk.add(i) == 0x5a));
                 GLOBAL.dealloc(shrunk, layout);
                 GLOBAL.dealloc(zeroed, layout);
             }
