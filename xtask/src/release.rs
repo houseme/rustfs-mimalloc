@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
+    process::Command,
     time::Duration,
 };
 
@@ -51,13 +52,23 @@ pub fn resolve(args: &mut Args) -> Result<()> {
     // A dispatch dry run validates whatever the checkout holds, so point out
     // when the version has no matching tag yet: the first tag-existence check
     // would otherwise happen in the run that also publishes.
-    if event == "workflow_dispatch" {
+    if dry && event == "workflow_dispatch" {
         let tag = format!("v{value}^{{commit}}");
-        let exists = util::git(["rev-parse", "--verify", "--quiet", tag.as_str()])?.is_empty();
-        if !exists {
+        let tag_status = Command::new("git")
+            .current_dir(util::root())
+            .args(["rev-parse", "--verify", "--quiet", tag.as_str()])
+            .output()
+            .context("check local release tag")?;
+        if tag_status.status.code() == Some(1) {
             println!(
                 "note: no git tag v{value} exists; a dry run validates the current checkout. \
                  Create the tag before re-running with dry_run disabled."
+            );
+        } else {
+            ensure!(
+                tag_status.status.success(),
+                "git tag lookup failed: {}",
+                tag_status.status
             );
         }
     }
