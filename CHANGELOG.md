@@ -28,6 +28,8 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Copy fitting native statistics JSON fragments in bulk. Keep the existing
+  buffer-growth and truncation behavior.
 - Return usable capacity directly from native reallocation for blocks
   that satisfy the requested alignment within a machine word. Preserve
   aligned reallocation for offset and over-aligned allocations.

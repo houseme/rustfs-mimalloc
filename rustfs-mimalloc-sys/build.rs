@@ -3,10 +3,14 @@
 //! Compiles mimalloc V3 as a static library using the `cc` crate.
 //! Handles platform-specific flags, feature gates, and linker requirements.
 
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 mod no_profile;
 mod public_headers;
+mod stats_json;
 mod windows_static_crt;
 
 struct TargetCfg {
@@ -75,6 +79,7 @@ fn main() {
     println!("cargo:rerun-if-changed=windows_static_crt.rs");
     println!("cargo:rerun-if-changed=public_headers.rs");
     println!("cargo:rerun-if-changed=no_profile.rs");
+    println!("cargo:rerun-if-changed=stats_json.rs");
     // static.c includes these files; cc cannot discover that dependency tree.
     println!("cargo:rerun-if-changed=c_src/mimalloc/include");
     println!("cargo:rerun-if-changed=c_src/mimalloc/src");
@@ -98,35 +103,13 @@ fn main() {
         // Use the same CRT decision for C flags and startup compatibility.
         build.static_crt(static_crt);
     }
-    let mut static_source = if target.is_windows() && static_crt {
-        windows_static_source()
-    } else {
-        PathBuf::from("c_src/mimalloc/src/static.c")
-    };
-    if env::var_os("CARGO_FEATURE_NO_PROFILE").is_some() {
-        let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
-        let sampler = fs::read_to_string("c_src/mimalloc/src/profile/sample-profile.c")
-            .expect("upstream sampler source is missing");
-        fs::write(
-            out.join("mimalloc-no-profile.c"),
-            no_profile::patch(&sampler),
-        )
-        .expect("failed to prepare MI_PROFILE=0 sampler");
-        let source = fs::read_to_string(&static_source).expect("static source is missing");
-        let include = "#include \"profile/sample-profile.c\"";
-        assert_eq!(
-            source.matches(include).count(),
-            1,
-            "upstream sampler include changed"
-        );
-        static_source = out.join("mimalloc-no-profile-static.c");
-        fs::write(
-            &static_source,
-            source.replacen(include, "#include \"mimalloc-no-profile.c\"", 1),
-        )
-        .expect("failed to prepare MI_PROFILE=0 static source");
-    }
-    build.file(static_source);
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
+    let no_profile = env::var_os("CARGO_FEATURE_NO_PROFILE").is_some();
+    build.file(prepare_static_source(
+        &out_dir,
+        target.is_windows() && static_crt,
+        no_profile,
+    ));
     build.include("c_src/mimalloc/include");
     build.include("c_src/mimalloc/src");
 
@@ -158,7 +141,7 @@ fn main() {
         build.define("MI_SECURE", "1");
     }
 
-    if env::var_os("CARGO_FEATURE_NO_PROFILE").is_some() {
+    if no_profile {
         build.define("MI_PROFILE", "0");
         // Keep the pprof implementation for explicit snapshot calls and raw
         // ABI compatibility; MI_PROFILE=0 still disables allocation sampling.
@@ -239,8 +222,7 @@ fn main() {
     link_system_libs(&target);
 
     // Export include directory for downstream crates
-    let include =
-        PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set")).join("include");
+    let include = out_dir.join("include");
     public_headers::prepare(&PathBuf::from("c_src/mimalloc/include"), &include)
         .expect("failed to prepare standalone public headers");
     println!("cargo:include={}", include.display());
@@ -266,13 +248,56 @@ fn main() {
     println!("cargo:rustc-env=MIMALLOC_VERSION={version}");
 }
 
+fn prepare_static_source(out_dir: &Path, windows_static_crt: bool, no_profile: bool) -> PathBuf {
+    let source_dir = Path::new("c_src/mimalloc/src");
+    let mut source = fs::read_to_string(source_dir.join("static.c"))
+        .expect("failed to read mimalloc's static.c aggregator");
+    if windows_static_crt {
+        source = windows_static_source(source_dir, out_dir, &source);
+    }
+    if no_profile {
+        let sampler = fs::read_to_string(source_dir.join("profile/sample-profile.c"))
+            .expect("upstream sampler source is missing");
+        fs::write(
+            out_dir.join("mimalloc-no-profile.c"),
+            no_profile::patch(&sampler),
+        )
+        .expect("failed to prepare MI_PROFILE=0 sampler");
+        let include = "#include \"profile/sample-profile.c\"";
+        assert_eq!(
+            source.matches(include).count(),
+            1,
+            "upstream sampler include changed"
+        );
+        source = source.replacen(include, "#include \"mimalloc-no-profile.c\"", 1);
+    }
+    let stats = fs::read_to_string(source_dir.join("util/stats.c"))
+        .expect("failed to read upstream stats.c");
+    fs::write(
+        out_dir.join("mimalloc-stats-json.c"),
+        stats_json::patch(&stats),
+    )
+    .expect("failed to prepare mimalloc JSON statistics");
+    let include = "#include \"util/stats.c\"";
+    assert_eq!(
+        source.matches(include).count(),
+        1,
+        "upstream stats.c include changed"
+    );
+    let path = out_dir.join("mimalloc-static.c");
+    fs::write(
+        &path,
+        source.replacen(include, "#include \"mimalloc-stats-json.c\"", 1),
+    )
+    .expect("failed to prepare mimalloc's static source");
+    path
+}
+
 /// Retain static CRT startup/bootstrap compatibility; ImageBase is fixed upstream.
-fn windows_static_source() -> PathBuf {
+fn windows_static_source(source_dir: &Path, out_dir: &Path, source: &str) -> String {
     const UPSTREAM_RANDOM_INCLUDE: &str = "#include \"util/random.c\"";
     const PATCHED_RANDOM_INCLUDE: &str = "#include \"mimalloc-static-crt-random.c\"";
 
-    let source_dir = PathBuf::from("c_src/mimalloc/src");
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
     let random = fs::read_to_string(source_dir.join("util/random.c"))
         .expect("failed to read upstream random.c")
         .replace("\r\n", "\n");
@@ -304,21 +329,10 @@ fn windows_static_source() -> PathBuf {
 
     // Give the compatibility copy a unique include name so the C compiler
     // cannot resolve the unpatched upstream random.c from its source directory.
-    let static_source = fs::read_to_string(source_dir.join("static.c"))
-        .expect("failed to read mimalloc's static.c aggregator");
     let prim_include = "#include \"mimalloc-static-crt-prim.c\"\n#if defined(_MSC_VER) && defined(_MT) && !defined(_DLL) && !defined(MI_STATIC_CRT_STARTUP_COMPAT)\n#error Windows static CRT startup compatibility source was not included\n#endif";
-    let static_source = windows_static_crt::replace_once(
-        &static_source,
-        UPSTREAM_RANDOM_INCLUDE,
-        PATCHED_RANDOM_INCLUDE,
-    );
-    let static_path = out_dir.join("mimalloc-static.c");
-    fs::write(
-        &static_path,
-        windows_static_crt::replace_once(&static_source, "#include \"prim/prim.c\"", prim_include),
-    )
-    .expect("failed to write mimalloc's static CRT aggregator");
-    static_path
+    let source =
+        windows_static_crt::replace_once(source, UPSTREAM_RANDOM_INCLUDE, PATCHED_RANDOM_INCLUDE);
+    windows_static_crt::replace_once(&source, "#include \"prim/prim.c\"", prim_include)
 }
 
 /// Link required system libraries based on the target platform.

@@ -103,6 +103,9 @@ JSON directly from a mimalloc-owned buffer. Use `stats_json()` when a Rust
 For repeated collection, `stats_json_into()` writes JSON into a caller-owned
 slice. `stats_print_into()` reuses a byte vector up to its current capacity.
 
+For polling process metrics such as RSS, committed memory and page faults,
+`MiMalloc::process_info()` returns those fields directly as a Rust struct.
+
 ```rust
 use rustfs_mimalloc::MiMalloc;
 use rustfs_mimalloc_sys::mi_option_t;

@@ -58,14 +58,124 @@ its allocation-free behavior during native output. The original text
 
 Allocator-count tests check both process and heap paths for zero Rust
 allocations, verify the JSON result borrows the supplied bytes and exercise
-short buffers. Native JSON serialization and C-string scanning remain
-costs. Measure these separately from caller-side parsing, and compare
-native snapshot cost against the reporting interval before tuning further.
+short buffers.
 
 The follow-up passed default and all-feature macOS workspace tests, API and
 ABI checks, Clippy, rustdoc, provider tests and local archive verification.
 Linux arm64 Docker passed 72 allocator tests per configuration and the
 allocation-count harness in both default and secure/debug/no_profile builds.
+
+### JSON encoding and caller parsing — 2026-11-28
+
+The release-mode benchmark used stable Rust 1.100.0, mimalloc 3.7.2 and
+`serde_json` 1.0.154 with `MiMalloc` as the global allocator. One thread
+retained 224 allocations across seven sizes. The process and heap fixtures
+each contained about 15 KB of JSON and 52 top-level keys.
+
+The C benchmark timed `mi_stats_as_json` with a pre-captured allocator
+snapshot and a reused 64 KiB output buffer. The call still clears the
+output buffer and samples process information. The Rust API measurement
+timed `stats_json_into()` through return of its borrowed C string. The
+parser cases reused fixed JSON bytes and included the cost of dropping
+their results. The typed parser extracted the mimalloc version, current
+RSS, current commit and page fault count and checked those fields against
+the full `serde_json::Value` before timing.
+
+Each run used 12 batches per case with alternating order, after warmup.
+The results use median thread CPU time per operation. The drift check
+compared the two halves of each run and the two run medians against a 5%
+threshold. Linux ran in a Debian arm64 Docker container pinned to one
+virtual CPU.
+
+| Environment and scope | Native JSON encoding | Rust `stats_json_into()` | Full `Value` parse | Typed parse |
+| --- | ---: | ---: | ---: | ---: |
+| macOS arm64, process | 37.26 | 38.67 | 32.00 | 12.99 |
+| macOS arm64, heap | 37.06 | 37.51 | 32.42 | 12.96 |
+| Linux arm64 Docker, process | 40.61 | 42.70 | 33.27 | 13.13 |
+| Linux arm64 Docker, heap (observed range) | 40.46–43.60 | 41.03–44.26 | 33.30–37.77 | 12.93–14.34 |
+
+Values are in µs per operation. The point estimates pool the two initial
+runs. The Linux heap row gives the range of per-run medians across all six
+runs. The full heap parse exceeded the 5% drift threshold in each Linux
+pair, and the other heap stages exceeded it in at least one pair. The
+initial macOS process snapshot timing also exceeded the threshold. A
+standalone heap snapshot took 0.23 µs on macOS and 0.20 µs in the two
+Linux repeat pairs. The standalone Linux process snapshot took 1.01–1.02 µs.
+
+Where the encoding and both parse timings passed the drift check across
+the available pairs, typed parsing reduced parse CPU time by 59–61%.
+Native encoding was 2.9–3.1 times as expensive as typed parsing. Reducing
+the buffer from 64 KiB to 16 KiB changed the stable encoding point estimates
+by at most 1.6% in this fixture.
+
+The local benchmark source, binary hashes, per-batch CPU and wall times,
+and drift summaries are under `target/stats-json-cost/`.
+
+### Native JSON append cost — 2026-11-28
+
+The follow-up used the same fixture and 5% drift check. Each optimized
+binary timed the installed native entry point and five builds of the same
+serializer in alternating order. The variants used the original code,
+omitted the buffer clear, replayed process information, replayed the
+preformatted malloc and page bin rows, or replaced byte-wise appends of
+fitting fragments with a bulk copy. The replay variants attribute cost
+for a fixed snapshot. The bulk-copy variant keeps the existing path for
+fragments that trigger truncation or buffer growth.
+
+The standalone controls put the 64 KiB clear below 0.4 µs and
+`MiMalloc::process_info()` at about 0.8 µs on macOS and 0.2 µs on Linux.
+On macOS, replaying the preformatted bins removed about 10 µs of the
+standalone serialization cost, including the avoided bin metadata lookups.
+The standalone Linux reference was materially faster than the crate-linked
+serializer, so the candidate was also tested through two complete crate
+builds in original/candidate/candidate/original order.
+
+| Linux arm64 Docker | Original CPU µs/op | Bulk copy CPU µs/op | Reduction |
+| --- | ---: | ---: | ---: |
+| Process native encoding | 42.20 | 18.09 | 57.1% |
+| Heap native encoding | 40.82 | 17.85 | 56.3% |
+| Process `stats_json_into()` | 42.94 | 19.52 | 54.5% |
+| Heap `stats_json_into()` | 41.30 | 18.89 | 54.3% |
+
+These four Linux cases passed the 5% drift check for both thread CPU and
+wall time. The point estimates pool the two runs of each build. On macOS,
+the initial same-binary attribution passed and the standalone append
+variant went from about 37 µs to 19 µs. Both macOS complete-build attempts
+exceeded the drift threshold. They retain the same direction of change
+and are excluded from the complete-build reduction figures.
+
+The correctness check froze both the allocator snapshot and process
+metrics before comparing the original and bulk-copy paths. It compared
+bytes and the return value for exact-fit, one-byte-short, and smaller
+buffers, checked the guard bytes and NUL terminators, and verified the
+owned result after growing its initial buffer. The patched checkout also
+passed the release allocator and sys crate suites on macOS under default
+features and with `secure_checked,debug,no_profile`.
+
+The candidate patch was initially tested against an isolated copy of the
+pinned mimalloc commit. The sys crate now generates the same statistics
+source under Cargo's output directory alongside the existing platform
+and feature patches. The sys crate archive includes the source generator
+and the pinned input.
+
+The generated source matched the prototype byte for byte. Repeating the
+complete-build comparison in Linux arm64 Docker confirmed the following
+thread CPU medians in µs per operation.
+
+| Integrated path | Original | Bulk copy | Reduction |
+| --- | ---: | ---: | ---: |
+| Process native encoding | 41.44 | 18.15 | 56.2% |
+| Process `stats_json_into()` | 42.74 | 18.80 | 56.0% |
+| Heap `stats_json_into()` | 42.06 | 17.99 | 57.2% |
+
+The integrated native heap encoding result exceeded the 5% drift threshold.
+The integrated build passed default and all-feature release workspace
+tests on macOS. The allocator, raw API, and buffer tests passed in Docker
+with default and `secure_checked,debug,no_profile` features. Clippy, public
+API and ABI checks, and offline sys archive verification passed.
+
+The prototype and integrated measurements are under
+`target/stats-json-attribution/` and `target/stats-json-integrated/`.
 
 ## Usable-capacity reallocation
 

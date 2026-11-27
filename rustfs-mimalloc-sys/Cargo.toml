@@ -20,6 +20,7 @@ include = [
     "windows_static_crt.rs",
     "public_headers.rs",
     "no_profile.rs",
+    "stats_json.rs",
     "src/**",
     "tests/**",
     "c_src/mimalloc/LICENSE",
