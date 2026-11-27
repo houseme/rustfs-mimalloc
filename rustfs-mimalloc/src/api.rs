@@ -1,6 +1,6 @@
 //! Stats, options, version, and process information APIs.
 
-use crate::MiMalloc;
+use crate::{MI_WORD_ALIGN, MiMalloc};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -108,6 +108,7 @@ impl MiMalloc {
 
     /// Resize a block with the requested alignment and return its new usable capacity.
     /// Failure leaves the original block valid.
+    /// Word-aligned blocks can obtain capacity directly from native reallocation.
     ///
     /// # Safety
     /// Pass null or a live, exclusively owned mimalloc block and a nonzero
@@ -121,13 +122,27 @@ impl MiMalloc {
     ) -> Option<(NonNull<u8>, usize)> {
         let mut usable = 0;
         let ptr = unsafe {
-            rustfs_mimalloc_sys::mi_urealloc_aligned(
-                ptr.cast(),
-                new_size,
-                alignment,
-                core::ptr::null_mut(),
-                &mut usable,
-            )
+            // Match the native aligned realloc shortcut, then request its
+            // usable-size output directly. Offset allocations can be misaligned.
+            if alignment <= MI_WORD_ALIGN
+                && alignment.is_power_of_two()
+                && ptr.addr().is_multiple_of(alignment)
+            {
+                rustfs_mimalloc_sys::mi_urealloc(
+                    ptr.cast(),
+                    new_size,
+                    core::ptr::null_mut(),
+                    &mut usable,
+                )
+            } else {
+                rustfs_mimalloc_sys::mi_urealloc_aligned(
+                    ptr.cast(),
+                    new_size,
+                    alignment,
+                    core::ptr::null_mut(),
+                    &mut usable,
+                )
+            }
         };
         NonNull::new(ptr.cast()).map(|ptr| (ptr, usable))
     }
@@ -596,6 +611,32 @@ mod tests {
             let mut freed_usable = 0;
             rustfs_mimalloc_sys::mi_ufree(ptr.cast(), &mut freed_usable);
             assert_eq!(freed_usable, usable);
+        }
+    }
+
+    #[test]
+    fn usable_capacity_realloc_preserves_word_alignment_for_offset_blocks() {
+        unsafe {
+            let alignment = MI_WORD_ALIGN;
+            let (aligned, _) =
+                MiMalloc::realloc_aligned_with_usable_size(core::ptr::null_mut(), 513, alignment)
+                    .unwrap();
+            let offset =
+                rustfs_mimalloc_sys::mi_malloc_aligned_at(513, alignment * 2, 1).cast::<u8>();
+            assert!(!offset.is_null());
+            assert_ne!(offset.addr() % alignment, 0);
+            for ptr in [aligned.as_ptr(), offset] {
+                ptr.write_bytes(0x5a, 513);
+                let size = MiMalloc::usable_size(ptr);
+                let (resized, usable) =
+                    MiMalloc::realloc_aligned_with_usable_size(ptr, size, alignment).unwrap();
+                let resized = resized.as_ptr();
+                assert_eq!(resized.addr() % alignment, 0);
+                assert!(usable >= size);
+                assert_eq!(usable, MiMalloc::usable_size(resized));
+                assert!((0..513).all(|index| resized.add(index).read() == 0x5a));
+                rustfs_mimalloc_sys::mi_free(resized.cast());
+            }
         }
     }
 

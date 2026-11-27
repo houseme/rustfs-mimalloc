@@ -8,16 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the shared changelog for `rustfs-mimalloc-sys`, `rustfs-mimalloc`,
 and `rustfs-mimalloc-profiling`, which share one release version.
 
-## [Unreleased]
+## [0.7.6] - 2026-11-27
 
 ### Changed
 
+- Return usable capacity directly from native reallocation for blocks
+  that satisfy the requested alignment within a machine word. Preserve
+  aligned reallocation for offset and over-aligned allocations.
 - Refresh workspace dependencies and the lockfile, including `cc` 1.12.0,
   `anyhow` 1.0.105, `sha2` 0.11.2 and `toml` 1.2.3.
 - Run CI and release validation on stable Rust across Linux, macOS and Windows.
 - Skip uploads for exact crate versions already in the official crates.io
   index. Wait 60 seconds after the upload loop before fetching and verifying
   the published versions and running the registry-backed profiling tests.
+
+### Validation
+
+- Recheck the official mimalloc dev3 head and public API at `5424c54c`.
+  The pin already includes the latest merged thread-heap and statistics
+  fixes. Exercise usable-capacity reallocation with ordinary and offset
+  pointers across default and padded builds.
 
 ## [0.7.5] - 2026-11-27
 

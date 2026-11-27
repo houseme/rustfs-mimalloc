@@ -30,7 +30,7 @@ Repository maintenance and release validation use the unpublished Rust
 
 ```toml
 [dependencies]
-rustfs-mimalloc = "0.7.5"
+rustfs-mimalloc = "0.7.6"
 ```
 
 ```rust
@@ -479,7 +479,7 @@ Applications that do not need sampled heap profiles can opt out at build time:
 
 ```toml
 [dependencies]
-rustfs-mimalloc = { version = "0.7.5", features = ["no_profile"] }
+rustfs-mimalloc = { version = "0.7.6", features = ["no_profile"] }
 ```
 
 This removes profiling sampling from allocation/free paths and disables

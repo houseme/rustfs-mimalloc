@@ -818,7 +818,7 @@ checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustfs-mimalloc"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "criterion",
  "rustfs-mimalloc-sys",
@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "rustfs-mimalloc-profiling"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "backtrace",
  "findshlibs",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "rustfs-mimalloc-sys"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "cc",
 ]
@@ -1358,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "anyhow",
  "flate2",

@@ -10,8 +10,8 @@ Run from the repository root with stable Rust and Cargo:
     cargo xtask test-providers --local-dependencies
     cargo xtask test-providers --local-dependencies --release
     cargo xtask verify-package --local-dependencies --allow-dirty
-    cargo xtask release-check 0.7.5
-    cargo xtask release-notes 0.7.5 --output target/release-notes.md
+    cargo xtask release-check 0.7.6
+    cargo xtask release-notes 0.7.6 --output target/release-notes.md
 
 The crate is unpublished and excluded from default workspace members. Its
 dependencies do not become allocator/profiler runtime dependencies. All version

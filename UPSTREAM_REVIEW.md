@@ -1,3 +1,26 @@
+# 0.7.6 upstream/API review — 2026-11-27
+
+The project base after `git pull --ff-only origin main` is `d927f57`.
+The GitHub branch API and official Git refs both identify `5424c54c` as
+dev3 HEAD. The submodule already pins that commit. The latest official
+tag remains v3.7.1 at `1c842769`, which is an ancestor of the selected
+development snapshot (C version 30702).
+[Upstream pin](https://github.com/microsoft/mimalloc/commit/5424c54ce594b1ef27888d1538d543e98a72ac7b),
+[release](https://github.com/microsoft/mimalloc/releases/tag/v3.7.1)
+
+The merged PR query since November 26 returned #1523 and #1524. Both
+merge commits are ancestors of the pin. Their default-theap lifetime and
+heap-statistics synchronization fixes were already integrated in 0.7.5.
+The reviewed dev3 range after the previous pin is empty. The public
+API inventory still covers 170 function names, 46 option IDs and 67
+reviewed unbound exports. The ABI projection covers 161 extern
+signatures, nine callbacks and three layouts. The wrapper improvement
+uses the already bound `mi_urealloc` and `mi_urealloc_aligned`.
+[PR #1523](https://github.com/microsoft/mimalloc/pull/1523),
+[PR #1524](https://github.com/microsoft/mimalloc/pull/1524)
+
+---
+
 # 0.7.5 upstream/API refresh — 2026-11-27
 
 The project base after `git pull --ff-only` is `dc3c9e8`. The upstream
