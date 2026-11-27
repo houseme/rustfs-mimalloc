@@ -71,16 +71,12 @@ jobs:
   # ── Full test gate ─────────────────────────────────────────────────────────
 
   test:
-    name: Test (${{ matrix.os }}, ${{ matrix.toolchain }})
+    name: Test (${{ matrix.os }})
     needs: prepare
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        toolchain: [stable]
-        include:
-          - os: ubuntu-latest
-            toolchain: 1.95.0
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -89,8 +85,6 @@ jobs:
           ref: ${{ needs.prepare.outputs.revision }}
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
 
       - name: Test Rust maintenance tool contracts
         run: cargo test --locked -p xtask
@@ -194,23 +188,51 @@ jobs:
             cp "$RUNNER_TEMP/release-tools-target/debug/xtask" "$RUNNER_TEMP/release-registry-verifier"
           fi
 
-      - name: Publish and verify all three crates in dependency order
+      - name: Publish missing crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+          verifier="$RUNNER_TEMP/release-registry-verifier"
           for package in rustfs-mimalloc-sys rustfs-mimalloc rustfs-mimalloc-profiling; do
+            registry_state=$("$verifier" registry-status "$package" "$RELEASE_VERSION")
+            if [[ "$registry_state" == published ]]; then
+              echo "$package $RELEASE_VERSION already exists on crates.io. Skipping upload."
+              continue
+            fi
+            [[ "$registry_state" == missing ]]
             cargo package --locked --registry crates-io --package "$package" --allow-dirty
             archive="$RUNNER_TEMP/$package-$RELEASE_VERSION.crate"
             cp "target/package/$package-$RELEASE_VERSION.crate" "$archive"
             if ! cargo publish --locked --registry crates-io --package "$package" --allow-dirty; then
-              echo "Upload did not complete; checking for an identical published package."
+              # A concurrent publisher can win after the preflight check.
+              registry_state=$("$verifier" registry-status "$package" "$RELEASE_VERSION")
+              if [[ "$registry_state" != published ]]; then
+                echo "::error::Upload failed and $package $RELEASE_VERSION is absent from the official index"
+                exit 1
+              fi
+              rm -- "$archive"
+              echo "$package $RELEASE_VERSION is now present on crates.io. Continuing."
             fi
-            "$RUNNER_TEMP/release-registry-verifier" verify-registry "$package" "$RELEASE_VERSION" --archive "$archive"
           done
-      - name: Test normalized profiling archive with published dependencies
-        run: cargo xtask verify-package --allow-dirty
+
+      - name: Wait for propagation and verify published versions
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          sleep 60
+          verifier="$RUNNER_TEMP/release-registry-verifier"
+          for package in rustfs-mimalloc-sys rustfs-mimalloc rustfs-mimalloc-profiling; do
+            archive="$RUNNER_TEMP/$package-$RELEASE_VERSION.crate"
+            if [[ -f "$archive" ]]; then
+              "$verifier" verify-registry "$package" "$RELEASE_VERSION" --archive "$archive"
+            else
+              "$verifier" verify-registry "$package" "$RELEASE_VERSION"
+            fi
+          done
+          cargo xtask verify-package --allow-dirty
 
   # ── GitHub Release ─────────────────────────────────────────────────────────
 

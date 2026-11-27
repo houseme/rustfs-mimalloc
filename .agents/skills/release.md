@@ -64,11 +64,9 @@ The package version is declared once:
 version = "<VERSION>"
 ```
 
-The workspace and member manifests intentionally omit `rust-version`. Do not
-reintroduce it during a release. CI keeps a Rust 1.95.0 compatibility job; this
-is not a declared Cargo MSRV. Edition 2024's Rust 1.85 language floor does not
-prove compatibility of the code and dependencies. Keep the 1.95.0 check for
-Pyroscope consumers while using current stable for lint and documentation.
+The workspace and member manifests intentionally omit `rust-version`.
+CI and release validation use stable Rust across Linux, macOS and Windows.
+Edition 2024 alone does not establish dependency compatibility.
 
 The wrapper's registry dependency requirement for the sys crate is also in the workspace root:
 
@@ -182,14 +180,15 @@ Pushing the tag triggers `.github/workflows/release.yml`. Preparation resolves
 one immutable source revision; every following job checks out that commit.
 Use locked dependency resolution and validate the shared changelog in dry runs.
 
-The release workflow publishes in this order:
+The release workflow checks the official index and uploads missing versions
+in dependency order.
 
 1. `rustfs-mimalloc-sys`
-2. wait for crates.io index propagation
-3. `rustfs-mimalloc` and verify its official index/archive
-4. `rustfs-mimalloc-profiling` and verify its official index/archive
-5. Test the normalized profiling archive against the published allocator/sys
-6. GitHub Release
+2. `rustfs-mimalloc`
+3. `rustfs-mimalloc-profiling`
+4. Wait 60 seconds, then fetch and verify the exact published versions.
+5. Test the normalized profiling archive against the published allocator/sys.
+6. Create the GitHub Release.
 
 ## Dry Run
 
@@ -218,11 +217,11 @@ After pushing a real release, report:
 - GitHub Release URL: `https://github.com/houseme/rustfs-mimalloc/releases/tag/v<VERSION>`
 - whether CI was awaited or intentionally not awaited
 
-Manual real releases check out the existing version tag for every gate and
-publication. The workflow saves a package archive before `cargo publish`, which
-uses temporary archive paths. If upload fails or the version already exists,
-continue only when the official index and download match that saved archive.
-This lets a partially published release resume without changing its tag.
+Manual releases build packages from the existing version tag. The workflow
+skips an existing version before packaging and uploading. If upload fails,
+it continues only when a second official index check confirms the version
+exists. Verification checks every published download against its official
+index checksum and compares newly uploaded crates with their saved archives.
 
 ## Rollback
 
@@ -260,5 +259,5 @@ require the exact registry versions, with no path or Git override. Both modes
 verify the default core dependency graph and run behavior, compatibility API,
 optimized profile and isolated dual-provider tests from the extracted archive.
 
-The workflow dry run exercises package verification on Linux, macOS and Windows
-plus the Rust 1.95.0 compatibility job. It skips all uploads and release creation.
+The workflow dry run exercises package verification with stable Rust on
+Linux, macOS and Windows. It skips uploads and release creation.

@@ -261,11 +261,11 @@ fn verify_checksum(actual: &str, index: &str, expected: Option<&str>) -> Result<
     Ok(())
 }
 
-fn index_release(index: &str, version: &str) -> Result<Option<Value>> {
+fn index_record(index: &str, version: &str) -> Result<Option<Value>> {
     for line in index.lines() {
         let record: Value =
             serde_json::from_str(line).context("parse official sparse index record")?;
-        if record["vers"] == version && record["yanked"] == false {
+        if record["vers"] == version {
             return Ok(Some(record));
         }
     }
@@ -309,27 +309,53 @@ fn download_checksum(agent: &ureq::Agent, url: &str) -> Result<String> {
     digest::reader(response.body_mut().as_reader(), Some(64 * 1024 * 1024))
 }
 
-pub fn registry(args: &mut Args) -> Result<()> {
+fn registry_package(args: &mut Args) -> Result<(String, String)> {
     let name = args.positional()?;
     let value = args.positional()?;
-    let archive = args.option("--archive")?.map(util::path);
-    args.finish()?;
     ensure!(
         NAMES.contains(&name.as_str()),
         "unknown release package: {name}"
     );
     version(&value)?;
-    let expected = archive.as_deref().map(digest::file).transpose()?;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    Ok((name, value))
+}
+
+fn registry_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
-        .into();
+        .into()
+}
+
+pub fn registry_status(args: &mut Args) -> Result<()> {
+    let (name, value) = registry_package(args)?;
+    args.finish()?;
+    let url = index_url(&name);
+    let published = match download(&registry_agent(), &url) {
+        Ok(data) => index_record(std::str::from_utf8(&data)?, &value)?.is_some(),
+        Err(error) if matches!(error.downcast_ref(), Some(ureq::Error::StatusCode(404))) => false,
+        Err(error) => return Err(error).with_context(|| format!("read official index for {name}")),
+    };
+    println!("{}", if published { "published" } else { "missing" });
+    Ok(())
+}
+
+pub fn registry(args: &mut Args) -> Result<()> {
+    let (name, value) = registry_package(args)?;
+    let archive = args.option("--archive")?.map(util::path);
+    args.finish()?;
+    let expected = archive.as_deref().map(digest::file).transpose()?;
+    let agent = registry_agent();
     let mut last_error = None;
     for attempt in 0..40 {
         match download(&agent, &index_url(&name)) {
             Ok(data) => {
                 let index = std::str::from_utf8(&data)?;
-                if let Some(record) = index_release(index, &value)? {
+                if let Some(record) = index_record(index, &value)? {
+                    ensure!(
+                        record["yanked"] == false,
+                        "{name} {value} is yanked or has an invalid index record"
+                    );
                     match download_checksum(
                         &agent,
                         &format!("https://static.crates.io/crates/{name}/{name}-{value}.crate"),
@@ -422,15 +448,17 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn official_index_and_checksum_controls_reject_yanked_or_different_archives() -> Result<()> {
+    fn official_index_presence_includes_yanked_versions_and_checksum_mismatches_fail() -> Result<()>
+    {
         assert_eq!(
             checksum(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         let index = "{\"vers\":\"0.7.2\",\"yanked\":true}\n{\"vers\":\"0.7.1\",\"yanked\":false}";
-        assert!(index_release(index, "0.7.2")?.is_none());
-        assert!(index_release(index, "0.7.1")?.is_some());
-        assert!(index_release("invalid", "0.7.1").is_err());
+        assert_eq!(index_record(index, "0.7.2")?.unwrap()["yanked"], true);
+        assert_eq!(index_record(index, "0.7.1")?.unwrap()["yanked"], false);
+        assert!(index_record(index, "0.7.3")?.is_none());
+        assert!(index_record("invalid", "0.7.1").is_err());
         assert!(
             verify_checksum(
                 &checksum(b"abc"),

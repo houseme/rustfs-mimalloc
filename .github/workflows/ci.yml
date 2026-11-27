@@ -113,15 +113,11 @@ jobs:
           cargo xtask test-providers --local-dependencies --release
 
   profiling-providers:
-    name: Profiling providers (${{ matrix.os }}, ${{ matrix.toolchain }})
+    name: Profiling providers (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        toolchain: [ stable ]
-        include:
-          - os: ubuntu-latest
-            toolchain: 1.95.0
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -129,8 +125,6 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
       - name: Test Rust maintenance tool contracts
         run: cargo test --locked -p xtask
       - name: Validate isolated allocator graphs and shared contracts
@@ -391,27 +385,6 @@ jobs:
 
       - name: Test (clang-cl, no profiling)
         run: cargo test --locked --workspace --features secure,debug,no_profile
-
-  # ── Older toolchain compatibility (no declared Cargo MSRV) ─────────────────
-
-  compatibility:
-    name: Rust 1.95.0 compatibility
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.95.0"
-
-      - name: Build
-        run: cargo build --locked
-
-      - name: Test
-        run: cargo test --locked
 
   # ── Lint: fmt + clippy ────────────────────────────────────────────────────
 

@@ -198,8 +198,8 @@ also link `execinfo` and `util`.
 
 ## Rust Toolchain Compatibility
 
-Cargo manifests intentionally omit `rust-version`. CI checks stable Rust and
-Rust 1.95.0 compatibility; no minimum Rust version is declared by these crates.
+Cargo manifests intentionally omit `rust-version`. CI and release validation
+use stable Rust.
 
 ## License
 

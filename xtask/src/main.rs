@@ -22,6 +22,7 @@ fn main() -> Result<()> {
         "test-abi" => abi::controls(&mut args),
         "test-providers" => providers::run(&mut args),
         "verify-package" => providers::verify_package(&mut args),
+        "registry-status" => release::registry_status(&mut args),
         "verify-registry" => release::registry(&mut args),
         "release-resolve" => release::resolve(&mut args),
         "release-check" => release::check(&mut args),
@@ -40,6 +41,7 @@ fn help() -> Result<()> {
                 check-api [--json PATH]\ncheck-abi [--cc COMMAND]\ntest-abi\n\
                 test-providers [--provider all|rustfs|upstream] [--local-dependencies] [--release] [--profiling-dir PATH] [--output PATH]\n\
                 verify-package [--local-dependencies] [--allow-dirty]\n\
+                registry-status PACKAGE VERSION\n\
                 verify-registry PACKAGE VERSION [--archive PATH]\n\
                 release-resolve\nrelease-check VERSION\nrelease-notes VERSION [--output PATH]\n\
                 bench-heap-abba | bench-profile-abba [--offline] [--output PATH] [--sample-size N] [--warm-up-time S] [--measurement-time S] [--drift-limit FRACTION]\n\

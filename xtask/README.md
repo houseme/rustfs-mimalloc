@@ -15,8 +15,8 @@ Run from the repository root with stable Rust and Cargo:
 
 The crate is unpublished and excluded from default workspace members. Its
 dependencies do not become allocator/profiler runtime dependencies. All version
-requirements stay in the root workspace manifest. The CI includes Windows,
-macOS, Linux and Rust 1.95 compatibility checks.
+requirements stay in the root workspace manifest. CI uses stable Rust on
+Windows, macOS and Linux.
 
 ## Gates
 
@@ -42,8 +42,12 @@ The release commands validate versions and internal requirements, preserve the
 changelog section and prior-tag comparison, and produce GitHub outputs without
 evaluating input as shell code. Registry verification uses HTTPS, the official
 sparse index and a downloaded archive SHA-256. A mismatching local archive fails
-immediately; visibility/network retries remain bounded at 40 attempts.
+immediately. Verification retries remain bounded at 40 attempts.
+`registry-status` checks whether the exact version already exists, including
+yanked versions. The workflow skips uploads for these entries and waits
+60 seconds before verifying the published downloads.
 
+    cargo xtask registry-status rustfs-mimalloc-sys 0.7.5
     cargo xtask verify-registry rustfs-mimalloc-sys 0.7.1
     cargo xtask verify-registry rustfs-mimalloc-sys 0.7.5 --archive target/package/rustfs-mimalloc-sys-0.7.5.crate
 

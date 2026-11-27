@@ -8,10 +8,9 @@ The sys build exports a generated public include tree with a guarded QSBR
 header correction shared by ABI checks. The no_profile build also generates a
 guarded sampler correction for upstream MI_PROFILE=0 activation. Keep upstream
 source pristine and use DEP_MIMALLOC_INCLUDE for downstream C/C++ consumers.
-Cargo manifests intentionally omit `rust-version`. CI checks stable and Rust
-1.95.0 compatibility; this is not a declared minimum supported Rust version.
-Edition 2024 alone does not prove compiler or dependency compatibility. Lint
-and documentation use stable; release jobs share one resolved source commit.
+Cargo manifests intentionally omit `rust-version`. CI, lint, documentation and
+release validation use stable Rust. Edition 2024 alone does not prove compiler
+or dependency compatibility. Release jobs share one resolved package source commit.
 
 ## Structure
 
@@ -67,6 +66,7 @@ Use the `/release` skill to publish a new version. Flow: version validation → 
 See `docs/release-checklist.md` for detailed documentation (git ignored).
 
 All three crates inherit the workspace version. The release workflow publishes
-sys, allocator, then profiling, verifies official registry visibility/checksums,
-and tests the normalized profiling archive against registry dependencies.
+sys, allocator, then profiling, skipping versions already on crates.io.
+It waits 60 seconds before fetching and verifying the published versions,
+then tests the normalized profiling archive against registry dependencies.
 See `.agents/skills/release.md` for package checks and the required dry run.
