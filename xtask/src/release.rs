@@ -261,16 +261,20 @@ fn index_release(index: &str, version: &str) -> Result<Option<Value>> {
     Ok(None)
 }
 
-/// Sparse-index shard directory for a crate name, per the crates.io scheme:
+/// Sparse-index entry path for a crate name, per the crates.io scheme:
 /// 1-character names use `1/{name}`, 2-character `2/{name}`, 3-character
 /// `3/{first}/{name}`, and longer names `{first-two}/{next-two}/{name}`.
-fn index_shard(name: &str) -> String {
+fn index_entry_path(name: &str) -> String {
     match name.chars().count() {
         0 | 1 => format!("1/{name}"),
         2 => format!("2/{name}"),
         3 => format!("3/{}/{}", &name[..1], name),
         _ => format!("{}/{}/{}", &name[..2], &name[2..4], name),
     }
+}
+
+fn index_url(name: &str) -> String {
+    format!("https://index.crates.io/{}", index_entry_path(name))
 }
 
 fn download(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>> {
@@ -311,10 +315,7 @@ pub fn registry(args: &mut Args) -> Result<()> {
         .into();
     let mut last_error = None;
     for attempt in 0..40 {
-        match download(
-            &agent,
-            &format!("https://index.crates.io/{}/{}", index_shard(&name), name),
-        ) {
+        match download(&agent, &index_url(&name)) {
             Ok(data) => {
                 let index = std::str::from_utf8(&data)?;
                 if let Some(record) = index_release(index, &value)? {
@@ -370,7 +371,7 @@ mod tests {
         assert!(resolved("unknown", "0.7.2", "main").is_err());
     }
     #[test]
-    fn sparse_index_shards_follow_the_crates_io_scheme() {
+    fn sparse_index_urls_follow_the_crates_io_scheme() {
         // The three workspace crates all take the four-plus-character path.
         for (name, shard) in [
             ("rustfs-mimalloc", "ru/st/rustfs-mimalloc"),
@@ -383,7 +384,11 @@ mod tests {
             ("ab", "2/ab"),
             ("abc", "3/a/abc"),
         ] {
-            assert_eq!(index_shard(name), shard, "shard for {name}");
+            assert_eq!(
+                index_url(name),
+                format!("https://index.crates.io/{shard}"),
+                "index URL for {name}"
+            );
         }
     }
     #[test]

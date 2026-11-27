@@ -176,6 +176,23 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Build official registry verifier
+        env:
+          WORKFLOW_REVISION: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse HEAD)" == "$WORKFLOW_REVISION" ]]; then
+            cargo build --locked -p xtask
+            cp target/debug/xtask "$RUNNER_TEMP/release-registry-verifier"
+          else
+            # Manual recovery keeps the package source at the version tag.
+            git fetch --no-tags --depth=1 origin "$WORKFLOW_REVISION"
+            git worktree add --detach "$RUNNER_TEMP/release-tools" "$WORKFLOW_REVISION"
+            cargo build --locked --manifest-path "$RUNNER_TEMP/release-tools/Cargo.toml" -p xtask \
+              --target-dir "$RUNNER_TEMP/release-tools-target"
+            cp "$RUNNER_TEMP/release-tools-target/debug/xtask" "$RUNNER_TEMP/release-registry-verifier"
+          fi
+
       - name: Publish and verify all three crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -189,7 +206,7 @@ jobs:
             if ! cargo publish --locked --registry crates-io --package "$package" --allow-dirty; then
               echo "Upload did not complete; checking for an identical published package."
             fi
-            cargo xtask verify-registry "$package" "$RELEASE_VERSION" --archive "$archive"
+            "$RUNNER_TEMP/release-registry-verifier" verify-registry "$package" "$RELEASE_VERSION" --archive "$archive"
           done
       - name: Test normalized profiling archive with published dependencies
         run: cargo xtask verify-package --allow-dirty
