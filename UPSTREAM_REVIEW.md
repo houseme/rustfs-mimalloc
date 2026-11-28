@@ -1,3 +1,41 @@
+# 0.7.6 visitor and API refresh — 2026-11-28
+
+`git pull --ff-only` confirmed project base `6d34085`. Microsoft
+`main3` remains at `bc44251a` for v3.7.1. The new dev3 pin
+`a34616d3` keeps C version 30702 and advances 12 commits from
+`5424c54c`.
+[Official Rust sources](https://github.com/microsoft/mimalloc/tree/bc44251a1198409399bca17e319914795e8903d1/contrib/rust),
+[dev3 comparison](https://github.com/microsoft/mimalloc/compare/5424c54ce594b1ef27888d1538d543e98a72ac7b...a34616d31a8fd3f15e8f8ba03774a99549493ca8)
+
+The GitHub merged-PR query from November 26 found #1523 and #1524.
+Both merge commits are ancestors of the previous pin. This delta contains
+direct dev3 commits and a merge from dev, with no newer merged PR in the query.
+[PR #1523](https://github.com/microsoft/mimalloc/pull/1523),
+[PR #1524](https://github.com/microsoft/mimalloc/pull/1524)
+
+The C header delta updates visitor documentation without changing
+signatures, options or public layouts. The official Rust tree is
+unchanged from the previous pin. Relative to main3, dev3 still differs
+in Rust release metadata and build-time environment-prefix support. Its
+allocator, arena and heap implementations match main3.
+
+The existing Rust APIs now describe allocation and free inside a visitor,
+the restrictions on concurrent access and teardown, and the traversal
+limits for directly OS-backed pages. The raw thread-heap visitor now
+returns false for a null callback. The pin also makes the owning thread's
+locks reentrant, bounds callback recursion, and guards lifecycle operations
+during callbacks. A focused integration case exercises both Rust visit
+entry points with same-heap allocation and free.
+
+macOS release workspace suites passed with the serial test setting used
+by CI, for default and all features. An initial parallel run observed
+profiling counters changing during a test. Linux arm64 Docker passed
+73 allocator tests per feature set, raw API, options and JSON buffer
+checks. Clippy, the API inventory and ABI projections, the 0.7.6 release
+check, and offline sys crate packaging also passed.
+
+---
+
 # 0.7.6 reusable statistics review — 2026-11-28
 
 The project base after `git pull --ff-only origin main` was `74b9e22`.

@@ -1,6 +1,6 @@
 //! Low-level FFI bindings to [mimalloc](https://github.com/microsoft/mimalloc) V3.
 //!
-//! Pinned to upstream dev3 commit `5424c54c` (C version 30702).
+//! Pinned to upstream dev3 commit `a34616d3` (C version 30702).
 //!
 //! For a safe wrapper, use the `rustfs-mimalloc` crate.
 //!
@@ -1019,7 +1019,8 @@ unsafe extern "C" {
     /// before the thread allocates.
     pub fn mi_subproc_add_current_thread(subproc: mi_subproc_id_t);
     /// Visit all heaps of `subproc`. Return `false` from `visitor` to stop
-    /// early. Only valid while subprocess threads are quiescent.
+    /// early. Only valid while subprocess threads are quiescent. The visitor
+    /// may create or delete heaps. Heaps created during the walk may be skipped.
     ///
     /// `visitor` must be non-null: upstream dereferences it unconditionally
     /// and every subprocess owns at least its main heap, so [`None`]
@@ -1036,16 +1037,18 @@ unsafe extern "C" {
 
 unsafe extern "C" {
     /// Visit the live blocks of `heap`. With `visit_blocks`, the visitor also
-    /// receives each block; otherwise it is called once per heap area. Only
-    /// valid while no thread allocates in or frees from `heap`.
+    /// receives each block; otherwise it is called once per heap area. Other
+    /// threads must avoid allocating in or freeing from `heap` during the walk.
+    /// The visitor may allocate and free, and must keep the visited heap alive.
+    /// Mutation may change which blocks in directly OS-backed pages are visited.
     pub fn mi_heap_visit_blocks(
         heap: *mut mi_heap_t,
         visit_blocks: bool,
         visitor: Option<mi_block_visit_fun>,
         arg: *mut c_void,
     ) -> bool;
-    /// As `mi_heap_visit_blocks`, additionally visiting abandoned heaps.
-    /// Blocks in abandoned heaps are not owned by any live thread context.
+    /// Visit only the abandoned pages of `heap`, under the same visitor and
+    /// concurrency rules as [`mi_heap_visit_blocks`].
     pub fn mi_heap_visit_abandoned_blocks(
         heap: *mut mi_heap_t,
         visit_blocks: bool,
@@ -1055,9 +1058,8 @@ unsafe extern "C" {
     /// Visit the live blocks of a cached thread-local context. Owner-thread
     /// or quiescent-context use only, like the other `mi_theap_*` APIs.
     ///
-    /// `visitor` must be non-null: upstream only null-checks its internal
-    /// area wrapper and invokes the visitor unconditionally for every page,
-    /// so [`None`] crashes whenever the context owns at least one page.
+    /// A null visitor returns `false`. The visitor may allocate or free while
+    /// keeping the context and its parent heap alive.
     pub fn mi_theap_visit_blocks(
         theap: *const mi_theap_t,
         visit_blocks: bool,

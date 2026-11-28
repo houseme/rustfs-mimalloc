@@ -3,8 +3,8 @@
 The remote project base `d927f57` carries 0.7.5 and one Unreleased section.
 The workspace, inherited requirements, lockfile and current installation
 examples now use 0.7.6. The pending notes are in a single 0.7.6 section.
-The latest upstream dev3 source was already pinned. The source and PR
-comparison is recorded in [UPSTREAM_REVIEW.md](UPSTREAM_REVIEW.md).
+The follow-up moved the native pin from `5424c54c` to `a34616d3`.
+The source and PR comparison is recorded in [UPSTREAM_REVIEW.md](UPSTREAM_REVIEW.md).
 
 ## Official Rust API synchronization
 
@@ -192,12 +192,34 @@ No workload-level speedup was measured.
 
 ## Further measurements
 
+### dev3 pin comparison — 2026-11-28
+
+Two complete release builds compared `5424c54c` and `a34616d3` in
+Linux arm64 Docker on one virtual CPU. The benchmark allocated and freed
+64-byte or 4096-byte blocks using `GlobalAlloc`, repeated heap lookup, or
+cached `ThreadHeap` handles. The heap cases alternated between two heaps.
+The original/current/current/original sequence used 12 batches per case
+with alternating case order. The first run series exceeded the 5%
+drift threshold.
+
+Five cases passed the CPU and wall-time drift check in the longer repeat.
+Their thread CPU medians changed by -2.7% to +1.4% between pins. The
+64-byte repeated-lookup baseline still drifted by 7.4% and is excluded
+from the comparison. In the current 4096-byte case, cached handles used
+about 16 ns per allocation/free pair, compared with about 25 ns when
+looking up the heap on every allocation. The benchmark keeps objects on
+one thread. Raw results are under `target/upstream-refresh-076/`.
+
+### Workloads to measure next
+
 1. Compare usable-capacity reallocations for in-place shrink and moved
    growth, using ordinary, secure and over-aligned layouts. Track usable
    capacity and bytes copied alongside latency, with same-binary controls.
 2. Compare cached ThreadHeap handles against repeated lookup under worker
    churn, including remote frees and idle-thread arena collection. Track
    heap retirement time, RSS and p99 allocation and purge latency.
+   Profile time acquiring the reentrant heap locks separately from time
+   spent in visitor callbacks, particularly on directly OS-backed pages.
 3. Attribute the remaining profiling report costs to symbol resolution,
    serialization and live-map contention. Use the existing profiling
    diagnostics and verify sample counts and drops before drawing throughput

@@ -122,7 +122,7 @@ preserve the correct free path when the original allocation was over-aligned.
 
 ### Migration from 0.5
 
-The submodule is pinned to upstream **dev3 (`5424c54c`)**, with C version
+The submodule is pinned to upstream **dev3 (`a34616d3`)**, with C version
 30702. The latest official release is v3.7.1. QSBR's experimental constructor is raw sys FFI
 and requires a host runtime adapter; ordinary builds return null/ENOSYS. It has
 no owning `Heap` wrapper. The deprecated guarded-precise control retains ID 31

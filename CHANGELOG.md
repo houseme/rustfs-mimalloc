@@ -28,6 +28,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 
 ### Changed
 
+- Pin mimalloc dev3 to `a34616d3` (C version 30702). Sync the heap
+  visitor contracts for allocation and free inside callbacks, and document
+  the null visitor return for thread-heap walks.
 - Copy fitting native statistics JSON fragments in bulk. Keep the existing
   buffer-growth and truncation behavior.
 - Return usable capacity directly from native reallocation for blocks
@@ -49,10 +52,9 @@ and `rustfs-mimalloc-profiling`, which share one release version.
 - Compare the official `main3/contrib/rust` implementation and exercise
   Rust collections, fitting layouts, zeroed growth, and native statistics
   linkage. Validate the additional secure levels independently.
-- Recheck the official mimalloc dev3 head and public API at `5424c54c`.
-  The pin already includes the latest merged thread-heap and statistics
-  fixes. Exercise usable-capacity reallocation with ordinary and offset
-  pointers across default and padded builds.
+- Audit the public C headers and official Rust surface at `a34616d3`.
+  Exercise visitor allocation and free in both heap and thread-heap walks,
+  and usable-capacity reallocation with ordinary and offset pointers.
 
 ## [0.7.5] - 2026-11-27
 

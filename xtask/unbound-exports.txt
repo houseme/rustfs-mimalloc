@@ -1,4 +1,4 @@
-# Reviewed unbound public C exports at mimalloc dev3 5424c54c.
+# Reviewed unbound public C exports at mimalloc dev3 a34616d3.
 # Compatibility aliases, string helpers, C++ allocation, struct-based statistics
 # and runtime-specific lifecycle APIs retain their existing scope. Offset
 # allocations and subprocess/heap block visitors are bound since 0.7.5.

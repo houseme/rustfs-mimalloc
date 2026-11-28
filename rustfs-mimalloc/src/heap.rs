@@ -246,11 +246,9 @@ impl ThreadHeap<'_> {
     /// [`Heap::visit_blocks`] for the area/block callback convention.
     ///
     /// # Safety
-    /// No thread may allocate in or free into the parent heap while the walk
-    /// runs, and the closure must not free or move visited blocks. It also
-    /// must not call mimalloc APIs that lock the parent heap (see
-    /// [`Heap::visit_blocks`]'s safety notes) — a nested walk or
-    /// `Heap::thread_local` on this heap would deadlock.
+    /// Follow [`Heap::visit_blocks`]'s concurrency and block lifetime rules.
+    /// The closure must keep this context and its parent heap alive, and must
+    /// keep the current thread initialized for mimalloc until the walk ends.
     pub unsafe fn visit_blocks(&self, visit_blocks: bool, visitor: &mut BlockVisitor) -> bool {
         let mut state = VisitState { visitor };
         // SAFETY: `self.ptr` is a live owner-thread context and the
@@ -726,13 +724,15 @@ impl Heap {
         self.ptr.as_ptr()
     }
 
-    /// Visit this heap's pages with a closure, in safe ergonomics over
+    /// Visit this heap's pages with a closure, over
     /// [`rustfs_mimalloc_sys::mi_heap_visit_blocks`].
     ///
-    /// With `visit_blocks`, the closure receives every live block after the
+    /// With `visit_blocks`, the closure receives live blocks after the
     /// area-level call; otherwise it is called once per page area (with
     /// `block == None`), including fully free pages. Returning `false` from
-    /// the closure stops the walk.
+    /// the closure stops the walk. Allocations made during the walk may be
+    /// visited. Mutating the heap can cause blocks in directly OS-backed
+    /// pages to be skipped or visited twice.
     ///
     /// The closure's `size` is the page's block size for area-level calls
     /// and the block's **usable** size (without allocator metadata, but
@@ -740,14 +740,10 @@ impl Heap {
     /// exceed the size the block was requested with.
     ///
     /// # Safety
-    /// No thread may allocate in or free into this heap while the walk runs.
-    /// Blocks seen here are raw pointers into live pages; the closure must
-    /// not deallocate, free, or move them.
-    ///
-    /// Upstream holds this heap's context lock for the whole walk, so the
-    /// closure must not call mimalloc APIs that take the same heap's lock:
-    /// [`Heap::thread_local`], [`Heap::delete`], [`Heap::destroy`], or a
-    /// nested `visit_blocks` on this heap would deadlock.
+    /// Other threads must not allocate in or free from this heap while the
+    /// walk runs. The closure may allocate or free, following each block's
+    /// ownership and lifetime rules. Keep the visited heap and its contexts
+    /// alive and the current thread initialized for mimalloc until the walk ends.
     pub unsafe fn visit_blocks(&self, visit_blocks: bool, visitor: &mut BlockVisitor) -> bool {
         let mut state = VisitState { visitor };
         // SAFETY: `self.ptr` is a live handle and the trampoline forwards to
@@ -763,8 +759,7 @@ impl Heap {
         }
     }
 
-    /// As [`Self::visit_blocks`], additionally visiting abandoned pages that
-    /// belong to this heap.
+    /// Visit only the abandoned pages that belong to this heap.
     ///
     /// # Safety
     /// [`Self::visit_blocks`]'s requirements apply; abandoned blocks are not
@@ -1567,6 +1562,44 @@ mod tests {
 
             rustfs_mimalloc_sys::mi_free(a.cast());
             rustfs_mimalloc_sys::mi_free(b.cast());
+        }
+    }
+
+    #[test]
+    fn visitors_can_allocate_and_free_in_the_visited_heap() {
+        let heap = Heap::new().unwrap();
+        let context = heap.thread_local().unwrap();
+        // Only this test thread uses the heap and both handles outlive the walks.
+        unsafe {
+            let existing = NonNull::new(context.malloc(64)).unwrap();
+            for use_context in [false, true] {
+                let mut saw_existing = false;
+                let mut allocated = false;
+                let mut visitor = |_area: &HeapArea, block, _size| {
+                    if block == Some(existing) && !saw_existing {
+                        saw_existing = true;
+                        let scratch = context.malloc(64);
+                        if !scratch.is_null() {
+                            rustfs_mimalloc_sys::mi_free(scratch.cast());
+                            allocated = true;
+                        }
+                    }
+                    true
+                };
+                let completed = if use_context {
+                    context.visit_blocks(true, &mut visitor)
+                } else {
+                    heap.visit_blocks(true, &mut visitor)
+                };
+                assert!(completed && saw_existing && allocated);
+            }
+            assert!(!rustfs_mimalloc_sys::mi_theap_visit_blocks(
+                context.ptr.as_ptr(),
+                true,
+                None,
+                core::ptr::null_mut(),
+            ));
+            rustfs_mimalloc_sys::mi_free(existing.as_ptr().cast());
         }
     }
 

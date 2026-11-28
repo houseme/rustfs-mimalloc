@@ -10,7 +10,7 @@ High-performance [mimalloc](https://github.com/microsoft/mimalloc) V3 global all
 
 ## Overview
 
-`rustfs-mimalloc` provides Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.7.2 development snapshot, commit `5424c54c`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
+`rustfs-mimalloc` provides Rust bindings to Microsoft's mimalloc V3 memory allocator (v3.7.2 development snapshot, commit `a34616d3`). Drop-in replacement for the system allocator with excellent multi-threaded performance.
 
 Release notes for all three crates are maintained in [CHANGELOG.md](CHANGELOG.md).
 
@@ -176,11 +176,13 @@ for small allocations with a larger alignment.
 
 ### Upstream APIs and migration
 
-The submodule pins dev3 commit `5424c54c`, a v3.7.2 development snapshot after
+The submodule pins dev3 commit `a34616d3`, a v3.7.2 development snapshot after
 official release v3.7.1. Its numeric C version is **30702**. This update
 includes thread-heap teardown fixes, collection from threads without a heap
 context, and more consistent heap statistics during teardown and merging.
-[Pinned source](https://github.com/microsoft/mimalloc/commit/5424c54ce594b1ef27888d1538d543e98a72ac7b)
+It also lets heap visitor callbacks allocate and free under the documented
+concurrency and lifetime constraints.
+[Pinned source](https://github.com/microsoft/mimalloc/commit/a34616d31a8fd3f15e8f8ba03774a99549493ca8)
 
 Use `MiMalloc::malloc_with_usable_size`, `zalloc_with_usable_size` or
 `realloc_aligned_with_usable_size` when a buffer needs its usable capacity
@@ -436,7 +438,7 @@ let heap = heap::Heap::new_in_arena(arena).expect("failed to create heap");
 
 | Aspect | `rustfs-mimalloc` | `mimalloc` crate |
 |--------|-------------------|-------------------|
-| mimalloc version | V3 only (v3.7.2 development, `5424c54c`) | V2/V3 (configurable) |
+| mimalloc version | V3 only (v3.7.2 development, `a34616d3`) | V2/V3 (configurable) |
 | Alignment | Layout-aware native dispatch | Conditional |
 | TLS model | Configurable | Forced `initial-exec` |
 | Stats API | JSON + text + struct | JSON only |
